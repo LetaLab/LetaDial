@@ -1,0 +1,28 @@
+# Konfiguracja — NIGDY na GitHub (hasła, klucze)
+config.php
+config.php.bak*
+
+# Dane użytkowników
+storage/thumbnails/*
+storage/avatars/*
+storage/group_icons/*
+storage/sessions/*
+
+# Zachowaj strukturę katalogów storage
+!storage/thumbnails/.gitkeep
+!storage/avatars/.gitkeep
+!storage/group_icons/.gitkeep
+!storage/sessions/.gitkeep
+
+# Logi
+logs/*
+!logs/.gitkeep
+
+# Skrypt specyficzny dla serwera
+fix_permissions.sh
+
+# System
+.DS_Store
+Thumbs.db
+*.swp
+*.swo

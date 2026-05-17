@@ -1,6 +1,6 @@
 <?php
 /**
- * LetaDial — Dashboard
+ * LetaDial — Dashboard (sesja 059: update notification banner for admin)
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die();
@@ -22,6 +22,10 @@ $og_image_url   = htmlspecialchars(APP_URL . '/assets/icons/OG.png', ENT_QUOTES,
 $groups_data = Group::getAll($user['id']);
 $groups_json = json_encode($groups_data, JSON_HEX_TAG | JSON_HEX_QUOT);
 $csrf_token  = htmlspecialchars(CSRF::token(), ENT_QUOTES, 'UTF-8');
+
+// Update check — only for admin, only if GITHUB_REPO is configured, non-blocking
+// We pass update info to JS which shows the banner — no PHP blocking here
+$show_update_ui = $is_admin && defined('GITHUB_REPO') && GITHUB_REPO !== '';
 ?>
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
@@ -48,6 +52,28 @@ $csrf_token  = htmlspecialchars(CSRF::token(), ENT_QUOTES, 'UTF-8');
 <link rel="manifest" href="/assets/manifest.json">
 <link rel="stylesheet" href="/assets/css/design-system.css">
 <link rel="stylesheet" href="/assets/css/app.css">
+<style>
+/* ── Update banner (sesja 059) ───────────────────────────────────────────── */
+.update-banner {
+    display: none; /* shown by JS after async check */
+    background: var(--info-bg);
+    border-bottom: 1px solid var(--info-bdr);
+    padding: .6rem var(--space-5);
+    font-size: var(--text-sm);
+    color: var(--info);
+    align-items: center;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+}
+.update-banner.show { display: flex; }
+.update-banner a { color: var(--info); font-weight: 600; }
+.update-banner-dismiss {
+    margin-left: auto; background: none; border: none;
+    cursor: pointer; color: var(--info); font-size: 1.1rem;
+    opacity: .7; line-height: 1; padding: .1rem .3rem;
+}
+.update-banner-dismiss:hover { opacity: 1; }
+</style>
 <script>
 (function(){
     var t = localStorage.getItem('dv-theme');
@@ -56,6 +82,16 @@ $csrf_token  = htmlspecialchars(CSRF::token(), ENT_QUOTES, 'UTF-8');
 </script>
 </head>
 <body>
+
+<!-- UPDATE BANNER (admin only, filled by JS) -->
+<?php if ($show_update_ui): ?>
+<div class="update-banner" id="update-banner" role="alert">
+    <span>🆕</span>
+    <span id="update-banner-text"></span>
+    <button type="button" class="update-banner-dismiss" id="update-banner-dismiss"
+            aria-label="Dismiss">×</button>
+</div>
+<?php endif; ?>
 
 <!-- TOPBAR -->
 <header class="topbar">
@@ -160,14 +196,80 @@ $csrf_token  = htmlspecialchars(CSRF::token(), ENT_QUOTES, 'UTF-8');
 
 <script>
 window.LETADIAL_BOOT = {
-    csrfToken: "<?= $csrf_token ?>",
-    groups:    <?= $groups_json ?>,
-    userId:    <?= (int)$user['id'] ?>,
-    appUrl:    <?= json_encode(APP_URL) ?>,
-    isAdmin:   <?= $is_admin ? 'true' : 'false' ?>
+    csrfToken:     <?= json_encode($csrf_token) ?>,
+    groups:        <?= $groups_json ?>,
+    userId:        <?= (int)$user['id'] ?>,
+    appUrl:        <?= json_encode(APP_URL) ?>,
+    isAdmin:       <?= $is_admin ? 'true' : 'false' ?>,
+    showUpdateUi:  <?= $show_update_ui ? 'true' : 'false' ?>,
 };
 </script>
 <script src="/assets/js/app.js"></script>
+
+<?php if ($show_update_ui): ?>
+<script>
+// ── Update check (sesja 059) ──────────────────────────────────────────────────
+// Runs after page load, async, non-blocking.
+// Uses cached result from DB — no GitHub hit on every pageload.
+// Dismissed state stored in localStorage per version.
+(function() {
+    const DISMISS_KEY = 'dv-update-dismissed';
+    const banner      = document.getElementById('update-banner');
+    const bannerText  = document.getElementById('update-banner-text');
+    const dismissBtn  = document.getElementById('update-banner-dismiss');
+    const csrf        = window.LETADIAL_BOOT?.csrfToken || '';
+
+    if (!banner) return;
+
+    async function checkUpdate() {
+        try {
+            const res  = await fetch('/api/update', {
+                headers: { 'X-CSRF-Token': csrf },
+                credentials: 'same-origin',
+            });
+            if (!res.ok) return;
+            const data = await res.json();
+
+            if (!data.ok || !data.update_available) return;
+
+            // Check if user already dismissed this version
+            const dismissed = localStorage.getItem(DISMISS_KEY);
+            if (dismissed === data.latest) return;
+
+            // Show banner
+            const notes = data.notes ? ` — ${data.notes}` : '';
+            bannerText.innerHTML =
+                `<strong>LetaDial ${data.latest} is available</strong>${escHtml(notes)} &nbsp;` +
+                `<a href="${escHtml(data.url)}" target="_blank" rel="noopener noreferrer">` +
+                `View release →</a>` +
+                `<span style="color:var(--text-faint);font-size:.8em;margin-left:.5rem">` +
+                `(current: ${escHtml(data.current)})</span>`;
+            banner.classList.add('show');
+        } catch (e) {
+            // Silently ignore — update check is non-critical
+        }
+    }
+
+    function escHtml(s) {
+        return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    dismissBtn?.addEventListener('click', () => {
+        // Read latest version from banner text data attribute or re-fetch
+        // Simple approach: just hide and set dismissed flag to current banner content
+        // We fetch the version from the API result cached in DOM
+        fetch('/api/update', { headers: { 'X-CSRF-Token': csrf }, credentials: 'same-origin' })
+            .then(r => r.json())
+            .then(d => { if (d.latest) localStorage.setItem(DISMISS_KEY, d.latest); })
+            .catch(() => {});
+        banner.classList.remove('show');
+    });
+
+    // Delay check by 3s after page load — don't compete with initial render
+    setTimeout(checkUpdate, 3000);
+})();
+</script>
+<?php endif; ?>
 
 </body>
 </html>

@@ -2,6 +2,7 @@
 /**
  * LetaDial — Dial model
  * Sesja 054: notes field added (TEXT, nullable, max 500 chars enforced in PHP)
+ * Sesja 061: pinned field added (TINYINT 0/1) — pinned dials always appear first
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -20,7 +21,7 @@ class Dial
                  FROM dials d
                  LEFT JOIN groups_list g ON g.id = d.group_id
                  WHERE d.user_id = ? AND d.group_id = ?
-                 ORDER BY d.position ASC, d.id ASC',
+                 ORDER BY d.pinned DESC, d.position ASC, d.id ASC',
                 [$userId, $groupId]
             );
         } else {
@@ -29,7 +30,7 @@ class Dial
                  FROM dials d
                  LEFT JOIN groups_list g ON g.id = d.group_id
                  WHERE d.user_id = ?
-                 ORDER BY g.position ASC, d.position ASC, d.id ASC',
+                 ORDER BY g.position ASC, d.pinned DESC, d.position ASC, d.id ASC',
                 [$userId]
             );
         }
@@ -75,6 +76,26 @@ class Dial
         );
 
         return ['ok' => true, 'id' => (int)DB::lastId()];
+    }
+
+    // ── Pin / Unpin ───────────────────────────────────────────────────────────
+
+    /**
+     * Toggle pin state for a dial.
+     * Returns ['ok' => true, 'pinned' => bool]
+     */
+    public static function togglePin(int $dialId, int $userId): array
+    {
+        $dial = self::getOne($dialId, $userId);
+        if (!$dial) return ['ok' => false, 'error' => 'Dial not found.'];
+
+        $newPinned = $dial['pinned'] ? 0 : 1;
+        DB::run(
+            'UPDATE dials SET pinned = ? WHERE id = ? AND user_id = ?',
+            [$newPinned, $dialId, $userId]
+        );
+
+        return ['ok' => true, 'pinned' => (bool)$newPinned];
     }
 
     // ── Duplicate (single) ────────────────────────────────────────────────────
@@ -145,7 +166,6 @@ class Dial
         );
 
         foreach ($validIds as $id) {
-            // SEC-055: pass $userId — Thumbnail::delete needs it to build the file path
             try { Thumbnail::delete((int)$id, $userId); } catch (Throwable) {}
         }
 
@@ -335,7 +355,6 @@ class Dial
         self::normalizePositions((int)$dial['group_id'], $userId);
 
         try {
-            // SEC-055: pass $userId — Thumbnail::delete needs it to build the file path
             Thumbnail::delete($dialId, $userId);
         } catch (Throwable $e) {
             error_log('[Dial::delete] Thumbnail::delete(' . $dialId . ') failed: ' . $e->getMessage());
@@ -369,7 +388,7 @@ class Dial
     public static function recordClick(int $dialId, int $userId): void
     {
         DB::run(
-            'UPDATE dials SET click_count = click_count + 1, last_clicked_at = ?
+            'UPDATE dials SET click_count = click_count + 1, last_click = ?
              WHERE id = ? AND user_id = ?',
             [date('Y-m-d H:i:s'), $dialId, $userId]
         );
@@ -395,6 +414,7 @@ class Dial
         $row['group_id']    = (int)$row['group_id'];
         $row['position']    = (int)$row['position'];
         $row['click_count'] = (int)($row['click_count'] ?? 0);
+        $row['pinned']      = (bool)($row['pinned'] ?? false);
         $row['thumb_path']  = $row['thumb_path'] ?? null;
         $row['has_thumb']   = !empty($row['thumb_path']);
         $row['notes']       = $row['notes'] ?? null;
@@ -412,8 +432,6 @@ class Dial
 
     private static function _validUrl(string $url): bool
     {
-        // SEC-055: validate URL format AND restrict to http/https only.
-        // filter_var alone allows ftp://, file://, etc.
         if (!filter_var($url, FILTER_VALIDATE_URL)) return false;
         $scheme = strtolower(parse_url($url, PHP_URL_SCHEME) ?? '');
         return in_array($scheme, ['http', 'https'], true);

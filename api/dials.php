@@ -8,12 +8,11 @@
  * DELETE /api/dials/{id}            delete
  * POST   /api/dials/reorder         reorder {group_id, ids:[1,2,3]}
  * POST   /api/dials/{id}/click      record click (no CSRF — low risk)
+ * POST   /api/dials/{id}/pin        toggle pin/unpin (sesja 061)
  * POST   /api/dials/{id}/duplicate  duplicate dial {group_id}
  * POST   /api/dials/bulk-delete     bulk delete   {ids:[1,2,3]}
  * POST   /api/dials/bulk-move       bulk move     {ids:[...], group_id:X}
  * POST   /api/dials/bulk-duplicate  bulk duplicate{ids:[...], group_id:X}
- *
- * Sesja 054: notes field added to create + update
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -101,6 +100,15 @@ if ($method === 'POST' && $sub !== null && ctype_digit($sub) && $action === 'cli
     exit;
 }
 
+// ── POST /api/dials/{id}/pin — toggle pin/unpin (sesja 061) ──────────────────
+if ($method === 'POST' && $sub !== null && ctype_digit($sub) && $action === 'pin') {
+    CSRF::require();
+    $result = Dial::togglePin((int)$sub, $user['id']);
+    http_response_code($result['ok'] ? 200 : 422);
+    echo json_encode($result);
+    exit;
+}
+
 // ── POST /api/dials/{id}/duplicate ───────────────────────────────────────────
 if ($method === 'POST' && $sub !== null && ctype_digit($sub) && $action === 'duplicate') {
     CSRF::require();
@@ -135,7 +143,6 @@ if ($method === 'PUT' && $sub !== null && ctype_digit($sub)) {
     CSRF::require();
     $body = json_decode(file_get_contents('php://input'), true) ?? [];
 
-    // Move-to-group: body contains only group_id (no url key)
     if (isset($body['group_id']) && !isset($body['url'])) {
         $newGroupId = (int)$body['group_id'];
         $result     = Dial::moveToGroup((int)$sub, $user['id'], $newGroupId);
@@ -144,7 +151,6 @@ if ($method === 'PUT' && $sub !== null && ctype_digit($sub)) {
         exit;
     }
 
-    // Normal update: title + url + notes
     $title  = trim($body['title'] ?? '');
     $url    = trim($body['url']   ?? '');
     $notes  = trim($body['notes'] ?? '');

@@ -3,30 +3,10 @@
  * Pure vanilla ES6+, zero libraries, zero frameworks.
  *
  * Sesja 053: Keyboard navigation
- *   - keyboard_nav module: Arrow keys, Enter, Delete/Backspace, E, Escape
- *   - .kb-focus class on focused card, .dial-kb-hint tooltip
- *   - No interference with modal, search, or bulk select
- *
  * Sesja 054: Dial notes
- *   - notes field in Add/Edit modal (textarea, max 500 chars, live counter)
- *   - notes displayed below dial title — truncated single line
- *   - hover tooltip shows full note text
- *   - notes included in create/update API calls
- *
  * Sesja 056: Sort options
- *   - sort_module: Manual / Name A→Z / Name Z→A / Most clicked / Newest / Oldest
- *   - sort state persisted in localStorage per group (key: dv-sort-{groupId})
- *   - sort bar rendered above dial grid, hidden on empty state
- *   - drag-and-drop reordering disabled when sort != manual
- *   - no backend changes — all sorting done client-side on existing API data
- *
  * Sesja 057: OG meta auto-fetch
- *   - meta_module: POST /api/meta → {title, description}
- *   - Auto-fetch on URL blur in "Add Dial" modal (debounced 600ms after typing stops)
- *   - Visual spinner + "Fetching title…" status in modal
- *   - Title/description pre-filled only if field is empty (user typed title = respected)
- *   - Manual "↺ Fetch title" button in Edit modal
- *   - Graceful degradation: if fetch fails, fields stay empty — user fills manually
+ * Sesja 061: Pin / favourite — pinned dials always first, 📌 badge, context menu toggle
  */
 
 const LetaDial = (() => {
@@ -97,35 +77,14 @@ const LetaDial = (() => {
     };
 
     // ── Meta fetch (sesja 057) ────────────────────────────────────────────────
-    /**
-     * Fetches OG title + description for a given URL via POST /api/meta.
-     *
-     * fetchFor(urlInput, titleInput, notesInput, statusEl):
-     *   - Shows spinner in statusEl while fetching
-     *   - Fills titleInput only if it is currently empty
-     *   - Fills notesInput only if it is currently empty AND description was found
-     *   - Shows brief success/fail feedback in statusEl
-     *   - Never overwrites user-typed content
-     */
     const meta_module = {
         _timer: null,
         _lastUrl: null,
 
-        /**
-         * Called on URL input (debounced) or explicit button click.
-         * @param {string}      url
-         * @param {HTMLElement} titleInput
-         * @param {HTMLElement} notesInput   (textarea) — may be null
-         * @param {HTMLElement} statusEl     — small status line below URL input
-         */
         async fetchFor(url, titleInput, notesInput, statusEl) {
             url = url.trim();
             if (!url) return;
-
-            // Normalise: add https:// if missing
             if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
-
-            // Skip if same URL as last successful fetch
             if (url === this._lastUrl) return;
 
             this._showStatus(statusEl, '⏳ Fetching title…', 'var(--text-faint)');
@@ -147,16 +106,13 @@ const LetaDial = (() => {
             this._lastUrl = url;
             let filled = false;
 
-            // Fill title only if the field is still empty
             if (data.title && titleInput && !titleInput.value.trim()) {
                 titleInput.value = data.title;
                 filled = true;
             }
 
-            // Fill notes/description only if the field is still empty
             if (data.description && notesInput && !notesInput.value.trim()) {
                 notesInput.value = data.description.substring(0, 500);
-                // Update live counter if present
                 const counterId = notesInput.id === 'new-dial-notes'
                     ? 'new-dial-notes-count' : 'edit-dial-notes-count';
                 const counter = document.getElementById(counterId);
@@ -172,10 +128,6 @@ const LetaDial = (() => {
             setTimeout(() => this._showStatus(statusEl, '', ''), 2500);
         },
 
-        /**
-         * Attach debounced auto-fetch to a URL input field.
-         * Fires 700ms after the user stops typing, only for valid-looking URLs.
-         */
         attachDebounced(urlInput, titleInput, notesInput, statusEl) {
             this._lastUrl = null;
             urlInput.addEventListener('input', () => {
@@ -186,7 +138,6 @@ const LetaDial = (() => {
                     this.fetchFor(url, titleInput, notesInput, statusEl);
                 }, 700);
             });
-            // Also fire on blur (user tabs away from URL field)
             urlInput.addEventListener('blur', () => {
                 clearTimeout(this._timer);
                 const url = urlInput.value.trim();
@@ -204,21 +155,6 @@ const LetaDial = (() => {
     };
 
     // ── Keyboard Navigation ───────────────────────────────────────────────────
-    /**
-     * Grid keyboard navigation.
-     *
-     * KEYS (active only when no modal is open, no input/textarea focused):
-     *   ArrowRight/Left/Up/Down  — move focus between cards
-     *   Enter                    — open focused dial in new tab
-     *   Delete / Backspace       — confirm-delete focused dial
-     *   E                        — open Edit modal for focused dial
-     *   Escape                   — clear keyboard focus
-     *   / (slash)                — jump to search (handled in search_module)
-     *
-     * Focus is tracked by .kb-focus class on the card element.
-     * We do NOT call native focus() on <a> tags — avoids browser scroll-jump.
-     * Arrow Up/Down use live column count from DOM layout.
-     */
     const keyboard_nav = {
         _focusedId: null,
 
@@ -282,44 +218,28 @@ const LetaDial = (() => {
 
         _onKey(e) {
             const key = e.key;
-
-            if (key === '/') return; // handled by search_module
-
+            if (key === '/') return;
             if (key === 'Escape' && this._focusedId !== null && !modal.el) {
                 this.clear(); e.preventDefault(); return;
             }
-
             const navKeys = ['ArrowRight','ArrowLeft','ArrowUp','ArrowDown','Enter','Delete','Backspace','e','E'];
             if (!navKeys.includes(key)) return;
             if (this._isBlocked()) return;
-
             const cards = this._cards();
             if (!cards.length) return;
-
             if (this._focusedId === null) {
                 if (['ArrowRight','ArrowLeft','ArrowUp','ArrowDown'].includes(key)) {
-                    e.preventDefault();
-                    this._focusIdx(0);
+                    e.preventDefault(); this._focusIdx(0);
                 }
                 return;
             }
-
             const idx  = this._idxOf(this._focusedId);
             const cols = this._colCount();
-
             switch (key) {
-                case 'ArrowRight':
-                    e.preventDefault(); this._focusIdx(idx + 1); break;
-
-                case 'ArrowLeft':
-                    e.preventDefault(); this._focusIdx(idx - 1); break;
-
-                case 'ArrowDown':
-                    e.preventDefault(); this._focusIdx(Math.min(idx + cols, cards.length - 1)); break;
-
-                case 'ArrowUp':
-                    e.preventDefault(); this._focusIdx(Math.max(idx - cols, 0)); break;
-
+                case 'ArrowRight': e.preventDefault(); this._focusIdx(idx + 1); break;
+                case 'ArrowLeft':  e.preventDefault(); this._focusIdx(idx - 1); break;
+                case 'ArrowDown':  e.preventDefault(); this._focusIdx(Math.min(idx + cols, cards.length - 1)); break;
+                case 'ArrowUp':    e.preventDefault(); this._focusIdx(Math.max(idx - cols, 0)); break;
                 case 'Enter': {
                     e.preventDefault();
                     const card = this._cardById(this._focusedId);
@@ -328,7 +248,6 @@ const LetaDial = (() => {
                     window.open(card.href, '_blank', 'noopener,noreferrer');
                     break;
                 }
-
                 case 'Delete':
                 case 'Backspace': {
                     e.preventDefault();
@@ -339,12 +258,9 @@ const LetaDial = (() => {
                     const nextIdx = idx < cards.length - 1 ? idx : idx - 1;
                     const nextId  = (nextIdx >= 0 && cards[nextIdx] && parseInt(cards[nextIdx].dataset.dialId) !== dialId)
                         ? parseInt(cards[nextIdx].dataset.dialId) : null;
-                    dials_module.confirmDelete(dial, () => {
-                        this._focusedId = nextId;
-                    });
+                    dials_module.confirmDelete(dial, () => { this._focusedId = nextId; });
                     break;
                 }
-
                 case 'e':
                 case 'E': {
                     e.preventDefault();
@@ -379,9 +295,7 @@ const LetaDial = (() => {
             });
             document.addEventListener('keydown', e => {
                 if (e.key === '/' && !['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) {
-                    e.preventDefault();
-                    keyboard_nav.clear();
-                    input.focus();
+                    e.preventDefault(); keyboard_nav.clear(); input.focus();
                 }
                 if (e.key === 'Escape' && document.activeElement === input) input.blur();
             });
@@ -428,65 +342,55 @@ const LetaDial = (() => {
     // ── Sort ──────────────────────────────────────────────────────────────────
     const sort_module = {
         OPTIONS: [
-            { id: 'manual',    label: 'Manual',   title: 'Manual order — drag to reorder' },
-            { id: 'name_asc',  label: 'A → Z',    title: 'Sort by name A→Z' },
-            { id: 'name_desc', label: 'Z → A',    title: 'Sort by name Z→A' },
+            { id: 'manual',    label: 'Manual',    title: 'Manual order — drag to reorder' },
+            { id: 'name_asc',  label: 'A → Z',     title: 'Sort by name A→Z' },
+            { id: 'name_desc', label: 'Z → A',     title: 'Sort by name Z→A' },
             { id: 'clicks',    label: '🔥 Popular', title: 'Most clicked first' },
-            { id: 'newest',    label: 'Newest',   title: 'Date added — newest first' },
-            { id: 'oldest',    label: 'Oldest',   title: 'Date added — oldest first' },
+            { id: 'newest',    label: 'Newest',    title: 'Date added — newest first' },
+            { id: 'oldest',    label: 'Oldest',    title: 'Date added — oldest first' },
         ],
+        init() {},
+        get(groupId)  { return localStorage.getItem('dv-sort-' + groupId) || 'manual'; },
+        set(groupId, sortId) { localStorage.setItem('dv-sort-' + groupId, sortId); },
+        isManual(groupId) { return this.get(groupId) === 'manual'; },
 
-        init() { /* stateless — nothing to set up */ },
-
-        get(groupId) {
-            return localStorage.getItem('dv-sort-' + groupId) || 'manual';
-        },
-
-        set(groupId, sortId) {
-            localStorage.setItem('dv-sort-' + groupId, sortId);
-        },
-
-        isManual(groupId) {
-            return this.get(groupId) === 'manual';
-        },
-
+        /**
+         * Apply sort — pinned dials always stay at the top (sesja 061).
+         * Within pinned and unpinned groups the chosen sort is applied separately.
+         */
         apply(dials, groupId) {
-            const sort = this.get(groupId);
-            const arr  = [...dials];
-            switch (sort) {
-                case 'name_asc':
-                    return arr.sort((a, b) =>
-                        (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' }));
-                case 'name_desc':
-                    return arr.sort((a, b) =>
-                        (b.title || '').localeCompare(a.title || '', undefined, { sensitivity: 'base' }));
-                case 'clicks':
-                    return arr.sort((a, b) => (b.click_count || 0) - (a.click_count || 0));
-                case 'newest':
-                    return arr.sort((a, b) => {
-                        const ta = new Date((b.created_at || '').replace(' ', 'T'));
-                        const tb = new Date((a.created_at || '').replace(' ', 'T'));
-                        return ta - tb;
-                    });
-                case 'oldest':
-                    return arr.sort((a, b) => {
-                        const ta = new Date((a.created_at || '').replace(' ', 'T'));
-                        const tb = new Date((b.created_at || '').replace(' ', 'T'));
-                        return ta - tb;
-                    });
-                default:
-                    return arr;
-            }
+            const sort   = this.get(groupId);
+            const pinned = dials.filter(d => d.pinned);
+            const rest   = dials.filter(d => !d.pinned);
+
+            const sortFn = (arr) => {
+                const a = [...arr];
+                switch (sort) {
+                    case 'name_asc':
+                        return a.sort((x, y) => (x.title||'').localeCompare(y.title||'', undefined, {sensitivity:'base'}));
+                    case 'name_desc':
+                        return a.sort((x, y) => (y.title||'').localeCompare(x.title||'', undefined, {sensitivity:'base'}));
+                    case 'clicks':
+                        return a.sort((x, y) => (y.click_count||0) - (x.click_count||0));
+                    case 'newest':
+                        return a.sort((x, y) => new Date((y.created_at||'').replace(' ','T')) - new Date((x.created_at||'').replace(' ','T')));
+                    case 'oldest':
+                        return a.sort((x, y) => new Date((x.created_at||'').replace(' ','T')) - new Date((y.created_at||'').replace(' ','T')));
+                    default:
+                        return a;
+                }
+            };
+
+            return [...sortFn(pinned), ...sortFn(rest)];
         },
 
         renderBar(groupId, dialCount) {
             document.getElementById('sort-bar')?.remove();
             if (dialCount === 0 || bulk_module.active) return;
-
-            const current  = this.get(groupId);
-            const bar      = document.createElement('div');
-            bar.id         = 'sort-bar';
-            bar.className  = 'sort-bar';
+            const current = this.get(groupId);
+            const bar     = document.createElement('div');
+            bar.id        = 'sort-bar';
+            bar.className = 'sort-bar';
 
             const lbl = document.createElement('span');
             lbl.className   = 'sort-bar-label';
@@ -495,9 +399,8 @@ const LetaDial = (() => {
 
             const opts = document.createElement('div');
             opts.className = 'sort-options';
-
             this.OPTIONS.forEach(opt => {
-                const btn     = document.createElement('button');
+                const btn = document.createElement('button');
                 btn.type      = 'button';
                 btn.className = 'sort-btn' + (opt.id === current ? ' active' : '');
                 btn.title     = opt.title;
@@ -514,7 +417,7 @@ const LetaDial = (() => {
             bar.appendChild(opts);
 
             if (current !== 'manual' && groupId !== 'all') {
-                const hint      = document.createElement('span');
+                const hint = document.createElement('span');
                 hint.className  = 'sort-bar-hint';
                 hint.textContent = '↑ Switch to Manual to drag & reorder';
                 bar.appendChild(hint);
@@ -528,31 +431,12 @@ const LetaDial = (() => {
     // ── Groups ────────────────────────────────────────────────────────────────
     const groups_module = {
         bar: null,
-
-        EMOJIS: [
-            '💼','📁','📂','📋','📊','📈','📉','💻','🖥️','🖨️','⌨️','🖱️',
-            '⚙️','🔧','🔨','🔩','🛠️','📌','📍','🗂️','🗃️','📚','📖','📝',
-            '✏️','🖊️','📐','📏','🔑','🗝️','🔐','🔒','🛡️','🔔','💡','⚡',
-            '🌐','📱','📞','☎️','✉️','📧','📨','📩','📦','🎁','🏆','🥇',
-            '⭐','🌟','❤️','💜','💙','💚','🧡','💛','🔥','❄️','🌱','🌍',
-            '🌙','☀️','⛅','🎵','🎮','🎬','📺','🎨','🎯','🏋️','🚀','✈️',
-            '🚗','🏠','🏢','🏖️','🛒','☕','🍕','🍔','🍺','🎓','👥','👤',
-            '🤝','🧠','💰','💳','📰','🔖','📅','⏰','🔍','🗺️','🌈','🎪',
-        ],
-
+        EMOJIS: ['💼','📁','📂','📋','📊','📈','📉','💻','🖥️','🖨️','⌨️','🖱️','⚙️','🔧','🔨','🔩','🛠️','📌','📍','🗂️','🗃️','📚','📖','📝','✏️','🖊️','📐','📏','🔑','🗝️','🔐','🔒','🛡️','🔔','💡','⚡','🌐','📱','📞','☎️','✉️','📧','📨','📩','📦','🎁','🏆','🥇','⭐','🌟','❤️','💜','💙','💚','🧡','💛','🔥','❄️','🌱','🌍','🌙','☀️','⛅','🎵','🎮','🎬','📺','🎨','🎯','🏋️','🚀','✈️','🚗','🏠','🏢','🏖️','🛒','☕','🍕','🍔','🍺','🎓','👥','👤','🤝','🧠','💰','💳','📰','🔖','📅','⏰','🔍','🗺️','🌈','🎪'],
         COLORS: [
-            { label: 'Red',    hex: '#E53E3E' },
-            { label: 'Orange', hex: '#DD6B20' },
-            { label: 'Yellow', hex: '#D69E2E' },
-            { label: 'Green',  hex: '#38A169' },
-            { label: 'Teal',   hex: '#319795' },
-            { label: 'Blue',   hex: '#3182CE' },
-            { label: 'Indigo', hex: '#5A67D8' },
-            { label: 'Purple', hex: '#805AD5' },
-            { label: 'Pink',   hex: '#D53F8C' },
-            { label: 'Cyan',   hex: '#00B5D8' },
-            { label: 'Gray',   hex: '#718096' },
-            { label: 'Dark',   hex: '#2D3748' },
+            {label:'Red',hex:'#E53E3E'},{label:'Orange',hex:'#DD6B20'},{label:'Yellow',hex:'#D69E2E'},
+            {label:'Green',hex:'#38A169'},{label:'Teal',hex:'#319795'},{label:'Blue',hex:'#3182CE'},
+            {label:'Indigo',hex:'#5A67D8'},{label:'Purple',hex:'#805AD5'},{label:'Pink',hex:'#D53F8C'},
+            {label:'Cyan',hex:'#00B5D8'},{label:'Gray',hex:'#718096'},{label:'Dark',hex:'#2D3748'},
         ],
 
         async init() {
@@ -680,20 +564,12 @@ const LetaDial = (() => {
             const hasCustomIcon = !!group.icon_path;
             const ts            = Date.now();
 
-            const emojiGrid = this.EMOJIS.map(e =>
-                `<button type="button" class="emoji-btn" data-emoji="${e}" title="${e}">${e}</button>`
-            ).join('');
-
-            const colorSwatches = this.COLORS.map(c =>
-                `<button type="button" class="color-swatch" data-color="${c.hex}" title="${c.label}" style="background:${c.hex}" aria-label="${c.label}"></button>`
-            ).join('');
-
+            const emojiGrid    = this.EMOJIS.map(e => `<button type="button" class="emoji-btn" data-emoji="${e}" title="${e}">${e}</button>`).join('');
+            const colorSwatches = this.COLORS.map(c => `<button type="button" class="color-swatch" data-color="${c.hex}" title="${c.label}" style="background:${c.hex}" aria-label="${c.label}"></button>`).join('');
             const currentIconHtml = hasCustomIcon
                 ? `<img class="style-cur-icon-img" src="/api/group_icons/${group.id}?t=${ts}" alt="">`
                 : (group.icon ? `<span style="font-size:1.4rem">${escHtml(group.icon)}</span>` : '<span style="color:var(--text-faint)">—</span>');
-
-            const currentColorDisp = group.color
-                ? `<span class="color-preview-dot" style="background:${group.color}"></span>${group.color}` : '—';
+            const currentColorDisp = group.color ? `<span class="color-preview-dot" style="background:${group.color}"></span>${group.color}` : '—';
 
             modal.show({
                 title: 'Icon & color',
@@ -705,22 +581,16 @@ const LetaDial = (() => {
                     </div>
                     <div class="emoji-grid">${emojiGrid}</div>
                     <div class="style-row" style="margin-top:.5rem;gap:.5rem;align-items:center;flex-wrap:wrap">
-                      <input type="text" id="sm-custom-emoji" class="form-input"
-                             style="width:70px;text-align:center;font-size:1.3rem;padding:.4rem"
-                             maxlength="4" placeholder="✍️" title="Wklej emoji">
+                      <input type="text" id="sm-custom-emoji" class="form-input" style="width:70px;text-align:center;font-size:1.3rem;padding:.4rem" maxlength="4" placeholder="✍️">
                       <span style="color:var(--text-faint);font-size:.8rem;flex-shrink:0">lub</span>
                       <label class="btn btn-ghost btn-sm" style="cursor:pointer;margin:0" title="JPEG, PNG, GIF, WebP — max 2 MB">
-                        📂 Upload
-                        <input type="file" id="sm-icon-file" accept="image/jpeg,image/png,image/gif,image/webp" style="display:none">
+                        📂 Upload<input type="file" id="sm-icon-file" accept="image/jpeg,image/png,image/gif,image/webp" style="display:none">
                       </label>
                       <button type="button" class="btn btn-ghost btn-sm" id="sm-clear-icon">✕ Clear icon</button>
                     </div>
                     <div id="sm-upload-preview" style="display:none;align-items:center;gap:.6rem;margin-top:.5rem;padding:.5rem;background:var(--surface-alt);border-radius:var(--radius-sm);border:1px solid var(--border)">
                       <img id="sm-upload-img" style="width:48px;height:48px;border-radius:var(--radius-sm);border:1px solid var(--border);object-fit:cover;flex-shrink:0" alt="preview">
-                      <div style="font-size:.75rem;color:var(--text-muted);min-width:0">
-                        <div id="sm-upload-name" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div>
-                        <div style="color:var(--text-faint)">Zostanie przeskalowana do 32×32 WebP</div>
-                      </div>
+                      <div style="font-size:.75rem;color:var(--text-muted);min-width:0"><div id="sm-upload-name" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div></div>
                     </div>
                   </div>
                   <div class="style-section" style="margin-top:1rem">
@@ -730,7 +600,7 @@ const LetaDial = (() => {
                     </div>
                     <div class="color-swatches">${colorSwatches}</div>
                     <div class="style-row" style="margin-top:.5rem;gap:.5rem">
-                      <input type="color" id="sm-custom-color" class="color-picker-input" value="${group.color || '#3182CE'}" title="Custom color">
+                      <input type="color" id="sm-custom-color" class="color-picker-input" value="${group.color || '#3182CE'}">
                       <label for="sm-custom-color" class="btn btn-ghost btn-sm" style="cursor:pointer">Custom…</label>
                       <button type="button" class="btn btn-ghost btn-sm" id="sm-clear-color">No color</button>
                     </div>
@@ -755,7 +625,7 @@ const LetaDial = (() => {
                             const res  = await fetch(`/api/group_icons/${group.id}/upload`, { method: 'POST', headers: { 'X-CSRF-Token': api.csrf() }, credentials: 'same-origin', body: fd });
                             const data = await res.json();
                             if (!data.ok) { toast.error(data.error || 'Icon upload failed.'); return false; }
-                        } catch (e) { toast.error('Upload failed: network error.'); return false; }
+                        } catch { toast.error('Upload failed: network error.'); return false; }
                     }
                     if (!selectedFile && clearCustomIcon && group.icon_path) await api.delete(`/api/group_icons/${group.id}`);
                     toast.success('Style saved.'); await this.reload(); return true;
@@ -775,11 +645,7 @@ const LetaDial = (() => {
 
                 const updatePreview = () => {
                     if (prevEmoji) { prevEmoji.textContent = selectedIcon || ''; prevEmoji.style.display = (selectedIcon && !selectedFile) ? '' : 'none'; }
-                    if (prevImg) {
-                        if (selectedFile) prevImg.style.display = '';
-                        else if (clearCustomIcon || !group.icon_path) prevImg.style.display = 'none';
-                        else prevImg.style.display = '';
-                    }
+                    if (prevImg) { prevImg.style.display = (selectedFile || (!clearCustomIcon && group.icon_path)) ? '' : 'none'; }
                     if (iconVal) {
                         if (selectedFile && uploadImg?.src) iconVal.innerHTML = `<img class="style-cur-icon-img" src="${escHtml(uploadImg.src)}" alt="">`;
                         else if (selectedIcon) iconVal.innerHTML = `<span style="font-size:1.4rem">${escHtml(selectedIcon)}</span>`;
@@ -798,27 +664,24 @@ const LetaDial = (() => {
                     if (uploadPrev) uploadPrev.style.display = 'none';
                     updatePreview();
                 }));
-
                 customEmoji?.addEventListener('input', function() {
                     const val = this.value.trim();
                     if (val) { selectedIcon = val; selectedFile = null; clearCustomIcon = true; if (uploadPrev) uploadPrev.style.display = 'none'; updatePreview(); }
                 });
-
                 document.getElementById('sm-icon-file')?.addEventListener('change', function() {
                     const f = this.files?.[0];
                     if (!f) return;
-                    if (f.size > 2 * 1024 * 1024) { toast.error('File too large (max 2 MB).'); this.value = ''; return; }
+                    if (f.size > 2*1024*1024) { toast.error('File too large (max 2 MB).'); this.value = ''; return; }
                     if (uploadImg?.src?.startsWith('blob:')) URL.revokeObjectURL(uploadImg.src);
                     const objUrl = URL.createObjectURL(f);
                     selectedFile = f; selectedIcon = null; clearCustomIcon = false;
                     if (customEmoji) customEmoji.value = '';
-                    if (uploadImg)  uploadImg.src = objUrl;
+                    if (uploadImg) uploadImg.src = objUrl;
                     if (uploadName) uploadName.textContent = f.name;
                     if (uploadPrev) uploadPrev.style.display = 'flex';
-                    if (prevImg)    { prevImg.src = objUrl; prevImg.style.display = ''; }
+                    if (prevImg) { prevImg.src = objUrl; prevImg.style.display = ''; }
                     updatePreview();
                 });
-
                 document.getElementById('sm-clear-icon')?.addEventListener('click', () => {
                     selectedIcon = null; selectedFile = null; clearCustomIcon = true;
                     if (customEmoji) customEmoji.value = '';
@@ -827,19 +690,15 @@ const LetaDial = (() => {
                     if (prevImg) prevImg.style.display = 'none';
                     updatePreview();
                 });
-
                 document.querySelectorAll('.color-swatch').forEach(btn => btn.addEventListener('click', () => {
                     selectedColor = btn.dataset.color.toLowerCase();
                     const cp = document.getElementById('sm-custom-color'); if (cp) cp.value = selectedColor;
                     updatePreview();
                 }));
-
                 document.getElementById('sm-custom-color')?.addEventListener('input', () => {
                     selectedColor = document.getElementById('sm-custom-color').value.toLowerCase(); updatePreview();
                 });
-
                 document.getElementById('sm-clear-color')?.addEventListener('click', () => { selectedColor = null; updatePreview(); });
-
                 updatePreview();
             }, 80);
         },
@@ -931,7 +790,7 @@ const LetaDial = (() => {
 
         makeCard(dial) {
             const card = document.createElement('a');
-            card.className = 'dial-card';
+            card.className = 'dial-card' + (dial.pinned ? ' pinned' : '');
             card.href = dial.url; card.target = '_blank'; card.rel = 'noopener noreferrer';
             card.dataset.dialId = dial.id; card.dataset.url = dial.url || '';
 
@@ -939,6 +798,13 @@ const LetaDial = (() => {
 
             let host = '';
             try { host = new URL(dial.url).hostname; } catch {}
+
+            // Pin badge (sesja 061)
+            const pinBadge = document.createElement('span');
+            pinBadge.className = 'dial-pin-badge';
+            pinBadge.setAttribute('aria-label', 'Pinned');
+            pinBadge.textContent = '📌';
+            card.appendChild(pinBadge);
 
             const header = document.createElement('div');
             header.className = 'dial-header';
@@ -957,18 +823,14 @@ const LetaDial = (() => {
             if (dial.notes) {
                 const notesWrap = document.createElement('div');
                 notesWrap.className = 'dial-notes-tooltip-wrap';
-
                 const notesEl = document.createElement('div');
                 notesEl.className = 'dial-notes';
                 notesEl.textContent = dial.notes;
-                notesEl.title = '';
                 notesWrap.appendChild(notesEl);
-
                 const tooltip = document.createElement('div');
                 tooltip.className = 'dial-notes-tooltip';
                 tooltip.textContent = dial.notes;
                 notesWrap.appendChild(tooltip);
-
                 card.appendChild(notesWrap);
             }
 
@@ -1006,16 +868,20 @@ const LetaDial = (() => {
             card.addEventListener('contextmenu', e => {
                 if (bulk_module.active) { e.preventDefault(); bulk_module.toggle(dial.id); return; }
                 e.preventDefault(); e.stopPropagation();
-                const otherGroups    = groups.filter(g => g.id != dial.group_id);
-                const moveItems      = otherGroups.length > 0
+                const otherGroups   = groups.filter(g => g.id != dial.group_id);
+                const moveItems     = otherGroups.length > 0
                     ? otherGroups.map(g => ({ label: g.name, icon: '📁', action: () => this.moveTo(dial, g.id) }))
                     : [{ label: 'No other groups', icon: '', disabled: true, action: () => {} }];
                 const duplicateItems = [
                     { label: 'This group', icon: '📋', action: () => this.duplicateDial(dial, dial.group_id) },
                     ...groups.filter(g => g.id != dial.group_id).map(g => ({ label: g.name, icon: '📁', action: () => this.duplicateDial(dial, g.id) }))
                 ];
+                // Pin label changes based on current state (sesja 061)
+                const pinLabel = dial.pinned ? '📌 Unpin' : '📌 Pin to top';
+
                 contextMenu.show(e, [
                     { label: 'Edit dial',         icon: '✏',  action: () => this.showEditModal(dial) },
+                    { label: pinLabel,            icon: '',   action: () => this.togglePin(dial) },
                     { label: 'Refresh thumbnail', icon: '🔄', action: () => this.refreshThumb(dial) },
                     { label: 'Move to…',          icon: '📂', submenu: moveItems },
                     { label: 'Duplicate to…',     icon: '⧉',  submenu: duplicateItems },
@@ -1026,7 +892,8 @@ const LetaDial = (() => {
                 ]);
             });
 
-            if (activeGroupId !== 'all' && sort_module.isManual(activeGroupId)) {
+            // Drag only for unpinned dials in manual sort (sesja 061: pinned not draggable)
+            if (activeGroupId !== 'all' && sort_module.isManual(activeGroupId) && !dial.pinned) {
                 card.draggable = true;
                 card.addEventListener('dragstart', e => {
                     if (bulk_module.active) { e.preventDefault(); return; }
@@ -1052,10 +919,34 @@ const LetaDial = (() => {
                     const srcId = parseInt(e.dataTransfer.getData('text/plain'));
                     const dstId = parseInt(card.dataset.dialId);
                     if (srcId === dstId) return;
+                    // Don't drop onto pinned card area
+                    const dstDial = (this._cache[activeGroupId] || []).find(d => d.id === dstId);
+                    if (dstDial?.pinned) return;
                     await this.reorderDials(srcId, dstId, activeGroupId);
                 });
             }
             return card;
+        },
+
+        // ── Pin toggle (sesja 061) ─────────────────────────────────────────────
+        async togglePin(dial) {
+            const r = await api.post(`/api/dials/${dial.id}/pin`, {});
+            if (!r.ok) { toast.error(r.error || 'Could not update pin.'); return; }
+
+            // Update cache in-place
+            const cached = this._cache[activeGroupId] || [];
+            const found  = cached.find(d => d.id === dial.id);
+            if (found) found.pinned = r.pinned;
+            if (this._cache['all']) {
+                const foundAll = this._cache['all'].find(d => d.id === dial.id);
+                if (foundAll) foundAll.pinned = r.pinned;
+            }
+
+            const label = r.pinned ? 'Pinned to top.' : 'Unpinned.';
+            toast.success(label);
+
+            const grid = document.getElementById('dial-grid');
+            if (grid) this.render(activeGroupId, grid);
         },
 
         async moveTo(dial, newGroupId) {
@@ -1100,7 +991,6 @@ const LetaDial = (() => {
             return card;
         },
 
-        // ── Add Dial Modal (sesja 057: auto-fetch meta) ────────────────────────
         showAddModal(groupId) {
             if (!groupId || groupId === 'all') { toast.error('Select a specific group first.'); return; }
             modal.show({
@@ -1108,30 +998,17 @@ const LetaDial = (() => {
                 body: `
                     <div class="form-group">
                         <label class="form-label" for="new-dial-url">URL</label>
-                        <input type="url" id="new-dial-url" class="form-input"
-                               placeholder="https://example.com" autocomplete="off">
-                        <div id="new-dial-meta-status"
-                             style="min-height:1.2em;font-size:.75rem;margin-top:.25rem;transition:color .2s"></div>
+                        <input type="url" id="new-dial-url" class="form-input" placeholder="https://example.com" autocomplete="off">
+                        <div id="new-dial-meta-status" style="min-height:1.2em;font-size:.75rem;margin-top:.25rem;transition:color .2s"></div>
                     </div>
                     <div class="form-group" style="margin-top:.75rem">
-                        <label class="form-label" for="new-dial-title">
-                            Title
-                            <span style="color:var(--text-faint);font-weight:400">(auto-filled from page)</span>
-                        </label>
-                        <input type="text" id="new-dial-title" class="form-input"
-                               placeholder="Fetched automatically…" maxlength="100" autocomplete="off">
+                        <label class="form-label" for="new-dial-title">Title <span style="color:var(--text-faint);font-weight:400">(auto-filled from page)</span></label>
+                        <input type="text" id="new-dial-title" class="form-input" placeholder="Fetched automatically…" maxlength="100" autocomplete="off">
                     </div>
                     <div class="form-group" style="margin-top:.75rem">
-                        <label class="form-label" for="new-dial-notes">
-                            Note
-                            <span style="color:var(--text-faint);font-weight:400">(auto-filled from description)</span>
-                        </label>
-                        <textarea id="new-dial-notes" class="form-input" rows="2" maxlength="500"
-                            placeholder="Fetched from page description…"
-                            style="resize:vertical;min-height:54px;font-family:var(--font-sans);font-size:.875rem"></textarea>
-                        <div style="text-align:right;font-size:.72rem;color:var(--text-faint);margin-top:.2rem">
-                            <span id="new-dial-notes-count">0</span>/500
-                        </div>
+                        <label class="form-label" for="new-dial-notes">Note <span style="color:var(--text-faint);font-weight:400">(auto-filled from description)</span></label>
+                        <textarea id="new-dial-notes" class="form-input" rows="2" maxlength="500" placeholder="Fetched from page description…" style="resize:vertical;min-height:54px;font-family:var(--font-sans);font-size:.875rem"></textarea>
+                        <div style="text-align:right;font-size:.72rem;color:var(--text-faint);margin-top:.2rem"><span id="new-dial-notes-count">0</span>/500</div>
                     </div>`,
                 confirmLabel: 'Add',
                 onConfirm: async () => {
@@ -1149,27 +1026,17 @@ const LetaDial = (() => {
                 }
             });
             setTimeout(() => {
-                const urlInput    = document.getElementById('new-dial-url');
-                const titleInput  = document.getElementById('new-dial-title');
-                const notesInput  = document.getElementById('new-dial-notes');
-                const statusEl    = document.getElementById('new-dial-meta-status');
-                const notesCount  = document.getElementById('new-dial-notes-count');
-
+                const urlInput   = document.getElementById('new-dial-url');
+                const titleInput = document.getElementById('new-dial-title');
+                const notesInput = document.getElementById('new-dial-notes');
+                const statusEl   = document.getElementById('new-dial-meta-status');
+                const notesCount = document.getElementById('new-dial-notes-count');
                 urlInput?.focus();
-
-                // Notes live counter
-                notesInput?.addEventListener('input', function() {
-                    if (notesCount) notesCount.textContent = this.value.length;
-                });
-
-                // Attach auto-fetch (sesja 057)
-                if (urlInput && titleInput) {
-                    meta_module.attachDebounced(urlInput, titleInput, notesInput, statusEl);
-                }
+                notesInput?.addEventListener('input', function() { if (notesCount) notesCount.textContent = this.value.length; });
+                if (urlInput && titleInput) meta_module.attachDebounced(urlInput, titleInput, notesInput, statusEl);
             }, 80);
         },
 
-        // ── Edit Dial Modal (sesja 057: manual "Fetch title" button) ──────────
         showEditModal(dial) {
             modal.show({
                 title: 'Edit Dial',
@@ -1177,41 +1044,25 @@ const LetaDial = (() => {
                     <div class="form-group">
                         <label class="form-label" for="edit-dial-url">URL</label>
                         <div style="display:flex;gap:.5rem;align-items:center">
-                            <input type="url" id="edit-dial-url" class="form-input"
-                                   value="${escHtml(dial.url)}" autocomplete="off" style="flex:1">
-                            <button type="button" id="edit-dial-fetch-btn" class="btn btn-ghost btn-sm"
-                                    title="Fetch title & description from URL"
-                                    style="flex-shrink:0;white-space:nowrap">↺ Fetch</button>
+                            <input type="url" id="edit-dial-url" class="form-input" value="${escHtml(dial.url)}" autocomplete="off" style="flex:1">
+                            <button type="button" id="edit-dial-fetch-btn" class="btn btn-ghost btn-sm" style="flex-shrink:0;white-space:nowrap">↺ Fetch</button>
                         </div>
-                        <div id="edit-dial-meta-status"
-                             style="min-height:1.2em;font-size:.75rem;margin-top:.25rem;transition:color .2s"></div>
+                        <div id="edit-dial-meta-status" style="min-height:1.2em;font-size:.75rem;margin-top:.25rem;transition:color .2s"></div>
                     </div>
                     <div class="form-group" style="margin-top:.75rem">
                         <label class="form-label" for="edit-dial-title">TITLE</label>
-                        <input type="text" id="edit-dial-title" class="form-input"
-                               value="${escHtml(dial.title)}" maxlength="100" autocomplete="off">
+                        <input type="text" id="edit-dial-title" class="form-input" value="${escHtml(dial.title)}" maxlength="100" autocomplete="off">
                     </div>
                     <div class="form-group" style="margin-top:.75rem">
-                        <label class="form-label" for="edit-dial-notes">
-                            NOTE <span style="color:var(--text-faint);font-weight:400">(optional)</span>
-                        </label>
-                        <textarea id="edit-dial-notes" class="form-input" rows="2" maxlength="500"
-                            placeholder="Short description, reminder…"
-                            style="resize:vertical;min-height:54px;font-family:var(--font-sans);font-size:.875rem">${escHtml(dial.notes || '')}</textarea>
-                        <div style="text-align:right;font-size:.72rem;color:var(--text-faint);margin-top:.2rem">
-                            <span id="edit-dial-notes-count">${(dial.notes || '').length}</span>/500
-                        </div>
+                        <label class="form-label" for="edit-dial-notes">NOTE <span style="color:var(--text-faint);font-weight:400">(optional)</span></label>
+                        <textarea id="edit-dial-notes" class="form-input" rows="2" maxlength="500" placeholder="Short description, reminder…" style="resize:vertical;min-height:54px;font-family:var(--font-sans);font-size:.875rem">${escHtml(dial.notes || '')}</textarea>
+                        <div style="text-align:right;font-size:.72rem;color:var(--text-faint);margin-top:.2rem"><span id="edit-dial-notes-count">${(dial.notes||'').length}</span>/500</div>
                     </div>
                     <div class="form-group" style="margin-top:.75rem">
-                        <label class="form-label" for="edit-dial-thumb">
-                            THUMBNAIL
-                            <span style="color:var(--text-faint);font-weight:400">(optional — JPEG, PNG, GIF, WebP, max 5 MB)</span>
-                        </label>
-                        <input type="file" id="edit-dial-thumb" class="form-input"
-                               accept="image/jpeg,image/png,image/gif,image/webp" style="cursor:pointer">
+                        <label class="form-label" for="edit-dial-thumb">THUMBNAIL <span style="color:var(--text-faint);font-weight:400">(optional — JPEG, PNG, GIF, WebP, max 5 MB)</span></label>
+                        <input type="file" id="edit-dial-thumb" class="form-input" accept="image/jpeg,image/png,image/gif,image/webp" style="cursor:pointer">
                         <div id="edit-dial-thumb-preview" style="display:none;margin-top:.5rem">
-                            <img id="edit-dial-thumb-img"
-                                 style="max-width:163px;max-height:100px;border-radius:var(--radius-sm);border:1px solid var(--border);display:block" alt="">
+                            <img id="edit-dial-thumb-img" style="max-width:163px;max-height:100px;border-radius:var(--radius-sm);border:1px solid var(--border);display:block" alt="">
                         </div>
                     </div>`,
                 confirmLabel: 'Save',
@@ -1231,7 +1082,7 @@ const LetaDial = (() => {
                             const res  = await fetch(`/api/thumbs/${dial.id}/upload`, { method: 'POST', headers: { 'X-CSRF-Token': api.csrf() }, credentials: 'same-origin', body: fd });
                             const data = await res.json();
                             if (!data.ok) toast.error(data.error || 'Thumbnail upload failed.');
-                        } catch (e) { toast.error('Thumbnail upload failed: network error.'); }
+                        } catch { toast.error('Thumbnail upload failed: network error.'); }
                     } else if (url !== dial.url) { api.post(`/api/thumbs/${dial.id}`, {}).catch(() => {}); }
                     toast.success('Dial updated.');
                     delete this._cache[activeGroupId]; delete this._cache['all'];
@@ -1249,34 +1100,25 @@ const LetaDial = (() => {
                 const fetchBtn   = document.getElementById('edit-dial-fetch-btn');
 
                 urlInput?.focus(); urlInput?.select();
+                notesInput?.addEventListener('input', function() { if (notesCount) notesCount.textContent = this.value.length; });
 
-                notesInput?.addEventListener('input', function() {
-                    if (notesCount) notesCount.textContent = this.value.length;
-                });
-
-                // Manual "↺ Fetch" button — always overwrites (user explicitly asked)
                 fetchBtn?.addEventListener('click', async () => {
                     const url = urlInput?.value?.trim();
                     if (!url) { toast.error('Enter a URL first.'); return; }
-                    fetchBtn.disabled = true;
-                    fetchBtn.textContent = '⏳';
-                    // Temporarily clear fields so meta_module fills them
+                    fetchBtn.disabled = true; fetchBtn.textContent = '⏳';
                     const savedTitle = titleInput?.value;
                     const savedNotes = notesInput?.value;
                     if (titleInput) titleInput.value = '';
                     if (notesInput) notesInput.value = '';
-                    meta_module._lastUrl = null; // force re-fetch
+                    meta_module._lastUrl = null;
                     await meta_module.fetchFor(url, titleInput, notesInput, statusEl);
-                    // If nothing was filled, restore originals
                     if (titleInput && !titleInput.value) titleInput.value = savedTitle;
                     if (notesInput && !notesInput.value) notesInput.value = savedNotes;
                     if (notesCount && notesInput) notesCount.textContent = notesInput.value.length;
-                    fetchBtn.disabled = false;
-                    fetchBtn.textContent = '↺ Fetch';
+                    fetchBtn.disabled = false; fetchBtn.textContent = '↺ Fetch';
                 });
 
-                // Thumbnail preview
-                document.getElementById('edit-dial-thumb')?.addEventListener('change', function () {
+                document.getElementById('edit-dial-thumb')?.addEventListener('change', function() {
                     const f = this.files?.[0];
                     const preview = document.getElementById('edit-dial-thumb-preview');
                     const img = document.getElementById('edit-dial-thumb-img');
@@ -1322,16 +1164,14 @@ const LetaDial = (() => {
 
     // ── Bulk Select ───────────────────────────────────────────────────────────
     const bulk_module = {
-        active:   false,
-        selected: new Set(),
+        active: false, selected: new Set(),
         init() {
             document.getElementById('btn-bulk-select')?.addEventListener('click', () => { this.active ? this.exit() : this.enter(); });
             document.getElementById('btn-bulk-select-mobile')?.addEventListener('click', () => { mobile_menu.close(); this.active ? this.exit() : this.enter(); });
             document.addEventListener('keydown', e => { if (e.key === 'Escape' && this.active) this.exit(); });
         },
         enter() {
-            this.active = true; this.selected.clear(); this._updateBtn();
-            keyboard_nav.clear();
+            this.active = true; this.selected.clear(); this._updateBtn(); keyboard_nav.clear();
             const grid = document.getElementById('dial-grid');
             if (grid) { grid.classList.add('bulk-select-active'); dials_module.render(activeGroupId, grid); }
             this._renderToolbar();
@@ -1387,14 +1227,13 @@ const LetaDial = (() => {
                     : (g.icon ? `<span>${escHtml(g.icon)}</span>` : '');
                 return `<label style="display:flex;align-items:center;gap:.6rem;padding:.45rem .5rem;border-radius:var(--radius-sm);cursor:pointer;font-size:var(--text-sm);transition:background var(--transition)" onmouseover="this.style.background='var(--surface-alt)'" onmouseout="this.style.background=''">
                     <input type="radio" name="bulk-group" value="${g.id}" style="accent-color:var(--primary);flex-shrink:0">
-                    ${iconHtml}
-                    <span style="flex:1">${escHtml(g.name)}</span>
-                    <span style="color:var(--text-faint);font-size:var(--text-xs)">${g.dial_count || 0} dials</span>
+                    ${iconHtml}<span style="flex:1">${escHtml(g.name)}</span>
+                    <span style="color:var(--text-faint);font-size:var(--text-xs)">${g.dial_count||0} dials</span>
                 </label>`;
             }).join('');
             modal.show({
                 title: action === 'move' ? 'Move to group' : 'Duplicate to group',
-                body: `<p style="font-size:.875rem;color:var(--text-muted);margin-bottom:.75rem">${verb} <strong>${count} dial${count !== 1 ? 's' : ''}</strong> to:</p>
+                body: `<p style="font-size:.875rem;color:var(--text-muted);margin-bottom:.75rem">${verb} <strong>${count} dial${count!==1?'s':''}</strong> to:</p>
                        <div style="display:flex;flex-direction:column;gap:.1rem;max-height:260px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-md);padding:.4rem">${groupOptions}</div>`,
                 confirmLabel: verb,
                 onConfirm: async () => {
@@ -1405,12 +1244,12 @@ const LetaDial = (() => {
                     if (action === 'move') {
                         const r = await api.post('/api/dials/bulk-move', { ids, group_id: targetGroupId });
                         if (!r.ok) { toast.error(r.error || 'Could not move dials.'); return false; }
-                        toast.success(`Moved ${r.moved} dial${r.moved !== 1 ? 's' : ''}.`);
+                        toast.success(`Moved ${r.moved} dial${r.moved!==1?'s':''}.`);
                     } else {
                         const r = await api.post('/api/dials/bulk-duplicate', { ids, group_id: targetGroupId });
                         if (!r.ok) { toast.error(r.error || 'Could not duplicate dials.'); return false; }
-                        (r.ids || []).forEach(id => api.post(`/api/thumbs/${id}`, {}).catch(() => {}));
-                        toast.success(`Duplicated ${r.duplicated} dial${r.duplicated !== 1 ? 's' : ''}.`);
+                        (r.ids||[]).forEach(id => api.post(`/api/thumbs/${id}`, {}).catch(()=>{}));
+                        toast.success(`Duplicated ${r.duplicated} dial${r.duplicated!==1?'s':''}.`);
                     }
                     this.exit();
                     Object.keys(dials_module._cache).forEach(k => delete dials_module._cache[k]);
@@ -1423,13 +1262,13 @@ const LetaDial = (() => {
             const count = this.selected.size;
             modal.show({
                 title: 'Delete selected dials',
-                body: `<p>Delete <strong>${count} dial${count !== 1 ? 's' : ''}</strong>?</p><p class="text-muted text-sm" style="margin-top:.5rem">Cannot be undone.</p>`,
+                body: `<p>Delete <strong>${count} dial${count!==1?'s':''}</strong>?</p><p class="text-muted text-sm" style="margin-top:.5rem">Cannot be undone.</p>`,
                 confirmLabel: `Delete ${count}`, confirmClass: 'btn-danger',
                 onConfirm: async () => {
                     const ids = [...this.selected];
                     const r   = await api.post('/api/dials/bulk-delete', { ids });
                     if (!r.ok) { toast.error(r.error || 'Could not delete dials.'); return false; }
-                    toast.success(`Deleted ${r.deleted} dial${r.deleted !== 1 ? 's' : ''}.`);
+                    toast.success(`Deleted ${r.deleted} dial${r.deleted!==1?'s':''}.`);
                     this.exit();
                     Object.keys(dials_module._cache).forEach(k => delete dials_module._cache[k]);
                     await groups_module.reload(); groups_module.render();
@@ -1486,7 +1325,7 @@ const LetaDial = (() => {
         show(msg, type = 'info', dur = 3500) {
             const icons = { success: '✓', error: '✗', info: 'ℹ' };
             const el = document.createElement('div'); el.className = `toast toast-${type}`;
-            el.innerHTML = `<span class="toast-icon">${icons[type] || 'ℹ'}</span><span>${escHtml(msg)}</span>`;
+            el.innerHTML = `<span class="toast-icon">${icons[type]||'ℹ'}</span><span>${escHtml(msg)}</span>`;
             this._c().appendChild(el);
             setTimeout(() => el.style.opacity = '0', dur - 300);
             setTimeout(() => el.remove(), dur);
@@ -1509,9 +1348,9 @@ const LetaDial = (() => {
             items.forEach(item => {
                 if (item.separator) { const s = document.createElement('div'); s.className = 'context-menu-sep'; menu.appendChild(s); return; }
                 const btn = document.createElement('button'); btn.type = 'button';
-                btn.className = 'context-menu-item' + (item.danger ? ' danger' : '') + (item.disabled ? ' disabled' : '') + (item.submenu ? ' has-submenu' : '');
+                btn.className = 'context-menu-item' + (item.danger?' danger':'') + (item.disabled?' disabled':'') + (item.submenu?' has-submenu':'');
                 if (item.disabled) { btn.disabled = true; btn.style.opacity = '.4'; }
-                btn.innerHTML = `<span class="context-menu-item-icon">${item.icon || ''}</span>${escHtml(item.label)}`;
+                btn.innerHTML = `<span class="context-menu-item-icon">${item.icon||''}</span>${escHtml(item.label)}`;
                 if (item.submenu) { btn.addEventListener('mouseenter', (ev) => this._showSub(ev, btn, item.submenu, menu)); btn.addEventListener('click', ev => ev.stopPropagation()); }
                 else { btn.addEventListener('mouseenter', () => this._hideSub()); btn.addEventListener('click', ev => { ev.stopPropagation(); this.close(); if (!item.disabled) item.action?.(); }); }
                 menu.appendChild(btn);
@@ -1525,9 +1364,9 @@ const LetaDial = (() => {
             const sub = document.createElement('div'); sub.className = 'context-menu context-submenu';
             subItems.forEach(item => {
                 const b = document.createElement('button'); b.type = 'button';
-                b.className = 'context-menu-item' + (item.disabled ? ' disabled' : '');
+                b.className = 'context-menu-item' + (item.disabled?' disabled':'');
                 if (item.disabled) { b.disabled = true; b.style.opacity = '.4'; }
-                b.innerHTML = `<span class="context-menu-item-icon">${item.icon || ''}</span>${escHtml(item.label)}`;
+                b.innerHTML = `<span class="context-menu-item-icon">${item.icon||''}</span>${escHtml(item.label)}`;
                 b.addEventListener('click', ev => { ev.stopPropagation(); this.close(); if (!item.disabled) item.action?.(); });
                 sub.appendChild(b);
             });
@@ -1544,7 +1383,7 @@ const LetaDial = (() => {
         _hideSub() { this.subEl?.remove(); this.subEl = null; },
         _position(menu, cx, cy) {
             const r = menu.getBoundingClientRect(); let x = cx, y = cy;
-            if (x + r.width > window.innerWidth - 8)  x = window.innerWidth  - r.width  - 8;
+            if (x + r.width > window.innerWidth - 8)   x = window.innerWidth  - r.width  - 8;
             if (y + r.height > window.innerHeight - 8) y = window.innerHeight - r.height - 8;
             menu.style.left = Math.max(8, x) + 'px'; menu.style.top = Math.max(8, y) + 'px';
         },

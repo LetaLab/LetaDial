@@ -118,8 +118,9 @@ class Mailer
         self::drainEhlo($sock);
 
         // STARTTLS for port 587
+        // FIX: use fwrite+expect zamiast cmd+expect (cmd już konsumuje odpowiedź 220)
         if ($port === 587) {
-            self::cmd($sock, 'STARTTLS');
+            fwrite($sock, "STARTTLS\r\n");
             if (!self::expect($sock, 220)) {
                 fclose($sock); throw new RuntimeException('SMTP: STARTTLS failed');
             }
@@ -168,7 +169,6 @@ class Mailer
         $date   = date('r');
         $msg_id = '<' . bin2hex(random_bytes(8)) . '@' . $domain . '>';
 
-        // Sender name: only encode if non-ASCII
         $name    = SMTP_NAME;
         $from    = SMTP_FROM;
         $encoded_name = mb_detect_encoding($name, 'ASCII', true)
@@ -190,7 +190,6 @@ class Mailer
         $msg .= "X-Mailer: DialVault/" . APP_VERSION . "\r\n";
 
         if ($html) {
-            // Multipart/alternative: text + HTML
             $msg .= "Content-Type: multipart/alternative; boundary=\"{$boundary}\"\r\n";
             $msg .= "\r\n";
             $msg .= "--{$boundary}\r\n";
@@ -205,7 +204,6 @@ class Mailer
             $msg .= chunk_split(base64_encode($html), 76, "\r\n");
             $msg .= "--{$boundary}--\r\n";
         } else {
-            // Plain text only — base64 avoids ALL QP encoding issues with URLs
             $msg .= "Content-Type: text/plain; charset=UTF-8\r\n";
             $msg .= "Content-Transfer-Encoding: base64\r\n";
             $msg .= "\r\n";
@@ -242,9 +240,7 @@ class Mailer
 
     private static function drainEhlo(mixed $sock): void
     {
-        // After EHLO the response is multi-line; read() handles it via '-' detection
-        // but we might need one extra read if it returned mid-stream
-        // Actually our read() already handles multi-line EHLO correctly
+        // read() handles multi-line EHLO correctly via '-' detection
     }
 
     // ── HTML email template ───────────────────────────────────────────────────

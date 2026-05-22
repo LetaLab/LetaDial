@@ -4,6 +4,7 @@
  * Sesja 054: Dial notes — .dial-notes, .dial-notes-tooltip
  * Sesja 056: Sort options — .sort-bar, .sort-btn, .sort-bar-hint
  * Sesja 061: Pin indicator — .dial-pin-badge, .dial-card.pinned
+ * Sesja 062: Recent group — .dial-recent-info, .dial-recent-time, .dial-group-badge
  */
 
 /* ── Reset & base ────────────────────────────────────────── */
@@ -202,7 +203,6 @@ body { font-family:var(--font-sans); background:var(--bg); color:var(--text); mi
 
 /* ── Pinned card styling (sesja 061) ─────────────────────────
    Pinned cards get a subtle top border accent.
-   The pin badge is shown in top-left corner.
    ──────────────────────────────────────────────────────────── */
 .dial-card.pinned {
     border-top: 2px solid var(--primary);
@@ -338,6 +338,42 @@ body { font-family:var(--font-sans); background:var(--bg); color:var(--text); mi
 .dial-notes-tooltip-wrap:hover .dial-notes-tooltip {
     opacity: 1;
     transform: translateX(-50%) translateY(0);
+}
+
+/* ── Recent group info row (sesja 062) ───────────────────────
+   Shows group name badge + relative time on dial cards
+   when viewed in the "Recent" virtual tab.
+   ──────────────────────────────────────────────────────────── */
+.dial-recent-info {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px;
+    padding: 0 2px;
+    min-height: 14px;
+}
+
+.dial-group-badge {
+    font-size: 10px;
+    color: var(--text-faint);
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 1px 5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100px;
+    line-height: 1.4;
+    flex-shrink: 1;
+}
+
+.dial-recent-time {
+    font-size: 10px;
+    color: var(--text-faint);
+    white-space: nowrap;
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
 }
 
 .dial-header { display:flex; align-items:center; gap:5px; height:18px; overflow:hidden; }

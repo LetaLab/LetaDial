@@ -356,7 +356,7 @@ function db_create_tables(PDO $pdo): void {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
 
         // ── Dials ─────────────────────────────────────────────────────────────
-        // Schema matches src/Dial.php exactly (thumb_path, thumb_updated_at, click_count, last_click)
+        // Schema matches src/Dial.php exactly (thumb_path, thumb_updated_at, click_count, last_click, pinned)
         "CREATE TABLE IF NOT EXISTS dials (
             id               INT UNSIGNED  AUTO_INCREMENT PRIMARY KEY,
             user_id          INT UNSIGNED  NOT NULL,
@@ -364,6 +364,7 @@ function db_create_tables(PDO $pdo): void {
             title            VARCHAR(100)  NOT NULL,
             url              VARCHAR(2048) NOT NULL,
             position         SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+            pinned           TINYINT(1)    NOT NULL DEFAULT 0,
             thumb_path       VARCHAR(255)  DEFAULT NULL,
             thumb_updated_at DATETIME      DEFAULT NULL,
             click_count      INT UNSIGNED  NOT NULL DEFAULT 0,
@@ -371,8 +372,9 @@ function db_create_tables(PDO $pdo): void {
             created_at       DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (group_id) REFERENCES groups_list(id) ON DELETE CASCADE,
             FOREIGN KEY (user_id)  REFERENCES users(id) ON DELETE CASCADE,
-            INDEX idx_group (group_id),
-            INDEX idx_user  (user_id)
+            INDEX idx_group      (group_id),
+            INDEX idx_user       (user_id),
+            INDEX idx_user_pinned (user_id, pinned)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
 
         // ── TOTP Backup Codes ─────────────────────────────────────────────────

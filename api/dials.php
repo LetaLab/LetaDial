@@ -3,6 +3,7 @@
  * LetaDial — Dials API
  * ====================
  * GET    /api/dials?group_id=X      list dials for group (null = all)
+ * GET    /api/dials?recent=1         list 20 most recently clicked dials (sesja 062)
  * POST   /api/dials                 create  {group_id, title, url, notes}
  * PUT    /api/dials/{id}            update  {title, url, notes} OR move {group_id}
  * DELETE /api/dials/{id}            delete
@@ -30,6 +31,13 @@ $path   = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
 $parts  = array_values(array_filter(explode('/', trim($path, '/'))));
 $sub    = $parts[2] ?? null;
 $action = $parts[3] ?? null;
+
+// ── GET /api/dials?recent=1 ───────────────────────────────────────────────────
+if ($method === 'GET' && $sub === null && !empty($_GET['recent'])) {
+    $dials = Dial::getRecent($user['id']);
+    echo json_encode(['ok' => true, 'dials' => $dials]);
+    exit;
+}
 
 // ── GET /api/dials?group_id=X ─────────────────────────────────────────────────
 if ($method === 'GET' && $sub === null) {

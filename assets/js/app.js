@@ -7,9 +7,12 @@
  * Sesja 056: Sort options
  * Sesja 057: OG meta auto-fetch
  * Sesja 061: Pin / favourite — pinned dials always first, 📌 badge, context menu toggle
+ * Sesja 062: Recently used — virtual group, last 20 clicked dials ordered by last_click
  */
 
 const LetaDial = (() => {
+
+    const RECENT_GROUP_ID = 'recent';
 
     let activeGroupId = localStorage.getItem('dv-last-group') || 'all';
     let groups        = [];
@@ -251,6 +254,7 @@ const LetaDial = (() => {
                 case 'Delete':
                 case 'Backspace': {
                     e.preventDefault();
+                    if (activeGroupId === RECENT_GROUP_ID) break; // read-only in recent
                     const dialId = this._focusedId;
                     const allDials = Object.values(dials_module._cache).flat();
                     const dial = allDials.find(d => d.id === dialId);
@@ -356,9 +360,13 @@ const LetaDial = (() => {
 
         /**
          * Apply sort — pinned dials always stay at the top (sesja 061).
-         * Within pinned and unpinned groups the chosen sort is applied separately.
+         * Recent group: always sorted by last_click (server already does this,
+         * but we keep it stable client-side regardless of local sort preference).
          */
         apply(dials, groupId) {
+            // Recent group is always ordered by last_click — no client-side re-sort
+            if (groupId === RECENT_GROUP_ID) return [...dials];
+
             const sort   = this.get(groupId);
             const pinned = dials.filter(d => d.pinned);
             const rest   = dials.filter(d => !d.pinned);
@@ -386,7 +394,8 @@ const LetaDial = (() => {
 
         renderBar(groupId, dialCount) {
             document.getElementById('sort-bar')?.remove();
-            if (dialCount === 0 || bulk_module.active) return;
+            // No sort bar for recent group — order is always by last_click
+            if (dialCount === 0 || bulk_module.active || groupId === RECENT_GROUP_ID) return;
             const current = this.get(groupId);
             const bar     = document.createElement('div');
             bar.id        = 'sort-bar';
@@ -457,8 +466,11 @@ const LetaDial = (() => {
 
         render() {
             if (!this.bar) return;
-            this.bar.querySelectorAll('.group-tab[data-group-id]:not([data-group-id="all"])').forEach(t => t.remove());
+            this.bar.querySelectorAll('.group-tab[data-group-id]:not([data-group-id="all"]):not([data-group-id="recent"])').forEach(t => t.remove());
+
             const total  = groups.reduce((s, g) => s + (parseInt(g.dial_count) || 0), 0);
+
+            // ── All tab ───────────────────────────────────────────────────────
             const allTab = this.bar.querySelector('[data-group-id="all"]');
             if (allTab) {
                 allTab.querySelector('.tab-count').textContent = total;
@@ -469,6 +481,34 @@ const LetaDial = (() => {
                     this.render(); dials_module.load('all');
                 };
             }
+
+            // ── Recent tab (sesja 062) ─────────────────────────────────────
+            let recentTab = this.bar.querySelector('[data-group-id="recent"]');
+            if (!recentTab) {
+                recentTab = document.createElement('button');
+                recentTab.type = 'button';
+                recentTab.className = 'group-tab';
+                recentTab.dataset.groupId = 'recent';
+                recentTab.innerHTML = `<span class="tab-icon" aria-hidden="true">🕐</span><span class="tab-name">Recent</span>`;
+                recentTab.title = 'Recently clicked dials — last 20';
+                // Insert after All tab, before real group tabs
+                const addBtn = this.bar.querySelector('#btn-add-group');
+                if (allTab && allTab.nextSibling) {
+                    this.bar.insertBefore(recentTab, allTab.nextSibling);
+                } else if (addBtn) {
+                    this.bar.insertBefore(recentTab, addBtn);
+                } else {
+                    this.bar.appendChild(recentTab);
+                }
+            }
+            recentTab.classList.toggle('active', activeGroupId === RECENT_GROUP_ID);
+            recentTab.onclick = () => {
+                search_module.clear(); keyboard_nav.clear();
+                activeGroupId = RECENT_GROUP_ID;
+                localStorage.setItem('dv-last-group', RECENT_GROUP_ID);
+                this.render(); dials_module.load(RECENT_GROUP_ID);
+            };
+
             const addBtn = this.bar.querySelector('#btn-add-group');
             groups.forEach(g => {
                 const tab = document.createElement('button');
@@ -731,7 +771,7 @@ const LetaDial = (() => {
             const grid = document.getElementById('dial-grid');
             if (!grid) return;
 
-            if (groups.length === 0) {
+            if (groups.length === 0 && groupId !== RECENT_GROUP_ID) {
                 grid.innerHTML = `<div class="empty-state"><div class="empty-state-icon">📌</div>
                     <h3>No groups yet</h3><p>Create your first group to start adding speed dials.</p>
                     <button id="btn-create-first" class="btn btn-primary" type="button">Create first group</button></div>`;
@@ -740,7 +780,16 @@ const LetaDial = (() => {
             }
 
             grid.innerHTML = '<div class="dials-loading"></div>';
-            const url  = groupId === 'all' ? '/api/dials' : `/api/dials?group_id=${groupId}`;
+
+            let url;
+            if (groupId === RECENT_GROUP_ID) {
+                url = '/api/dials?recent=1';
+            } else if (groupId === 'all') {
+                url = '/api/dials';
+            } else {
+                url = `/api/dials?group_id=${groupId}`;
+            }
+
             const data = await api.get(url);
             if (!data.ok) { toast.error('Could not load dials.'); grid.innerHTML = ''; return; }
             this._cache[groupId] = data.dials || [];
@@ -754,17 +803,26 @@ const LetaDial = (() => {
             grid.innerHTML = '';
             grid.classList.toggle('bulk-select-active', bulk_module.active);
 
-            dials.forEach(d => grid.appendChild(this.makeCard(d)));
-            if (groupId !== 'all' && !bulk_module.active) {
+            const isRecent = groupId === RECENT_GROUP_ID;
+
+            dials.forEach(d => grid.appendChild(this.makeCard(d, isRecent)));
+
+            if (!isRecent && groupId !== 'all' && !bulk_module.active) {
                 grid.appendChild(this.makeAddCard(groupId));
             } else if (dials.length === 0 && !bulk_module.active) {
-                grid.innerHTML = `<div class="empty-state"><div class="empty-state-icon" style="font-size:2rem;opacity:.3">🔗</div>
-                    <h3 style="color:var(--text-faint);font-weight:500">No dials yet</h3>
-                    <p>Select a group and click <strong>+ Add dial</strong> to get started.</p></div>`;
+                if (isRecent) {
+                    grid.innerHTML = `<div class="empty-state"><div class="empty-state-icon" style="font-size:2rem;opacity:.3">🕐</div>
+                        <h3 style="color:var(--text-faint);font-weight:500">No recent activity</h3>
+                        <p>Dials you click will appear here, ordered by most recently used.</p></div>`;
+                } else {
+                    grid.innerHTML = `<div class="empty-state"><div class="empty-state-icon" style="font-size:2rem;opacity:.3">🔗</div>
+                        <h3 style="color:var(--text-faint);font-weight:500">No dials yet</h3>
+                        <p>Select a group and click <strong>+ Add dial</strong> to get started.</p></div>`;
+                }
             }
 
             grid.oncontextmenu = (e) => {
-                if (bulk_module.active) return;
+                if (bulk_module.active || isRecent) return;
                 if (e.target.closest('.dial-card') || e.target.closest('.dial-add-card')) return;
                 e.preventDefault();
                 const currentDials = this._cache[activeGroupId] || [];
@@ -788,9 +846,13 @@ const LetaDial = (() => {
             toast.info(`Opening ${dials.length} dial${dials.length !== 1 ? 's' : ''} in new tabs…`);
         },
 
-        makeCard(dial) {
+        /**
+         * makeCard — sesja 062: when isRecent=true, show group badge + relative time
+         * instead of the notes row, and suppress drag/drop/pin.
+         */
+        makeCard(dial, isRecent = false) {
             const card = document.createElement('a');
-            card.className = 'dial-card' + (dial.pinned ? ' pinned' : '');
+            card.className = 'dial-card' + (dial.pinned && !isRecent ? ' pinned' : '');
             card.href = dial.url; card.target = '_blank'; card.rel = 'noopener noreferrer';
             card.dataset.dialId = dial.id; card.dataset.url = dial.url || '';
 
@@ -799,12 +861,14 @@ const LetaDial = (() => {
             let host = '';
             try { host = new URL(dial.url).hostname; } catch {}
 
-            // Pin badge (sesja 061)
-            const pinBadge = document.createElement('span');
-            pinBadge.className = 'dial-pin-badge';
-            pinBadge.setAttribute('aria-label', 'Pinned');
-            pinBadge.textContent = '📌';
-            card.appendChild(pinBadge);
+            // Pin badge (sesja 061) — hidden in recent view
+            if (!isRecent) {
+                const pinBadge = document.createElement('span');
+                pinBadge.className = 'dial-pin-badge';
+                pinBadge.setAttribute('aria-label', 'Pinned');
+                pinBadge.textContent = '📌';
+                card.appendChild(pinBadge);
+            }
 
             const header = document.createElement('div');
             header.className = 'dial-header';
@@ -820,7 +884,25 @@ const LetaDial = (() => {
             header.appendChild(titleEl);
             card.appendChild(header);
 
-            if (dial.notes) {
+            // Recent info row: group badge + time — replaces notes in recent view
+            if (isRecent && dial.last_click) {
+                const infoRow = document.createElement('div');
+                infoRow.className = 'dial-recent-info';
+
+                const badge = document.createElement('span');
+                badge.className = 'dial-group-badge';
+                badge.textContent = dial.group_name || '';
+                badge.title = dial.group_name || '';
+                infoRow.appendChild(badge);
+
+                const timeEl = document.createElement('span');
+                timeEl.className = 'dial-recent-time';
+                timeEl.textContent = _relativeTime(dial.last_click);
+                timeEl.title = dial.last_click;
+                infoRow.appendChild(timeEl);
+
+                card.appendChild(infoRow);
+            } else if (!isRecent && dial.notes) {
                 const notesWrap = document.createElement('div');
                 notesWrap.className = 'dial-notes-tooltip-wrap';
                 const notesEl = document.createElement('div');
@@ -844,11 +926,13 @@ const LetaDial = (() => {
             }
             card.appendChild(wrap);
 
-            const checkEl = document.createElement('div');
-            checkEl.className = 'dial-select-check';
-            checkEl.setAttribute('aria-hidden', 'true');
-            checkEl.textContent = '✓';
-            card.appendChild(checkEl);
+            if (!isRecent) {
+                const checkEl = document.createElement('div');
+                checkEl.className = 'dial-select-check';
+                checkEl.setAttribute('aria-hidden', 'true');
+                checkEl.textContent = '✓';
+                card.appendChild(checkEl);
+            }
 
             const hint = document.createElement('div');
             hint.className = 'dial-kb-hint';
@@ -857,8 +941,12 @@ const LetaDial = (() => {
             card.appendChild(hint);
 
             card.addEventListener('click', e => {
-                if (bulk_module.active) { e.preventDefault(); bulk_module.toggle(dial.id); return; }
-                if (e.button === 0) api.post(`/api/dials/${dial.id}/click`, {}).catch(() => {});
+                if (bulk_module.active && !isRecent) { e.preventDefault(); bulk_module.toggle(dial.id); return; }
+                if (e.button === 0) {
+                    api.post(`/api/dials/${dial.id}/click`, {}).catch(() => {});
+                    // Refresh recent cache so time updates on next visit
+                    if (this._cache[RECENT_GROUP_ID]) delete this._cache[RECENT_GROUP_ID];
+                }
             });
             card.addEventListener('auxclick', e => {
                 if (bulk_module.active) return;
@@ -866,8 +954,28 @@ const LetaDial = (() => {
             });
 
             card.addEventListener('contextmenu', e => {
-                if (bulk_module.active) { e.preventDefault(); bulk_module.toggle(dial.id); return; }
+                if (bulk_module.active && !isRecent) { e.preventDefault(); bulk_module.toggle(dial.id); return; }
                 e.preventDefault(); e.stopPropagation();
+
+                if (isRecent) {
+                    // Minimal context menu for recent view — no pin/reorder, just open/edit/go-to-group
+                    const group = groups.find(g => g.id == dial.group_id);
+                    contextMenu.show(e, [
+                        { label: 'Edit dial',    icon: '✏', action: () => this.showEditModal(dial) },
+                        { label: 'Refresh thumbnail', icon: '🔄', action: () => this.refreshThumb(dial) },
+                        { separator: true },
+                        { label: group ? `Go to "${group.name}"` : 'Go to group', icon: '📂', action: () => {
+                            if (!group) return;
+                            search_module.clear(); keyboard_nav.clear();
+                            activeGroupId = group.id; localStorage.setItem('dv-last-group', String(group.id));
+                            groups_module.render(); dials_module.load(group.id);
+                        }},
+                        { separator: true },
+                        { label: 'Delete dial', icon: '🗑', danger: true, action: () => this.confirmDelete(dial) },
+                    ]);
+                    return;
+                }
+
                 const otherGroups   = groups.filter(g => g.id != dial.group_id);
                 const moveItems     = otherGroups.length > 0
                     ? otherGroups.map(g => ({ label: g.name, icon: '📁', action: () => this.moveTo(dial, g.id) }))
@@ -876,12 +984,12 @@ const LetaDial = (() => {
                     { label: 'This group', icon: '📋', action: () => this.duplicateDial(dial, dial.group_id) },
                     ...groups.filter(g => g.id != dial.group_id).map(g => ({ label: g.name, icon: '📁', action: () => this.duplicateDial(dial, g.id) }))
                 ];
-                // Pin label changes based on current state (sesja 061)
-                const pinLabel = dial.pinned ? '📌 Unpin' : '📌 Pin to top';
+                // Pin label (sesja 061)
+                const pinLabel = dial.pinned ? 'Unpin' : 'Pin to top';
 
                 contextMenu.show(e, [
                     { label: 'Edit dial',         icon: '✏',  action: () => this.showEditModal(dial) },
-                    { label: pinLabel,            icon: '',   action: () => this.togglePin(dial) },
+                    { label: pinLabel,            icon: '📌', action: () => this.togglePin(dial) },
                     { label: 'Refresh thumbnail', icon: '🔄', action: () => this.refreshThumb(dial) },
                     { label: 'Move to…',          icon: '📂', submenu: moveItems },
                     { label: 'Duplicate to…',     icon: '⧉',  submenu: duplicateItems },
@@ -892,8 +1000,8 @@ const LetaDial = (() => {
                 ]);
             });
 
-            // Drag only for unpinned dials in manual sort (sesja 061: pinned not draggable)
-            if (activeGroupId !== 'all' && sort_module.isManual(activeGroupId) && !dial.pinned) {
+            // Drag only for unpinned dials in manual sort, never in recent view
+            if (!isRecent && activeGroupId !== 'all' && sort_module.isManual(activeGroupId) && !dial.pinned) {
                 card.draggable = true;
                 card.addEventListener('dragstart', e => {
                     if (bulk_module.active) { e.preventDefault(); return; }
@@ -919,7 +1027,6 @@ const LetaDial = (() => {
                     const srcId = parseInt(e.dataTransfer.getData('text/plain'));
                     const dstId = parseInt(card.dataset.dialId);
                     if (srcId === dstId) return;
-                    // Don't drop onto pinned card area
                     const dstDial = (this._cache[activeGroupId] || []).find(d => d.id === dstId);
                     if (dstDial?.pinned) return;
                     await this.reorderDials(srcId, dstId, activeGroupId);
@@ -933,7 +1040,6 @@ const LetaDial = (() => {
             const r = await api.post(`/api/dials/${dial.id}/pin`, {});
             if (!r.ok) { toast.error(r.error || 'Could not update pin.'); return; }
 
-            // Update cache in-place
             const cached = this._cache[activeGroupId] || [];
             const found  = cached.find(d => d.id === dial.id);
             if (found) found.pinned = r.pinned;
@@ -942,9 +1048,7 @@ const LetaDial = (() => {
                 if (foundAll) foundAll.pinned = r.pinned;
             }
 
-            const label = r.pinned ? 'Pinned to top.' : 'Unpinned.';
-            toast.success(label);
-
+            toast.success(r.pinned ? 'Pinned to top.' : 'Unpinned.');
             const grid = document.getElementById('dial-grid');
             if (grid) this.render(activeGroupId, grid);
         },
@@ -955,6 +1059,7 @@ const LetaDial = (() => {
             if (!r.ok) { toast.error(r.error || 'Could not move dial.'); return; }
             toast.success(`Moved "${dial.title || dial.url}" to "${targetGroup?.name || 'group'}".`);
             delete this._cache[activeGroupId]; delete this._cache[newGroupId]; delete this._cache['all'];
+            delete this._cache[RECENT_GROUP_ID];
             await groups_module.reload(); groups_module.render();
         },
 
@@ -966,6 +1071,7 @@ const LetaDial = (() => {
             if (r.id) api.post(`/api/thumbs/${r.id}`, {}).catch(() => {});
             toast.success(`Duplicated "${dial.title || dial.url}" to ${label}.`);
             delete this._cache[targetGroupId]; delete this._cache[activeGroupId]; delete this._cache['all'];
+            delete this._cache[RECENT_GROUP_ID];
             await groups_module.reload(); groups_module.render();
         },
 
@@ -992,7 +1098,7 @@ const LetaDial = (() => {
         },
 
         showAddModal(groupId) {
-            if (!groupId || groupId === 'all') { toast.error('Select a specific group first.'); return; }
+            if (!groupId || groupId === 'all' || groupId === RECENT_GROUP_ID) { toast.error('Select a specific group first.'); return; }
             modal.show({
                 title: 'Add Dial',
                 body: `
@@ -1021,6 +1127,7 @@ const LetaDial = (() => {
                     toast.success('Dial added.');
                     api.post(`/api/thumbs/${r.id}`, {}).catch(() => {});
                     delete this._cache[groupId]; delete this._cache['all'];
+                    delete this._cache[RECENT_GROUP_ID];
                     await groups_module.reload(); activeGroupId = groupId; groups_module.render();
                     return true;
                 }
@@ -1086,6 +1193,7 @@ const LetaDial = (() => {
                     } else if (url !== dial.url) { api.post(`/api/thumbs/${dial.id}`, {}).catch(() => {}); }
                     toast.success('Dial updated.');
                     delete this._cache[activeGroupId]; delete this._cache['all'];
+                    delete this._cache[RECENT_GROUP_ID];
                     await groups_module.reload(); groups_module.render();
                     return true;
                 }
@@ -1154,6 +1262,7 @@ const LetaDial = (() => {
                     if (!r.ok) { toast.error(r.error || 'Could not delete.'); return false; }
                     toast.success('Dial deleted.');
                     delete this._cache[activeGroupId]; delete this._cache['all'];
+                    delete this._cache[RECENT_GROUP_ID];
                     await groups_module.reload(); groups_module.render();
                     if (onDeleteCallback) onDeleteCallback();
                     return true;
@@ -1161,6 +1270,18 @@ const LetaDial = (() => {
             });
         }
     };
+
+    // ── Relative time helper (sesja 062) ──────────────────────────────────────
+    function _relativeTime(datetimeStr) {
+        if (!datetimeStr) return '';
+        const d    = new Date(datetimeStr.replace(' ', 'T'));
+        const diff = Math.floor((Date.now() - d.getTime()) / 1000);
+        if (diff < 60)   return 'just now';
+        if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+        if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+        if (diff < 604800) return Math.floor(diff / 86400) + 'd ago';
+        return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    }
 
     // ── Bulk Select ───────────────────────────────────────────────────────────
     const bulk_module = {
@@ -1171,6 +1292,7 @@ const LetaDial = (() => {
             document.addEventListener('keydown', e => { if (e.key === 'Escape' && this.active) this.exit(); });
         },
         enter() {
+            if (activeGroupId === RECENT_GROUP_ID) { toast.error('Switch to a regular group to use bulk select.'); return; }
             this.active = true; this.selected.clear(); this._updateBtn(); keyboard_nav.clear();
             const grid = document.getElementById('dial-grid');
             if (grid) { grid.classList.add('bulk-select-active'); dials_module.render(activeGroupId, grid); }

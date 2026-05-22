@@ -3,13 +3,15 @@
  * LetaDial — Dial model
  * Sesja 054: notes field added (TEXT, nullable, max 500 chars enforced in PHP)
  * Sesja 061: pinned field added (TINYINT 0/1) — pinned dials always appear first
+ * Sesja 062: getRecent() — virtual "Recently used" group based on last_click
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
 
 class Dial
 {
-    private const MAX_NOTES = 500;
+    private const MAX_NOTES  = 500;
+    private const RECENT_MAX = 20;
 
     // ── Read ──────────────────────────────────────────────────────────────────
 
@@ -34,6 +36,26 @@ class Dial
                 [$userId]
             );
         }
+        return array_map([self::class, '_hydrate'], $rows ?: []);
+    }
+
+    /**
+     * Get recently clicked dials — virtual group for sesja 062.
+     * Returns up to RECENT_MAX dials ordered by last_click DESC.
+     * Only includes dials that have been clicked at least once.
+     */
+    public static function getRecent(int $userId): array
+    {
+        $limit = self::RECENT_MAX;
+        $rows  = DB::rows(
+            'SELECT d.*, g.name AS group_name
+             FROM dials d
+             LEFT JOIN groups_list g ON g.id = d.group_id
+             WHERE d.user_id = ? AND d.last_click IS NOT NULL
+             ORDER BY d.last_click DESC
+             LIMIT ' . $limit,
+            [$userId]
+        );
         return array_map([self::class, '_hydrate'], $rows ?: []);
     }
 

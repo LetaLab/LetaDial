@@ -482,7 +482,16 @@ const LetaDial = (() => {
                 };
             }
 
-            // ── Recent tab (sesja 062) ─────────────────────────────────────
+            // ── Recent tab (sesja 062 + 064 privacy) ──────────────────────────
+            // When recentDisabled=true: remove tab, redirect away if active.
+            if (window.LETADIAL_BOOT?.recentDisabled) {
+                const existingRecent = this.bar.querySelector('[data-group-id="recent"]');
+                if (existingRecent) existingRecent.remove();
+                if (activeGroupId === RECENT_GROUP_ID) {
+                    activeGroupId = 'all';
+                    localStorage.setItem('dv-last-group', 'all');
+                }
+            } else {
             let recentTab = this.bar.querySelector('[data-group-id="recent"]');
             if (!recentTab) {
                 recentTab = document.createElement('button');
@@ -508,6 +517,7 @@ const LetaDial = (() => {
                 localStorage.setItem('dv-last-group', RECENT_GROUP_ID);
                 this.render(); dials_module.load(RECENT_GROUP_ID);
             };
+            } // end else (!recentDisabled)
 
             const addBtn = this.bar.querySelector('#btn-add-group');
             groups.forEach(g => {
@@ -783,6 +793,13 @@ const LetaDial = (() => {
 
             let url;
             if (groupId === RECENT_GROUP_ID) {
+                // Safety: if Recent is disabled and someone navigates here anyway, redirect
+                if (window.LETADIAL_BOOT?.recentDisabled) {
+                    activeGroupId = 'all';
+                    localStorage.setItem('dv-last-group', 'all');
+                    await this.load('all');
+                    return;
+                }
                 url = '/api/dials?recent=1';
             } else if (groupId === 'all') {
                 url = '/api/dials';

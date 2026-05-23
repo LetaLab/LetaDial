@@ -306,6 +306,7 @@ function db_create_tables(PDO $pdo): void {
             reset_token      VARCHAR(64)      DEFAULT NULL,
             reset_expires    DATETIME         DEFAULT NULL,
             avatar_path      VARCHAR(255)     DEFAULT NULL,
+            recent_disabled  TINYINT(1)       NOT NULL DEFAULT 0,
             created_at       DATETIME         NOT NULL DEFAULT CURRENT_TIMESTAMP,
             last_login       DATETIME         DEFAULT NULL,
             UNIQUE KEY uq_login (login),

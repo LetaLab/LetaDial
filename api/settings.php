@@ -180,5 +180,16 @@ if ($action === 'backup-codes') {
     exit;
 }
 
+// ── POST /api/settings/recent — toggle Recent tab visibility ──────────────────
+if ($action === 'recent') {
+    $disabled = (bool)($body['disabled'] ?? false);
+    DB::run(
+        "UPDATE users SET recent_disabled = ? WHERE id = ?",
+        [(int)$disabled, $user['id']]
+    );
+    echo json_encode(['ok' => true, 'disabled' => $disabled]);
+    exit;
+}
+
 http_response_code(404);
 echo json_encode(['error' => 'Unknown settings action.']);

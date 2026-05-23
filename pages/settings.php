@@ -33,6 +33,7 @@ if ($user['totp_enabled']) {
 
 $totp_enabled = (bool)$user['totp_enabled'];
 $is_admin     = ($user['role'] === 'admin');
+$recent_disabled = (bool)($user['recent_disabled'] ?? false);
 
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 ?>
@@ -318,6 +319,19 @@ body { padding: 0; min-height: 100vh; background: var(--bg); }
 
             <div class="pref-row">
                 <div>
+                    <div class="pref-label">🕐 Recent tab</div>
+                    <div class="pref-hint">Hide the Recently Used tab from the groups bar</div>
+                </div>
+                <label style="display:inline-flex;align-items:center;gap:.5rem;cursor:pointer;font-size:.875rem;color:var(--text-muted);user-select:none">
+                    <input type="checkbox" id="pref-recent-disabled"
+                           <?= $recent_disabled ? 'checked' : '' ?>
+                           style="accent-color:var(--primary);width:16px;height:16px;cursor:pointer">
+                    Hide Recent
+                </label>
+            </div>
+
+            <div class="pref-row">
+                <div>
                     <div class="pref-label">Account</div>
                     <div class="pref-hint">Logged in as <strong><?= $user_login ?></strong></div>
                 </div>
@@ -471,7 +485,21 @@ document.getElementById('btn-change-pw')?.addEventListener('click', async () => 
     setTimeout(() => { window.location.href = '/login'; }, 2500);
 });
 
-// ── Backup Codes Regeneration ─────────────────────────────────────────────────
+// ── Recent tab toggle ─────────────────────────────────────────────────────────
+document.getElementById('pref-recent-disabled')?.addEventListener('change', async function() {
+    const disabled = this.checked;
+    const r = await apiPost('/api/settings/recent', { disabled });
+    if (!r.ok) {
+        showAlert('pw-alert', 'pw-alert-msg', 'error', r.error || 'Could not update setting.');
+        this.checked = !disabled; // revert
+        return;
+    }
+    showAlert('pw-alert', 'pw-alert-msg', 'success',
+        disabled
+            ? 'Recent tab hidden. Reload the dashboard to apply.'
+            : 'Recent tab restored. Reload the dashboard to apply.'
+    );
+});
 const regenBtn    = document.getElementById('btn-regen-bc');
 const verifyForm  = document.getElementById('verify-form');
 const cancelBtn   = document.getElementById('btn-cancel-regen');

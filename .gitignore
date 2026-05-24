@@ -18,9 +18,6 @@ storage/sessions/*
 logs/*
 !logs/.gitkeep
 
-# Skrypt specyficzny dla serwera
-fix_permissions.sh
-
 # System
 .DS_Store
 Thumbs.db

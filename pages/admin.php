@@ -6,7 +6,7 @@
  *   1. Blocked IPs    — rate_limits; unblock / export
  *   2. Users          — all accounts; delete
  *   3. Login History  — recent auth attempts; filter by IP
- *   4. Update         — git check + git pull + fix_permissions
+ *   4. Update         — git check vs github.com/LetaLab/LetaDial + git pull + fix_permissions
  *   5. Install Check  — full health check: PHP, DB, config, security, filesystem, file integrity
  */
 declare(strict_types=1);
@@ -19,7 +19,6 @@ $user_login = htmlspecialchars($user['login'], ENT_QUOTES, 'UTF-8');
 $csrf_token = CSRF::token();
 $icon_url   = htmlspecialchars(APP_URL . '/assets/icons/icon-192.png', ENT_QUOTES, 'UTF-8');
 
-// Server-side data
 $blocked       = Admin::getBlocked(3);
 $users_list    = Admin::getUsers();
 $login_history = Admin::getLoginHistory(null, 100);
@@ -32,6 +31,10 @@ $checks_json  = json_encode($install_check, JSON_HEX_TAG | JSON_HEX_QUOT);
 
 $checks_fail = count(array_filter($install_check, fn($c) => $c['required'] && !$c['ok']));
 $checks_warn = count(array_filter($install_check, fn($c) => !$c['required'] && !$c['ok']));
+
+// Login rate limit info (from Auth.php: 10 attempts / 300s)
+$login_rl_max = 10;
+$login_rl_win = 300;
 
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 ?>
@@ -51,7 +54,6 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8')
 <style>
 body { min-height:100vh; background:var(--bg); }
 
-/* ── Topbar ── */
 .admin-topbar { height:56px; background:var(--surface); border-bottom:1px solid var(--border);
     display:flex; align-items:center; padding:0 1.5rem; gap:1rem;
     position:sticky; top:0; z-index:100; box-shadow:var(--shadow-xs); }
@@ -65,11 +67,9 @@ body { min-height:100vh; background:var(--bg); }
 .back-link { color:var(--text-muted); text-decoration:none; transition:color .15s; }
 .back-link:hover { color:var(--primary); text-decoration:none; }
 
-/* ── Layout ── */
 .admin-main { max-width:1140px; margin:0 auto; padding:1.5rem; }
 .admin-title { font-size:1.4rem; font-weight:700; margin-bottom:1.25rem; }
 
-/* ── Tab nav ── */
 .admin-tabs { display:flex; border-bottom:2px solid var(--border); margin-bottom:1.5rem; gap:2px; overflow-x:auto; }
 .admin-tab { padding:.6rem 1.2rem; font-size:.9rem; font-weight:500; color:var(--text-muted);
     background:none; border:none; border-bottom:3px solid transparent; margin-bottom:-2px;
@@ -85,7 +85,6 @@ body { min-height:100vh; background:var(--bg); }
 .tab-pane { display:none; }
 .tab-pane.active { display:block; }
 
-/* ── Data table ── */
 .data-table-wrap { overflow-x:auto; border:1px solid var(--border); border-radius:var(--radius-md); background:var(--surface); }
 .data-table { width:100%; border-collapse:collapse; font-size:.875rem; }
 .data-table th { background:var(--surface-alt); padding:.6rem .85rem; text-align:left;
@@ -111,7 +110,6 @@ body { min-height:100vh; background:var(--bg); }
 .hist-success { color:var(--success); }
 .hist-fail    { color:var(--error); }
 
-/* ── Toolbar ── */
 .panel-toolbar { display:flex; align-items:center; gap:.75rem; margin-bottom:1rem; flex-wrap:wrap; }
 .panel-toolbar-right { margin-left:auto; display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
 .table-empty { text-align:center; padding:3rem 1rem; color:var(--text-faint); font-size:.9rem; }
@@ -120,7 +118,6 @@ body { min-height:100vh; background:var(--bg); }
     border-radius:var(--radius-md); font-size:.875rem; color:var(--text); font-family:var(--font-sans); outline:none; }
 .filter-input:focus { border-color:var(--border-focus); box-shadow:0 0 0 3px var(--primary-bg); }
 
-/* ── Admin card ── */
 .admin-card { background:var(--surface); border:1px solid var(--border);
     border-radius:var(--radius-lg); box-shadow:var(--shadow-sm); overflow:hidden; margin-bottom:1.25rem; }
 .admin-card-header { padding:.85rem 1.25rem; border-bottom:1px solid var(--border);
@@ -155,9 +152,6 @@ body { min-height:100vh; background:var(--bg); }
 /* ── Install Check ── */
 .check-summary-bar { display:flex; gap:1rem; margin-bottom:1.25rem; flex-wrap:wrap; align-items:center; }
 .check-summary-item { display:flex; align-items:center; gap:.4rem; font-size:.875rem; }
-.check-group-label { font-size:.75rem; font-weight:700; text-transform:uppercase;
-    letter-spacing:.07em; color:var(--text-faint); padding:.35rem 0 .35rem .85rem;
-    border-left:3px solid var(--border); margin:.5rem 0 .25rem; }
 .check-row { display:flex; align-items:flex-start; gap:.75rem; padding:.5rem .85rem;
     border-bottom:1px solid var(--border-light); font-size:.875rem; }
 .check-row:last-child { border-bottom:none; }
@@ -174,6 +168,22 @@ body { min-height:100vh; background:var(--bg); }
     padding-left:.5rem; padding-top:.05rem; }
 .check-value-ok   { color:var(--success); }
 .check-value-fail { color:var(--error); font-weight:600; }
+
+/* ── Toast — standalone (nie wymaga app.css) ── */
+.toast-container { position:fixed; bottom:1.25rem; right:1.25rem; z-index:9999;
+    display:flex; flex-direction:column; gap:.5rem; pointer-events:none; }
+.toast { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg);
+    box-shadow:var(--shadow-lg); padding:.75rem 1rem; font-size:.875rem;
+    display:flex; align-items:center; gap:.75rem; min-width:200px; max-width:360px;
+    pointer-events:all; animation:toastIn .2s ease; transition:opacity .3s ease; }
+@keyframes toastIn { from{opacity:0;transform:translateX(20px)} to{opacity:1;transform:translateX(0)} }
+.toast-success { border-left:3px solid var(--success); }
+.toast-error   { border-left:3px solid var(--error); }
+.toast-info    { border-left:3px solid var(--info); }
+.toast-icon { font-size:1rem; flex-shrink:0; font-weight:700; }
+.toast-success .toast-icon { color:var(--success); }
+.toast-error   .toast-icon { color:var(--error); }
+.toast-info    .toast-icon { color:var(--info); }
 
 /* ── Confirm ── */
 .confirm-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.45);
@@ -237,8 +247,15 @@ body { min-height:100vh; background:var(--bg); }
         </button>
     </nav>
 
-    <!-- ═══════════════════ TAB 1: BLOCKED IPs ═══════════════════════════════ -->
+    <!-- ═══ TAB 1: BLOCKED IPs ═══ -->
     <div class="tab-pane active" id="tab-blocked">
+        <div class="admin-card" style="margin-bottom:1rem;background:var(--info-bg);border-color:var(--info-bdr)">
+            <div class="admin-card-body" style="padding:.75rem 1.25rem;font-size:.82rem;color:var(--info)">
+                ℹ Login rate limit: <strong><?= $login_rl_max ?> failed attempts</strong> within
+                <strong><?= $login_rl_win ?>s</strong> triggers a block. Successful login clears the counter.
+                Forgot-password, 2FA and other actions have lower thresholds.
+            </div>
+        </div>
         <div class="panel-toolbar">
             <span style="font-size:.875rem;color:var(--text-muted)">
                 Entries with <strong id="blocked-min-label">≥ 3</strong> attempts
@@ -269,7 +286,7 @@ body { min-height:100vh; background:var(--bg); }
         </div>
     </div>
 
-    <!-- ═══════════════════ TAB 2: USERS ════════════════════════════════════ -->
+    <!-- ═══ TAB 2: USERS ═══ -->
     <div class="tab-pane" id="tab-users">
         <div class="panel-toolbar">
             <span style="font-size:.875rem;color:var(--text-muted)">
@@ -293,7 +310,7 @@ body { min-height:100vh; background:var(--bg); }
         </div>
     </div>
 
-    <!-- ═══════════════════ TAB 3: LOGIN HISTORY ════════════════════════════ -->
+    <!-- ═══ TAB 3: LOGIN HISTORY ═══ -->
     <div class="tab-pane" id="tab-history">
         <div class="panel-toolbar">
             <span style="font-size:.875rem;color:var(--text-muted)" id="history-count-label">Last 100 entries</span>
@@ -322,31 +339,35 @@ body { min-height:100vh; background:var(--bg); }
         </div>
     </div>
 
-    <!-- ═══════════════════ TAB 4: UPDATE ═══════════════════════════════════ -->
+    <!-- ═══ TAB 4: UPDATE ═══ -->
     <div class="tab-pane" id="tab-update">
         <div class="admin-card">
             <div class="admin-card-header">
                 <h3>🔄 LetaDial Update</h3>
-                <span style="font-size:.78rem;color:var(--text-faint)">git pull origin main + fix_permissions.sh</span>
+                <span style="font-size:.78rem;color:var(--text-faint)">
+                    Checks: <a href="https://github.com/LetaLab/LetaDial" target="_blank" rel="noopener"
+                        style="color:var(--text-faint)">github.com/LetaLab/LetaDial</a> &nbsp;·&nbsp;
+                    Pulls: origin (coderepo)
+                </span>
             </div>
             <div class="admin-card-body">
 
                 <div id="update-idle" class="update-state">
                     <div class="update-icon">🔍</div>
                     <div class="update-title">Check for updates</div>
-                    <div class="update-sub">Compares your installation with the remote repository.<br>No changes are made during the check.</div>
+                    <div class="update-sub">Compares your local commit with the public GitHub repository.<br>No changes are made during the check.</div>
                     <button class="btn btn-primary" id="btn-check-update" style="min-width:180px">Check for updates</button>
                 </div>
 
                 <div id="update-checking" class="update-state" style="display:none">
                     <div class="spinner"></div>
-                    <div class="update-sub">Fetching from remote repository…</div>
+                    <div class="update-sub">Comparing with github.com/LetaLab/LetaDial…</div>
                 </div>
 
                 <div id="update-current" class="update-state" style="display:none">
                     <div class="update-icon">✅</div>
                     <div class="update-title">You're up to date</div>
-                    <div class="update-sub" id="update-current-sub">Your installation is up to date.</div>
+                    <div class="update-sub" id="update-current-sub">Your installation matches the latest public release.</div>
                     <div class="update-sha" id="update-current-sha"></div>
                     <button class="btn btn-ghost" id="btn-recheck-1" style="min-width:160px">↻ Check again</button>
                 </div>
@@ -368,7 +389,7 @@ body { min-height:100vh; background:var(--bg); }
                 <div id="update-running" class="update-state" style="display:none">
                     <div class="spinner"></div>
                     <div class="update-title" style="font-size:1rem">Updating…</div>
-                    <div class="update-sub">Running git pull + fix_permissions.sh<br><strong>Do not close this page.</strong></div>
+                    <div class="update-sub">Running git pull origin main + fix_permissions.sh<br><strong>Do not close this page.</strong></div>
                 </div>
 
                 <div id="update-done" class="update-state" style="display:none">
@@ -393,7 +414,7 @@ body { min-height:100vh; background:var(--bg); }
         </div>
     </div>
 
-    <!-- ═══════════════════ TAB 5: INSTALL CHECK ════════════════════════════ -->
+    <!-- ═══ TAB 5: INSTALL CHECK ═══ -->
     <div class="tab-pane" id="tab-check">
         <div class="panel-toolbar">
             <div class="check-summary-bar" id="check-summary-bar"></div>
@@ -403,7 +424,6 @@ body { min-height:100vh; background:var(--bg); }
         </div>
         <div id="check-container"></div>
     </div>
-
 </main>
 
 <!-- Confirm dialog -->
@@ -418,6 +438,7 @@ body { min-height:100vh; background:var(--bg); }
     </div>
 </div>
 
+<!-- Toast container — standalone CSS above, nie zależy od app.css -->
 <div class="toast-container" id="toast-container"></div>
 
 <script>
@@ -475,12 +496,10 @@ document.getElementById('confirm-overlay').addEventListener('click', e => {
     if (e.target === e.currentTarget) { e.currentTarget.classList.remove('show'); _cfResolve?.(false); }
 });
 
-// ── Escape ────────────────────────────────────────────────────────────────────
 function esc(s) {
     return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
-// ── API ───────────────────────────────────────────────────────────────────────
 async function api(method, url, body) {
     try {
         const opts = { method, headers:{'Content-Type':'application/json','X-CSRF-Token':CSRF}, credentials:'same-origin' };
@@ -490,7 +509,6 @@ async function api(method, url, body) {
     } catch(e) { return {ok:false, error:'Network error.'}; }
 }
 
-// ── Relative time ─────────────────────────────────────────────────────────────
 function relTime(s) {
     if (!s) return '—';
     const d = new Date(s.replace(' ','T'));
@@ -501,7 +519,7 @@ function relTime(s) {
     return `${Math.floor(diff/86400)}d ago`;
 }
 
-// ── Tab switching ─────────────────────────────────────────────────────────────
+// ── Tabs ──────────────────────────────────────────────────────────────────────
 document.querySelectorAll('.admin-tab').forEach(btn => {
     btn.addEventListener('click', () => {
         document.querySelectorAll('.admin-tab').forEach(b => b.classList.remove('active'));
@@ -512,7 +530,7 @@ document.querySelectorAll('.admin-tab').forEach(btn => {
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
-// TAB 1: BLOCKED IPs
+// TAB 1: BLOCKED
 // ═════════════════════════════════════════════════════════════════════════════
 function attemptBadge(n) {
     n = parseInt(n)||0;
@@ -592,7 +610,7 @@ document.getElementById('btn-refresh-blocked').addEventListener('click',async()=
     const min=parseInt(document.getElementById('blocked-min-input').value)||3;
     const r=await api('GET',`/api/admin/blocked?min=${min}`);
     if(!r.ok){toast('Refresh failed.','error');return;}
-    blocked=r.entries;renderBlocked(blocked);updateBlockedBadge();toast('Refreshed.','info');
+    blocked=r.entries;renderBlocked(blocked);updateBlockedBadge();toast('Refreshed.','success');
 });
 document.getElementById('btn-unblock-all-global').addEventListener('click',doUnblockAllGlobal);
 document.getElementById('btn-export-csv').addEventListener('click',()=>{window.location.href='/api/admin/export-blocked?format=csv';});
@@ -637,7 +655,7 @@ document.getElementById('users-filter').addEventListener('input',()=>renderUsers
 document.getElementById('btn-refresh-users').addEventListener('click',async()=>{
     const r=await api('GET','/api/admin/users');
     if(!r.ok){toast('Refresh failed.','error');return;}
-    users=r.users;renderUsers(users);toast('Refreshed.','info');
+    users=r.users;renderUsers(users);toast('Refreshed.','success');
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -675,7 +693,7 @@ document.getElementById('btn-refresh-history').addEventListener('click',async()=
     const url=ip?`/api/admin/login-history?ip=${encodeURIComponent(ip)}&limit=100`:'/api/admin/login-history?limit=100';
     const r=await api('GET',url);
     if(!r.ok){toast('Refresh failed.','error');return;}
-    history=r.history;filterHistory();toast('Refreshed.','info');
+    history=r.history;filterHistory();toast('Refreshed.','success');
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -691,19 +709,23 @@ async function doGitCheck() {
     const r=await api('GET','/api/update/git-check');
     if(!r.ok){toast(r.error||'Check failed.','error');updateShow('update-idle');return;}
     if(!r.update_available){
-        document.getElementById('update-current-sha').textContent=`Current: ${r.local_sha}`;
+        document.getElementById('update-current-sha').textContent=`Local: ${r.local_sha}`;
         updateShow('update-current');
         return;
     }
     document.getElementById('update-available-sub').textContent=
-        `${r.commit_count} new commit${r.commit_count!==1?'s':''} available.`;
+        `${r.commit_count} new commit${r.commit_count!==1?'s':''} available on GitHub.`;
     document.getElementById('update-available-sha').textContent=
-        `Local: ${r.local_sha}  →  Remote: ${r.remote_sha}`;
+        `Local: ${r.local_sha}  →  GitHub main: ${r.remote_sha}`;
     const cl=document.getElementById('update-commit-list');
-    cl.innerHTML=(r.commits||[]).map(c=>
-        `<div class="commit-item"><span class="commit-sha">${esc(c.sha)}</span><span class="commit-msg">${esc(c.msg)}</span></div>`
-    ).join('');
-    cl.style.display=(r.commits&&r.commits.length)?'':'none';
+    if(r.commits && r.commits.length) {
+        cl.innerHTML=r.commits.map(c=>
+            `<div class="commit-item"><span class="commit-sha">${esc(c.sha)}</span><span class="commit-msg">${esc(c.msg)}</span></div>`
+        ).join('');
+        cl.style.display='';
+    } else {
+        cl.style.display='none';
+    }
     updateShow('update-available');
 }
 
@@ -736,42 +758,34 @@ document.getElementById('btn-update-now').addEventListener('click',doGitPull);
 // TAB 5: INSTALL CHECK
 // ═════════════════════════════════════════════════════════════════════════════
 function renderChecks(data) {
-    // Summary bar
-    const total    = data.length;
-    const passing  = data.filter(c=>c.ok).length;
-    const failing  = data.filter(c=>!c.ok&&c.required).length;
-    const warning  = data.filter(c=>!c.ok&&!c.required).length;
+    const total   = data.length;
+    const passing = data.filter(c=>c.ok).length;
+    const failing = data.filter(c=>!c.ok&&c.required).length;
+    const warning = data.filter(c=>!c.ok&&!c.required).length;
 
-    const sumBar = document.getElementById('check-summary-bar');
-    sumBar.innerHTML = `
-        <span class="check-summary-item"><span style="color:var(--success);font-size:1.1rem">✓</span>
+    document.getElementById('check-summary-bar').innerHTML = `
+        <span class="check-summary-item">
+            <span style="color:var(--success);font-size:1.1rem">✓</span>
             <strong>${passing}</strong> passing</span>
-        ${failing>0?`<span class="check-summary-item"><span style="color:var(--error);font-size:1.1rem">✗</span>
+        ${failing>0?`<span class="check-summary-item">
+            <span style="color:var(--error);font-size:1.1rem">✗</span>
             <strong>${failing}</strong> required failing</span>`:''}
-        ${warning>0?`<span class="check-summary-item"><span style="color:var(--warning);font-size:1.1rem">⚠</span>
+        ${warning>0?`<span class="check-summary-item">
+            <span style="color:var(--warning);font-size:1.1rem">⚠</span>
             <strong>${warning}</strong> warnings</span>`:''}
-        <span class="check-summary-item muted" style="font-size:.8rem">${total} checks total</span>
-    `;
+        <span class="check-summary-item muted" style="font-size:.8rem">${total} checks total</span>`;
 
-    // Group checks
     const groups = {};
-    data.forEach(c => {
-        const g = c.group||'General';
-        if (!groups[g]) groups[g]=[];
-        groups[g].push(c);
-    });
+    data.forEach(c => { const g=c.group||'General'; if(!groups[g])groups[g]=[]; groups[g].push(c); });
 
-    // Icons for groups
     const groupIcons = {
         'PHP':'🐘','Database':'🗄','Configuration':'⚙','Security':'🔒',
         'Filesystem':'📁','File Integrity':'🔍','General':'📋'
     };
 
     document.getElementById('check-container').innerHTML = Object.entries(groups).map(([group, items]) => {
-        const gPass = items.filter(i=>i.ok).length;
         const gFail = items.filter(i=>!i.ok&&i.required).length;
         const gWarn = items.filter(i=>!i.ok&&!i.required).length;
-
         const groupStatus = gFail>0
             ? `<span style="color:var(--error);font-size:.8rem">✗ ${gFail} fail${gFail!==1?'s':''}</span>`
             : gWarn>0
@@ -783,12 +797,12 @@ function renderChecks(data) {
             const iconCls = c.ok ? 'check-icon-ok' : (c.required ? 'check-icon-fail' : 'check-icon-warn');
             const valCls  = c.ok ? 'check-value-ok' : (c.required ? 'check-value-fail' : '');
             const note    = c.note ? `<div class="check-note-text">${esc(c.note)}</div>` : '';
-            const req     = !c.ok && c.required ? ' <span style="font-size:.7rem;color:var(--error);font-weight:600">REQUIRED</span>' : '';
+            const req     = !c.ok && c.required
+                ? ' <span style="font-size:.7rem;color:var(--error);font-weight:600">REQUIRED</span>' : '';
             return `<div class="check-row">
                 <div class="check-icon-col ${iconCls}">${icon}</div>
                 <div class="check-label-col">
-                    <div class="check-label">${esc(c.label||'')}${req}</div>
-                    ${note}
+                    <div class="check-label">${esc(c.label||'')}${req}</div>${note}
                 </div>
                 <div class="check-value-col ${valCls}">${esc(String(c.value||''))}</div>
             </div>`;
@@ -796,8 +810,7 @@ function renderChecks(data) {
 
         return `<div class="admin-card">
             <div class="admin-card-header">
-                <h3>${groupIcons[group]||'📋'} ${esc(group)}</h3>
-                ${groupStatus}
+                <h3>${groupIcons[group]||'📋'} ${esc(group)}</h3>${groupStatus}
             </div>
             <div>${rows}</div>
         </div>`;
@@ -807,7 +820,7 @@ function renderChecks(data) {
 document.getElementById('btn-refresh-check').addEventListener('click',async()=>{
     const r=await api('GET','/api/admin/install-check');
     if(!r.ok){toast('Check failed.','error');return;}
-    checks=r.checks;renderChecks(checks);toast('Checks re-run.','info');
+    checks=r.checks;renderChecks(checks);toast('Checks re-run.','success');
 });
 
 // ── INIT ──────────────────────────────────────────────────────────────────────

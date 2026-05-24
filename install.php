@@ -8,7 +8,9 @@
  *
  * Changes from v1.0 (DialVault):
  *  - Branding: LetaDial
- *  - dials table: matches Dial.php (thumb_path, thumb_updated_at, click_count, last_click)
+ *  - dials table: matches Dial.php (thumb_path, thumb_updated_at, click_count, last_click, notes)
+ *  - groups_list: icon, color, icon_path columns included
+ *  - rate_limits: key_plain column included
  *  - sessions: includes totp_verified, pending_totp (previously in migrate_001)
  *  - users: includes avatar_path (previously in migrate_001)
  *  - remember_tokens table (previously in migrate_001)
@@ -352,6 +354,9 @@ function db_create_tables(PDO $pdo): void {
             name       VARCHAR(100) NOT NULL,
             position   SMALLINT UNSIGNED NOT NULL DEFAULT 0,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            icon       VARCHAR(10)  DEFAULT NULL,
+            color      VARCHAR(7)   DEFAULT NULL,
+            icon_path  VARCHAR(255) DEFAULT NULL,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
             INDEX idx_user (user_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
@@ -364,6 +369,7 @@ function db_create_tables(PDO $pdo): void {
             group_id         INT UNSIGNED  NOT NULL,
             title            VARCHAR(100)  NOT NULL,
             url              VARCHAR(2048) NOT NULL,
+            notes            TEXT          DEFAULT NULL,
             position         SMALLINT UNSIGNED NOT NULL DEFAULT 0,
             pinned           TINYINT(1)    NOT NULL DEFAULT 0,
             thumb_path       VARCHAR(255)  DEFAULT NULL,
@@ -397,6 +403,7 @@ function db_create_tables(PDO $pdo): void {
             action       VARCHAR(50)  NOT NULL,
             attempts     TINYINT UNSIGNED NOT NULL DEFAULT 1,
             window_start DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            key_plain    VARCHAR(255) DEFAULT NULL,
             UNIQUE KEY uq_key_action (key_hash, action)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
 

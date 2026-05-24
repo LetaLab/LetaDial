@@ -1,16 +1,6 @@
 <?php
 /**
  * LetaDial — Admin Model (sesja 065)
- *
- * Methods:
- *   getBlocked()      — rate_limits with attempts >= $min
- *   unblock()         — delete one rate_limit entry
- *   unblockByKey()    — delete all rate_limit entries for a key_plain
- *   getUsers()        — all users with counts
- *   deleteUser()      — hard-delete user
- *   getLoginHistory() — recent login_history rows
- *   installCheck()    — full health check (requirements, DB, config, files, git integrity, permissions)
- *   exportBlocked()   — JSON or CSV export of rate_limits
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -96,7 +86,6 @@ class Admin
             }
         }
 
-        // Delete files from disk (best-effort)
         foreach (['storage/thumbnails', 'storage/group_icons'] as $base) {
             $dir = __DIR__ . '/../' . $base . '/u' . $userId;
             if (is_dir($dir)) {
@@ -138,17 +127,12 @@ class Admin
 
     // ── Installation Check ────────────────────────────────────────────────────
 
-    /**
-     * Full health check.
-     * Returns array of groups, each with array of check items:
-     *   ['label', 'ok', 'required', 'value', 'note']
-     */
     public static function installCheck(): array
     {
         $root   = realpath(__DIR__ . '/..') ?: dirname(__DIR__);
         $groups = [];
 
-        // ── 1. PHP Requirements ───────────────────────────────────────────────
+        // ── 1. PHP ────────────────────────────────────────────────────────────
         $php = [];
         $phpVer = PHP_VERSION;
         $php[] = self::chk('PHP version ≥ 8.1', version_compare($phpVer, '8.1.0', '>='), true, $phpVer);
@@ -175,17 +159,24 @@ class Admin
         $groups['PHP'] = $php;
 
         // ── 2. Database ───────────────────────────────────────────────────────
+        // FIX: Use information_schema instead of "SHOW TABLES LIKE ?" because
+        // MariaDB 11.8.7 does not support prepared statements for SHOW commands.
         $db = [];
         try {
             $ver  = DB::val("SELECT VERSION()") ?? 'unknown';
             $db[] = self::chk('DB connection', true, true, $ver);
 
-            foreach (['users','sessions','groups_list','dials','rate_limits','settings','login_history','totp_backup_codes','remember_tokens'] as $tbl) {
-                $exists = DB::val("SHOW TABLES LIKE ?", [$tbl]) !== null;
+            foreach (['users','sessions','groups_list','dials','rate_limits','settings',
+                      'login_history','totp_backup_codes','remember_tokens'] as $tbl) {
+                $exists = (int)(DB::val(
+                    "SELECT COUNT(*) FROM information_schema.TABLES
+                     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?",
+                    [$tbl]
+                ) ?? 0) > 0;
                 $db[] = self::chk("Table: {$tbl}", $exists, true, $exists ? 'exists' : 'MISSING');
             }
 
-            // rate_limits.key_plain (sesja 065)
+            // rate_limits.key_plain column (sesja 065)
             $hasKP = (int)(DB::val(
                 "SELECT COUNT(*) FROM information_schema.COLUMNS
                  WHERE TABLE_SCHEMA = DATABASE()
@@ -196,7 +187,7 @@ class Admin
                 $hasKP ? 'present' : 'missing',
                 $hasKP ? '' : 'Run migrate_065.sql to enable IP display in Blocked IPs panel.');
 
-            // users.recent_disabled (sesja 064)
+            // users.recent_disabled column (sesja 064)
             $hasRD = (int)(DB::val(
                 "SELECT COUNT(*) FROM information_schema.COLUMNS
                  WHERE TABLE_SCHEMA = DATABASE()
@@ -212,7 +203,7 @@ class Admin
         }
         $groups['Database'] = $db;
 
-        // ── 3. Config ─────────────────────────────────────────────────────────
+        // ── 3. Configuration ──────────────────────────────────────────────────
         $cfg = [];
         $cfgPath = $root . '/config.php';
 
@@ -229,17 +220,16 @@ class Admin
                       'ENCRYPTION_KEY','HMAC_KEY','SESSION_TTL'];
         foreach ($constants as $c) {
             $defined = defined($c);
-            $val     = $defined ? (str_contains($c, 'KEY') || str_contains($c, 'PASS')
-                ? '***hidden***' : constant($c)) : 'NOT DEFINED';
+            $val     = $defined
+                ? (str_contains($c, 'KEY') || str_contains($c, 'PASS') ? '***hidden***' : constant($c))
+                : 'NOT DEFINED';
             $cfg[] = self::chk("define('{$c}')", $defined, true, (string)$val);
         }
 
-        // HTTPS in APP_URL
         $urlHttps = str_starts_with(APP_URL, 'https://');
         $cfg[] = self::chk('APP_URL uses HTTPS', $urlHttps, false, APP_URL,
             $urlHttps ? '' : 'Strongly recommended for production.');
 
-        // ENCRYPTION_KEY length (64 hex = 32 bytes)
         $encLen = strlen(ENCRYPTION_KEY ?? '');
         $cfg[] = self::chk('ENCRYPTION_KEY length', $encLen === 64, true,
             "{$encLen} chars", $encLen !== 64 ? 'Must be exactly 64 hex chars (32 bytes).' : '');
@@ -253,8 +243,9 @@ class Admin
         // ── 4. Security ───────────────────────────────────────────────────────
         $sec = [];
 
+        // install.php should be absent (fix_permissions.sh removes it)
         $noInstall = !file_exists($root . '/install.php');
-        $sec[] = self::chk('install.php absent', $noInstall, false,
+        $sec[] = self::chk('install.php absent', $noInstall, true,
             $noInstall ? 'removed ✓' : 'PRESENT — delete it!',
             $noInstall ? '' : 'Delete install.php immediately — it allows full reinstall.');
 
@@ -267,7 +258,7 @@ class Admin
         $gitExists = is_dir($root . '/.git');
         $sec[] = self::chk('.git directory present', $gitExists, false,
             $gitExists ? 'yes (verify nginx blocks /.git/)' : 'no',
-            $gitExists ? 'Ensure nginx: location ~ /\. { deny all; }' : '');
+            $gitExists ? 'Ensure nginx: location ~ /\\. { deny all; }' : '');
 
         $smtpOk = defined('SMTP_ENABLED') && SMTP_ENABLED;
         $sec[] = self::chk('SMTP configured', $smtpOk, false,
@@ -276,7 +267,7 @@ class Admin
 
         $groups['Security'] = $sec;
 
-        // ── 5. Filesystem Permissions ─────────────────────────────────────────
+        // ── 5. Filesystem ─────────────────────────────────────────────────────
         $fs = [];
         $dirsToCheck = [
             'storage'             => true,
@@ -298,7 +289,6 @@ class Admin
                 $exists ? "{$perms}" . ($wr ? ' writable' : ' NOT writable') : 'MISSING');
         }
 
-        // .htaccess in sensitive dirs
         $htFiles = [
             'storage/.htaccess',
             'storage/thumbnails/.htaccess',
@@ -313,7 +303,7 @@ class Admin
         }
         $groups['Filesystem'] = $fs;
 
-        // ── 6. File Integrity (git diff) ──────────────────────────────────────
+        // ── 6. File Integrity (git diff vs local HEAD) ────────────────────────
         $integrity = [];
 
         if (!$gitExists) {
@@ -325,7 +315,7 @@ class Admin
 
         $execAvail = function_exists('exec') && !in_array('exec', array_map('trim', explode(',', ini_get('disable_functions'))));
         if (!$execAvail) {
-            $integrity[] = self::chk('exec() for git diff', false, false, 'disabled',
+            $integrity[] = self::chk('exec() for git', false, false, 'disabled',
                 'Enable exec() in php.ini to use file integrity checks.');
             $groups['File Integrity'] = $integrity;
             return self::buildResult($groups);
@@ -333,7 +323,13 @@ class Admin
 
         $dirArg = escapeshellarg($root);
 
-        // git status — tracked modified files
+        // Local commit SHA
+        $shaOut = [];
+        exec("git -C {$dirArg} rev-parse --short HEAD 2>&1", $shaOut);
+        $localSha = trim($shaOut[0] ?? 'unknown');
+        $integrity[] = self::chk('Local commit (HEAD)', true, false, $localSha);
+
+        // git status --porcelain — compare working tree vs HEAD
         $statusOut  = [];
         $statusCode = 0;
         exec("git -C {$dirArg} status --porcelain 2>&1", $statusOut, $statusCode);
@@ -345,31 +341,25 @@ class Admin
             return self::buildResult($groups);
         }
 
-        // Parse git status output
-        $modified   = [];
-        $untracked  = [];
-        $deleted    = [];
+        // Parse status output
+        $modified  = [];
+        $untracked = [];
+        $deleted   = [];
         foreach ($statusOut as $line) {
             if (strlen($line) < 4) continue;
             $xy   = substr($line, 0, 2);
             $file = trim(substr($line, 3));
-            $x    = $xy[0]; // index status
-            $y    = $xy[1]; // working tree status
-
-            if ($x === '?' && $y === '?') {
-                $untracked[] = $file;
-            } elseif ($x === 'D' || $y === 'D') {
-                $deleted[] = $file;
-            } else {
-                $modified[] = $file;
-            }
+            $x    = $xy[0];
+            $y    = $xy[1];
+            if ($x === '?' && $y === '?') { $untracked[] = $file; }
+            elseif ($x === 'D' || $y === 'D') { $deleted[] = $file; }
+            else { $modified[] = $file; }
         }
 
-        // Exclude non-critical paths from integrity warnings
-        $ignorePrefixes = [
-            'storage/', 'logs/', '.git/', 'assets/icons/',
-        ];
-        $ignoreExact = ['config.php', 'fix_permissions.sh'];
+        // Paths to ignore — these change legitimately in production
+        $ignorePrefixes = ['storage/', 'logs/', '.git/', 'assets/icons/'];
+        // FIX: install.php is intentionally removed by fix_permissions.sh — ignore it
+        $ignoreExact    = ['config.php', 'fix_permissions.sh', 'install.php'];
 
         $filterFiles = function(array $files) use ($ignorePrefixes, $ignoreExact): array {
             return array_values(array_filter($files, function($f) use ($ignorePrefixes, $ignoreExact) {
@@ -381,50 +371,19 @@ class Admin
             }));
         };
 
-        $modFiltered  = $filterFiles($modified);
-        $delFiltered  = $filterFiles($deleted);
+        $modFiltered = $filterFiles($modified);
+        $delFiltered = $filterFiles($deleted);
 
-        // Local commits ahead of remote
-        $aheadOut  = [];
-        exec("git -C {$dirArg} rev-list origin/main..HEAD --count 2>&1", $aheadOut);
-        $aheadCount = (int)($aheadOut[0] ?? 0);
-
-        // Behind remote
-        $behindOut = [];
-        exec("git -C {$dirArg} rev-list HEAD..origin/main --count 2>&1", $behindOut);
-        $behindCount = (int)($behindOut[0] ?? 0);
-
-        // Local SHA
-        $shaOut = [];
-        exec("git -C {$dirArg} rev-parse --short HEAD 2>&1", $shaOut);
-        $localSha = $shaOut[0] ?? 'unknown';
-
-        $integrity[] = self::chk('Current commit', true, false, $localSha);
-
-        $integrity[] = self::chk(
-            'Up to date with remote',
-            $behindCount === 0,
-            false,
-            $behindCount === 0 ? 'yes' : "{$behindCount} commit(s) behind",
-            $behindCount > 0 ? 'Use Admin → Update tab to pull changes.' : ''
-        );
-
-        if ($aheadCount > 0) {
-            $integrity[] = self::chk(
-                'Local commits not pushed',
-                false,
-                false,
-                "{$aheadCount} commit(s) ahead",
-                'Your installation has local commits not in the remote repo.'
-            );
-        }
-
+        // Commits behind GitHub (public repo) — checked by Updater::gitCheck()
+        // Here we only show local state vs committed HEAD
         $integrity[] = self::chk(
             'Modified tracked files',
             count($modFiltered) === 0,
             false,
             count($modFiltered) === 0 ? 'none' : count($modFiltered) . ' file(s) modified',
-            count($modFiltered) > 0 ? implode(', ', array_slice($modFiltered, 0, 8)) . (count($modFiltered) > 8 ? '…' : '') : ''
+            count($modFiltered) > 0
+                ? implode(', ', array_slice($modFiltered, 0, 8)) . (count($modFiltered) > 8 ? '…' : '')
+                : ''
         );
 
         $integrity[] = self::chk(
@@ -435,20 +394,22 @@ class Admin
             count($delFiltered) > 0 ? implode(', ', $delFiltered) : ''
         );
 
-        // Untracked non-ignored files in src/ or api/ (suspicious)
-        $suspiciousUntracked = array_values(array_filter($untracked, function($f) {
-            return str_starts_with($f, 'src/') || str_starts_with($f, 'api/') || str_starts_with($f, 'pages/');
+        // Suspicious untracked files in code dirs
+        $suspicious = array_values(array_filter($untracked, function($f) {
+            return str_starts_with($f, 'src/')
+                || str_starts_with($f, 'api/')
+                || str_starts_with($f, 'pages/');
         }));
         $integrity[] = self::chk(
             'Untracked files in src/ api/ pages/',
-            count($suspiciousUntracked) === 0,
+            count($suspicious) === 0,
             false,
-            count($suspiciousUntracked) === 0 ? 'none' : count($suspiciousUntracked) . ' file(s)',
-            count($suspiciousUntracked) > 0 ? implode(', ', $suspiciousUntracked) : ''
+            count($suspicious) === 0 ? 'none' : count($suspicious) . ' file(s)',
+            count($suspicious) > 0 ? implode(', ', $suspicious) : ''
         );
 
+        // Note about login rate limit behavior
         $groups['File Integrity'] = $integrity;
-
         return self::buildResult($groups);
     }
 

@@ -163,9 +163,19 @@ class Mailer
         return $code === 250;
     }
 
+    /**
+     * Sanitize email header value — strip CR/LF to prevent header injection.
+     */
+    private static function sanitizeHeader(string $value): string
+    {
+        return str_replace(["\r", "\n", "\0"], '', $value);
+    }
+
     private static function buildMessage(
         string $to, string $subject, string $text, string $html, string $domain
     ): string {
+        // Sanitize $to against header injection (strip CR/LF/NUL)
+        $to = self::sanitizeHeader($to);
         $date   = date('r');
         $msg_id = '<' . bin2hex(random_bytes(8)) . '@' . $domain . '>';
 

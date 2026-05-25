@@ -198,6 +198,15 @@ class Updater
         $pull    = self::git('pull origin main');
         $pullOut = $pull['output'];
 
+        // Immediately remove install.php if git pull restored it from repo.
+        // There is a brief window between git pull and fix_permissions.sh where
+        // install.php would be accessible via HTTP — close it explicitly here.
+        $installPhp = $dir . '/install.php';
+        if (file_exists($installPhp)) {
+            @unlink($installPhp);
+            $pullOut .= "\n[LetaDial] install.php removed after git pull.";
+        }
+
         $script   = $dir . '/fix_permissions.sh';
         $permsOut = '';
 

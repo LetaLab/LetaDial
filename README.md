@@ -2,23 +2,25 @@
 
 ---
 
-> ## **⚠️ IMPORTANT DISCLAIMER — READ BEFORE USE ⚠️**
+## **SEEKING DEFENSIVE SECURITY ASSESSMENT FOR OPEN SOURCE PROJECT**
+
+> ## **IMPORTANT DISCLAIMER - READ BEFORE USE**
 >
 > **THIS PROJECT IS 100% VIBE CODED USING FREE TIER ANTHROPIC CLAUDE SONNET 4.6. I CANNOT CODE IF IT WAS TO SAVE MY LIFE, BUT I LIKE TINKERING, AND SO I DID. THIS TOOK ABOUT 2 MONTHS TO BUILD.**
 >
-> **NEVER TRUST ME OR THIS CODE.**
+> This is an experimental public open source project that started as something built mainly for personal use and then shared publicly on GitHub.
 >
-> I can only give you my word that I did not add and will not add anything nasty to this project. And yet — I don't fully understand the code, so I could be implementing security issues unknowingly.
+> While there is no intentional malicious code in this repository, the codebase was created with limited programming experience, so security issues or design mistakes may still exist.
 >
-> I wrote this mainly for myself but I am putting it on GitHub for anyone to use. However, **use at your own risk**. I take zero responsibility. Code comes "as is" with zero warranty.
+> Responsible security review and vulnerability reports are genuinely appreciated. If you find a problem, please report it privately and with enough detail to reproduce it.
 >
-> I tried my best to get the code assessed for security holes and I have been using it for a while now to find any usability bugs — so far so good. But if you are a security analyst with too much spare time on your hands — poke at my code as much as you want. If you find something, let me know. I am broke to the point I could not even buy an Anthropic Claude Code license, so the reward for finding a security bug is my gratitude. No monetary gains for you. I would appreciate your feedback nonetheless — please and thank you!
+> The project is provided under the MIT License and without warranty, but the goal is to improve it responsibly over time with community feedback.
 
 ---
 
-**Personal speed dial dashboard — self-hosted, private, fast.**
+**Personal speed dial dashboard - self-hosted, private, fast.**
 
-A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dark mode, import/export — no tracking, no ads, no cloud.
+A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dark mode, import/export - no tracking, no ads, no cloud.
 
 ![PHP](https://img.shields.io/badge/PHP-8.1%2B-blue)
 ![MySQL](https://img.shields.io/badge/MySQL%2FMariaDB-10.6%2B-blue)
@@ -43,7 +45,7 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
 - Speed dial grid with custom thumbnails (auto-generated or uploaded)
 - Groups with emoji icons, custom colors, custom image icons
 - Full-text search, sort options (manual drag & drop, A→Z, popular, newest)
-- Two-factor authentication (TOTP — Google Authenticator, Bitwarden, Authy)
+- Two-factor authentication (TOTP - Google Authenticator, Bitwarden, Authy)
 - Import / export JSON
 - Dark mode (auto + manual toggle)
 - Keyboard navigation (Arrow keys, Enter, E, Delete)
@@ -71,7 +73,7 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
 | HTTPS | Strongly recommended |
 
 Optional (better thumbnails):
-- `imagick` PHP extension — enables OG image capture and better image processing
+- `imagick` PHP extension - enables OG image capture and better image processing
 
 Check requirements before installing:
 
@@ -100,16 +102,16 @@ GRANT ALL PRIVILEGES ON letadial_db.* TO 'letadial_user'@'localhost';
 FLUSH PRIVILEGES;
 ```
 
-### 2. Clone or upload files
+### 2. Clone repository
 
 ```bash
 cd /var/www/html
 git clone https://github.com/LetaLab/LetaDial
 ```
 
-Or upload all files to your web root (e.g. `/var/www/html/LetaDial/`).
+Project structure after clone:
 
-```
+```text
 /var/www/html/LetaDial/
 ├── api/
 ├── assets/
@@ -185,7 +187,7 @@ server {
         return 404;
     }
 
-    # Block storage — nginx does NOT read .htaccess!
+    # Block storage - nginx does NOT read .htaccess!
     location ^~ /storage/ {
         deny all;
         return 404;
@@ -232,17 +234,17 @@ server {
 
 Navigate to `https://your-domain.com/install.php` and follow the 5 steps:
 
-1. **Requirements** — all checks must pass
-2. **Database** — enter DB credentials
-3. **Admin** — create admin account (login, email, password)
-4. **Email** — optional SMTP for activation emails and password resets
-5. **Done** — installer self-deletes, `config.php` created
+1. **Requirements** - all checks must pass
+2. **Database** - enter DB credentials
+3. **Admin** - create admin account (login, email, password)
+4. **Email** - optional SMTP for activation emails and password resets
+5. **Done** - installer self-deletes, `config.php` created
 
 ### 6. Set up 2FA
 
 Admin accounts **require** two-factor authentication. On first login you will be redirected to set up TOTP with any authenticator app (Google Authenticator, Bitwarden, Authy).
 
-### 7. Add to config.php (optional — auto-update)
+### 7. Add to config.php (optional - auto-update)
 
 ```php
 define('GITHUB_REPO',       'LetaLab/LetaDial');
@@ -255,7 +257,7 @@ This enables the update banner for admin users and the Admin → Update tab (git
 
 ## Directory structure
 
-```
+```text
 api/           HTTP endpoints (routed by index.php)
 assets/        CSS, JS, icons, manifest
   css/         design-system.css + app.css
@@ -263,15 +265,15 @@ assets/        CSS, JS, icons, manifest
   icons/       favicon, PWA icons
 pages/         HTML page templates
 src/           PHP classes (Auth, Dial, Group, CSRF, ...)
-storage/       User data — NOT web-accessible (protect with nginx!)
+storage/       User data - NOT web-accessible (protect with nginx!)
   thumbnails/  Dial thumbnails (WebP)
   group_icons/ Group custom icons (WebP)
   avatars/     User avatars
   sessions/    (reserved)
-logs/          Application logs — NOT web-accessible
-install.php    Installer — auto-deletes after installation
+logs/          Application logs - NOT web-accessible
+install.php    Installer - auto-deletes after installation
 index.php      Main router
-config.php     Generated by installer — NEVER commit this file
+config.php     Generated by installer - NEVER commit this file
 fix_permissions.sh  Run as root after deploy/update
 ```
 
@@ -279,8 +281,8 @@ fix_permissions.sh  Run as root after deploy/update
 
 ## Security notes
 
-- `config.php` contains database credentials and secret keys — **never commit it** (it's in `.gitignore`)
-- `storage/` requires nginx `location ^~ /storage/ { deny all; }` — `.htaccess` is ignored by nginx
+- `config.php` contains database credentials and secret keys - **never commit it** (it's in `.gitignore`)
+- `storage/` requires nginx `location ^~ /storage/ { deny all; }` - `.htaccess` is ignored by nginx
 - `logs/` requires nginx `location ^~ /logs/ { deny all; }`
 - All API endpoints require authentication + CSRF tokens
 - 2FA is mandatory for admin accounts
@@ -318,6 +320,7 @@ If you installed from an older version of `install.php`, some columns may be mis
 The Admin → Install Check tab will report exactly which columns are absent with migration commands.
 
 Common issues:
+
 ```sql
 -- Missing rate_limits.key_plain (needed for Blocked IPs panel)
 ALTER TABLE letadial_db.rate_limits ADD COLUMN key_plain varchar(255) NULL AFTER window_start;
@@ -351,10 +354,5 @@ Check PHP error log and nginx error log. Most common cause: missing DB column (s
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+MIT - see [LICENSE](LICENSE)
 
----
-
-## Credits
-
-Built by [LetaLab](https://letalab.eu)

@@ -72,9 +72,9 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
 ## Known issues
 
 - Sometimes uploading a custom thumbnail for a dial does not visibly update the tile right away.
-- If that happens, right-click the dial and choose **Refresh thumbnail**.
-- Wait about one second, then edit the dial again and upload the custom thumbnail one more time.
-- After that, it should work correctly.
+  If that happens, right-click the dial and choose **Refresh thumbnail**.
+  Wait about one second, then edit the dial again and upload the custom thumbnail one more time.
+  After that, it should work correctly.
 
 ---
 

@@ -1,5 +1,21 @@
 # LetaDial
 
+---
+
+> ## **⚠️ IMPORTANT DISCLAIMER — READ BEFORE USE ⚠️**
+>
+> **THIS PROJECT IS 100% VIBE CODED USING FREE TIER ANTHROPIC CLAUDE SONNET 4.6. I CANNOT CODE IF IT WAS TO SAVE MY LIFE, BUT I LIKE TINKERING, AND SO I DID. THIS TOOK ABOUT 2 MONTHS TO BUILD.**
+>
+> **NEVER TRUST ME OR THIS CODE.**
+>
+> I can only give you my word that I did not add and will not add anything nasty to this project. And yet — I don't fully understand the code, so I could be implementing security issues unknowingly.
+>
+> I wrote this mainly for myself but I am putting it on GitHub for anyone to use. However, **use at your own risk**. I take zero responsibility. Code comes "as is" with zero warranty.
+>
+> I tried my best to get the code assessed for security holes and I have been using it for a while now to find any usability bugs — so far so good. But if you are a security analyst with too much spare time on your hands — poke at my code as much as you want. If you find something, let me know. I am broke to the point I could not even buy an Anthropic Claude Code license, so the reward for finding a security bug is my gratitude. No monetary gains for you. I would appreciate your feedback nonetheless — please and thank you!
+
+---
+
 **Personal speed dial dashboard — self-hosted, private, fast.**
 
 A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dark mode, import/export — no tracking, no ads, no cloud.

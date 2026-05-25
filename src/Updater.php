@@ -225,8 +225,12 @@ class Updater
         $permsOut = '';
 
         if (file_exists($script)) {
-            // Upewnij się że skrypt jest wykonywalny przed uruchomieniem
-            @chmod($script, 0755);
+            // exec() uses "bash $script" which reads the file directly —
+            // no chmod needed and intentionally NOT done here.
+            // Adding chmod before exec would be a security risk if the repo
+            // is compromised: an attacker could replace fix_permissions.sh
+            // with malicious content and this chmod+exec would run it.
+            // bash reads the script regardless of the executable bit.
             $scriptEsc  = escapeshellarg($script);
             $permsLines = [];
             $permsCode  = 0;

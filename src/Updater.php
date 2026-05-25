@@ -11,7 +11,8 @@
  *   Zwraca listę commitów "co nowego" z GitHub.
  *
  * gitPull():
- *   Wykonuje git pull origin main (z coderepo.andrzejl.eu — tu są credentials)
+ *   Wykonuje git fetch origin main + git reset --hard origin/main
+ *   (lokalne zmiany są nadpisywane bez pytania)
  *   + bash fix_permissions.sh
  *
  * Dlaczego dwa różne remotes?
@@ -184,7 +185,8 @@ class Updater
     }
 
     /**
-     * git pull origin main + bash fix_permissions.sh
+     * git fetch origin main + git reset --hard origin/main
+     * Lokalne zmiany są nadpisywane bez pytania.
      * Pull jest z origin (coderepo.andrzejl.eu) gdzie są credentials www-data.
      */
     public static function gitPull(): array
@@ -195,8 +197,20 @@ class Updater
 
         $dir = self::appDir();
 
-        $pull    = self::git('pull origin main');
-        $pullOut = $pull['output'];
+        $fetch    = self::git('fetch origin main');
+        $fetchOut = $fetch['output'];
+
+        if (!$fetch['ok']) {
+            return [
+                'ok'           => false,
+                'pull_output'  => $fetchOut,
+                'perms_output' => '',
+                'error'        => 'git fetch returned exit code ' . $fetch['code'],
+            ];
+        }
+
+        $reset    = self::git('reset --hard origin/main');
+        $pullOut  = $fetchOut . "\n" . $reset['output'];
 
         // Immediately remove install.php if git pull restored it from repo.
         // There is a brief window between git pull and fix_permissions.sh where
@@ -210,21 +224,23 @@ class Updater
         $script   = $dir . '/fix_permissions.sh';
         $permsOut = '';
 
-        if (file_exists($script) && is_executable($script)) {
+        if (file_exists($script)) {
+            // Upewnij się że skrypt jest wykonywalny przed uruchomieniem
+            @chmod($script, 0755);
             $scriptEsc  = escapeshellarg($script);
             $permsLines = [];
             $permsCode  = 0;
             exec("bash {$scriptEsc} 2>&1", $permsLines, $permsCode);
             $permsOut = implode("\n", $permsLines);
         } else {
-            $permsOut = 'fix_permissions.sh not found or not executable — skipped.';
+            $permsOut = 'fix_permissions.sh not found — skipped.';
         }
 
         return [
-            'ok'           => $pull['ok'],
+            'ok'           => $reset['ok'],
             'pull_output'  => $pullOut,
             'perms_output' => $permsOut,
-            'error'        => $pull['ok'] ? null : 'git pull returned exit code ' . $pull['code'],
+            'error'        => $reset['ok'] ? null : 'git reset --hard returned exit code ' . $reset['code'],
         ];
     }
 

@@ -2,9 +2,9 @@
 
 ---
 
-## **SEEKING DEFENSIVE SECURITY ASSESSMENT FOR OPEN SOURCE PROJECT**
+## **⚠️ ! SEEKING DEFENSIVE SECURITY ASSESSMENT FOR OPEN SOURCE PROJECT ! ⚠️**
 
-> ## **IMPORTANT DISCLAIMER - READ BEFORE USE**
+> ## **⚠️ ! IMPORTANT DISCLAIMER - READ BEFORE USE ! ⚠️**
 >
 > **THIS PROJECT IS 100% VIBE CODED USING FREE TIER ANTHROPIC CLAUDE SONNET 4.6. I CANNOT CODE IF IT WAS TO SAVE MY LIFE, BUT I LIKE TINKERING, AND SO I DID. THIS TOOK ABOUT 2 MONTHS TO BUILD.**
 >
@@ -21,6 +21,8 @@
 **Personal speed dial dashboard - self-hosted, private, fast.**
 
 A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dark mode, import/export - no tracking, no ads, no cloud.
+
+**Project website:** [https://LetaLab.eu](https://LetaLab.eu)
 
 ![PHP](https://img.shields.io/badge/PHP-8.1%2B-blue)
 ![MySQL](https://img.shields.io/badge/MySQL%2FMariaDB-10.6%2B-blue)
@@ -59,6 +61,15 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
 - Admin panel: blocked IPs, users, login history, update, install check
 - Auto-update notifications from GitHub Releases (git pull from admin panel)
 - Mobile-responsive, PWA-ready
+
+---
+
+## Known issues
+
+- Sometimes uploading a custom thumbnail for a dial does not visibly update the tile right away.
+- If that happens, right-click the dial and choose **Refresh thumbnail**.
+- Wait about one second, then edit the dial again and upload the custom thumbnail one more time.
+- After that, it should work correctly.
 
 ---
 
@@ -356,3 +367,8 @@ Check PHP error log and nginx error log. Most common cause: missing DB column (s
 
 MIT - see [LICENSE](LICENSE)
 
+---
+
+## Credits
+
+Built by [LetaLab](https://LetaLab.eu)

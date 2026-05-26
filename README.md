@@ -39,11 +39,11 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
 
 | Login | Dashboard |
 |---|---|
-| <a href="https://github.com/user-attachments/assets/469456fd-7313-4a84-ab05-2c21d423c333"><img width="50%" alt="Login" src="https://github.com/user-attachments/assets/469456fd-7313-4a84-ab05-2c21d423c333" /></a> | <a href="https://github.com/user-attachments/assets/b58dcfda-239b-4b1c-9df3-9c71fa5da49a"><img width="50%" alt="Dashboard" src="https://github.com/user-attachments/assets/b58dcfda-239b-4b1c-9df3-9c71fa5da49a" /></a> |
+| <a href="https://github.com/user-attachments/assets/469456fd-7313-4a84-ab05-2c21d423c333"><img width="100%" alt="Login" src="https://github.com/user-attachments/assets/469456fd-7313-4a84-ab05-2c21d423c333" /></a> | <a href="https://github.com/user-attachments/assets/b58dcfda-239b-4b1c-9df3-9c71fa5da49a"><img width="100%" alt="Dashboard" src="https://github.com/user-attachments/assets/b58dcfda-239b-4b1c-9df3-9c71fa5da49a" /></a> |
 
 | Installer | 2FA Setup |
 |---|---|
-| <a href="https://github.com/user-attachments/assets/1a7bf682-bb0f-43ec-9f98-5ec4fd7498aa"><img width="50%" alt="Installer" src="https://github.com/user-attachments/assets/1a7bf682-bb0f-43ec-9f98-5ec4fd7498aa" /></a> | <a href="https://github.com/user-attachments/assets/b5854f50-d645-47a1-a4bd-2ad6e8de8342"><img width="50%" alt="2FA Setup" src="https://github.com/user-attachments/assets/b5854f50-d645-47a1-a4bd-2ad6e8de8342" /></a> |
+| <a href="https://github.com/user-attachments/assets/1a7bf682-bb0f-43ec-9f98-5ec4fd7498aa"><img width="100%" alt="Installer" src="https://github.com/user-attachments/assets/1a7bf682-bb0f-43ec-9f98-5ec4fd7498aa" /></a> | <a href="https://github.com/user-attachments/assets/b5854f50-d645-47a1-a4bd-2ad6e8de8342"><img width="100%" alt="2FA Setup" src="https://github.com/user-attachments/assets/b5854f50-d645-47a1-a4bd-2ad6e8de8342" /></a> |
 
 | Vhost SSL Labs Test Results |
 |---|

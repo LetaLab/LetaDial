@@ -172,13 +172,14 @@ server {
     listen 443 ssl http2;
     server_name CHANGEME.CHANGEME.CHANGEME;
 
-    # Optional: restrict to specific IPs
+    # Optional: restrict access to specific IPs only
     # allow YOUR_IP_HERE;
+    # allow 192.168.1.0/24;
     # deny all;
 
     ssl_trusted_certificate /path/to/ca.cer;
     ssl_certificate         /path/to/fullchain.cer;
-    ssl_certificate_key     /path/to/CHANGEME.key;
+    ssl_certificate_key     /path/to/CHANGEME.CHANGEME.CHANGEME.key;
 
     ssl_protocols TLSv1.3 TLSv1.2;
     ssl_prefer_server_ciphers on;
@@ -188,11 +189,12 @@ server {
     ssl_session_tickets off;
     ssl_stapling on;
     ssl_stapling_verify on;
+    resolver 1.1.1.1 1.0.0.1 8.8.8.8 8.8.4.4 valid=300s ipv6=off;
+    resolver_timeout 5s;
     ssl_session_cache shared:SSL:50m;
     ssl_session_timeout 30m;
 
-    server_tokens off;
-
+    # Security headers
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-Content-Type-Options "nosniff" always;
@@ -203,26 +205,35 @@ server {
     root /var/www/html/LetaDial/;
     index index.php;
 
+    # Hide nginx version
+    server_tokens off;
+
     # Block .git and all dotfiles
     location ~ /\. {
         deny all;
         return 404;
     }
 
-    # Block storage - nginx does NOT read .htaccess!
+    # Block storage — thumbnails, sessions, avatars, group_icons
+    # .htaccess is NOT read by nginx — this block is required!
     location ^~ /storage/ {
         deny all;
         return 404;
     }
 
-    # Block logs
+    # Block logs directory
     location ^~ /logs/ {
         deny all;
         return 404;
     }
 
     # Block sensitive file extensions
-    location ~* \.(ini|log|conf|bak|sql|swp|dist|yml)$ {
+    location ~* \.(ini|log|conf|bak|sql|swp|dist)$ {
+        deny all;
+        return 404;
+    }
+
+    location ~* \.(yml)$ {
         deny all;
         return 404;
     }
@@ -243,9 +254,10 @@ server {
         fastcgi_read_timeout 240;
     }
 
-    access_log /var/log/nginx/CHANGEME_access.log;
-    error_log  /var/log/nginx/CHANGEME_error.log;
+    access_log /var/log/nginx/CHANGEME.CHANGEME.CHANGEME_ssl_access.log;
+    error_log  /var/log/nginx/CHANGEME.CHANGEME.CHANGEME_ssl_error.log;
 }
+
 ```
 
 > **php-fpm socket path:** adjust `fastcgi_pass` to match your PHP version, e.g.:

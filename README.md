@@ -5,9 +5,11 @@
 <h2 align="center">
   **⚠️ ! SEEKING DEFENSIVE SECURITY ASSESSMENT ! ⚠️**<br>
   **⚠️ ! FOR OPEN SOURCE PROJECT ! ⚠️**
+  <br><br>
 </h2>
 
 <h2 align="center">
+
   **⚠️ ! IMPORTANT DISCLAIMER - READ BEFORE USE ! ⚠️**
 </h2>
 

@@ -1,6 +1,12 @@
 <?php
 /**
- * LetaDial — Admin Model (sesja 065)
+ * LetaDial — Admin Model (sesja 065 + 066)
+ *
+ * sesja 066 additions:
+ *   getSessions()         — list all active sessions with user info
+ *   deleteSession()       — delete a single session by ID
+ *   deleteUserSessions()  — delete all sessions for a user
+ *   forcePasswordReset()  — set new password for any user (admin only)
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -102,6 +108,99 @@ class Admin
         return ['ok' => true, 'login' => $user['login']];
     }
 
+    // ── Sessions (sesja 066) ──────────────────────────────────────────────────
+
+    /**
+     * Get all active sessions with joined user info.
+     * If $userId is provided, returns only sessions for that user.
+     *
+     * @param int|null $userId   Filter to a specific user (null = all users)
+     * @param int      $limit    Maximum rows returned
+     */
+    public static function getSessions(?int $userId = null, int $limit = 300): array
+    {
+        if ($userId !== null) {
+            return DB::rows(
+                "SELECT s.id, s.user_id, s.ip, s.user_agent,
+                        s.created_at, s.last_activity, s.expires_at,
+                        s.totp_verified,
+                        u.login, u.role
+                 FROM sessions s
+                 JOIN users u ON u.id = s.user_id
+                 WHERE s.user_id = ?
+                 ORDER BY s.last_activity DESC
+                 LIMIT ?",
+                [$userId, $limit]
+            );
+        }
+        return DB::rows(
+            "SELECT s.id, s.user_id, s.ip, s.user_agent,
+                    s.created_at, s.last_activity, s.expires_at,
+                    s.totp_verified,
+                    u.login, u.role
+             FROM sessions s
+             JOIN users u ON u.id = s.user_id
+             ORDER BY s.last_activity DESC
+             LIMIT ?",
+            [$limit]
+        );
+    }
+
+    /**
+     * Delete a single session by its ID (SHA-256 hash).
+     * Returns true if a row was deleted.
+     */
+    public static function deleteSession(string $sessionId): bool
+    {
+        return DB::run("DELETE FROM sessions WHERE id = ?", [$sessionId]) > 0;
+    }
+
+    /**
+     * Delete all sessions for a given user.
+     * Returns the number of deleted sessions.
+     */
+    public static function deleteUserSessions(int $userId): int
+    {
+        return DB::run("DELETE FROM sessions WHERE user_id = ?", [$userId]);
+    }
+
+    /**
+     * Force-reset a user's password (admin action — no current password required).
+     *
+     * Security:
+     *   - Admin cannot use this on their own account (use Settings instead)
+     *   - New password goes through the same validation as regular password changes
+     *   - All existing sessions for the target user are invalidated
+     *
+     * @param int    $targetUserId  User whose password to reset
+     * @param string $newPassword   Plain-text new password (validated here)
+     * @param int    $adminId       Currently logged-in admin (cannot be same as target)
+     */
+    public static function forcePasswordReset(int $targetUserId, string $newPassword, int $adminId): array
+    {
+        if ($targetUserId === $adminId) {
+            return ['ok' => false, 'error' => 'Use Settings to change your own password.'];
+        }
+
+        $user = DB::row("SELECT id, login FROM users WHERE id = ?", [$targetUserId]);
+        if (!$user) {
+            return ['ok' => false, 'error' => 'User not found.'];
+        }
+
+        $errors = Password::validate($newPassword);
+        if (!empty($errors)) {
+            return ['ok' => false, 'error' => implode(' ', $errors)];
+        }
+
+        $hash = Password::hash($newPassword);
+        DB::run("UPDATE users SET password_hash = ? WHERE id = ?", [$hash, $targetUserId]);
+
+        // Invalidate all sessions so the user must log in with the new password
+        Auth::logoutAllSessions($targetUserId);
+
+        return ['ok' => true, 'login' => $user['login']];
+    }
+
     // ── Login History ─────────────────────────────────────────────────────────
 
     public static function getLoginHistory(?string $ip = null, int $limit = 100): array
@@ -159,8 +258,6 @@ class Admin
         $groups['PHP'] = $php;
 
         // ── 2. Database ───────────────────────────────────────────────────────
-        // FIX: Use information_schema instead of "SHOW TABLES LIKE ?" because
-        // MariaDB 11.8.7 does not support prepared statements for SHOW commands.
         $db = [];
         try {
             $ver  = DB::val("SELECT VERSION()") ?? 'unknown';
@@ -176,7 +273,7 @@ class Admin
                 $db[] = self::chk("Table: {$tbl}", $exists, true, $exists ? 'exists' : 'MISSING');
             }
 
-            // rate_limits.key_plain column (sesja 065)
+            // rate_limits.key_plain (sesja 065)
             $hasKP = (int)(DB::val(
                 "SELECT COUNT(*) FROM information_schema.COLUMNS
                  WHERE TABLE_SCHEMA = DATABASE()
@@ -185,9 +282,9 @@ class Admin
             ) ?? 0) > 0;
             $db[] = self::chk('rate_limits.key_plain column', $hasKP, false,
                 $hasKP ? 'present' : 'missing',
-                $hasKP ? '' : 'Run migrate_065.sql to enable IP display in Blocked IPs panel.');
+                $hasKP ? '' : 'Run migrate_065.sql.');
 
-            // users.recent_disabled column (sesja 064)
+            // users.recent_disabled (sesja 064)
             $hasRD = (int)(DB::val(
                 "SELECT COUNT(*) FROM information_schema.COLUMNS
                  WHERE TABLE_SCHEMA = DATABASE()
@@ -197,6 +294,17 @@ class Admin
             $db[] = self::chk('users.recent_disabled column', $hasRD, false,
                 $hasRD ? 'present' : 'missing',
                 $hasRD ? '' : 'Run migrate_064.sql.');
+
+            // users.email_pending (sesja 066)
+            $hasEP = (int)(DB::val(
+                "SELECT COUNT(*) FROM information_schema.COLUMNS
+                 WHERE TABLE_SCHEMA = DATABASE()
+                   AND TABLE_NAME   = 'users'
+                   AND COLUMN_NAME  = 'email_pending'"
+            ) ?? 0) > 0;
+            $db[] = self::chk('users.email_pending column', $hasEP, false,
+                $hasEP ? 'present' : 'missing',
+                $hasEP ? '' : 'Run migrate_066.sql to enable email change feature.');
 
         } catch (\Throwable $e) {
             $db[] = self::chk('DB connection', false, true, 'FAILED', $e->getMessage());
@@ -212,7 +320,7 @@ class Admin
 
         if ($cfgExists) {
             $cfgPerms = substr(sprintf('%o', fileperms($cfgPath)), -4);
-            $cfg[] = self::chk('config.php permissions', in_array($cfgPerms, ['0600','0400'], true), false,
+            $cfg[] = self::chk('config.php permissions', in_array($cfgPerms, ['0600','0400'], true), true,
                 $cfgPerms, 'Should be 600. Run: chmod 600 config.php');
         }
 
@@ -243,7 +351,6 @@ class Admin
         // ── 4. Security ───────────────────────────────────────────────────────
         $sec = [];
 
-        // install.php should be absent (fix_permissions.sh removes it)
         $noInstall = !file_exists($root . '/install.php');
         $sec[] = self::chk('install.php absent', $noInstall, true,
             $noInstall ? 'removed ✓' : 'PRESENT — delete it!',
@@ -263,7 +370,7 @@ class Admin
         $smtpOk = defined('SMTP_ENABLED') && SMTP_ENABLED;
         $sec[] = self::chk('SMTP configured', $smtpOk, false,
             $smtpOk ? (SMTP_HOST . ':' . SMTP_PORT) : 'disabled',
-            $smtpOk ? '' : 'Optional — needed for password reset emails.');
+            $smtpOk ? '' : 'Optional — needed for password reset and email change emails.');
 
         $groups['Security'] = $sec;
 
@@ -323,13 +430,11 @@ class Admin
 
         $dirArg = escapeshellarg($root);
 
-        // Local commit SHA
         $shaOut = [];
         exec("git -C {$dirArg} rev-parse --short HEAD 2>&1", $shaOut);
         $localSha = trim($shaOut[0] ?? 'unknown');
         $integrity[] = self::chk('Local commit (HEAD)', true, false, $localSha);
 
-        // git status --porcelain — compare working tree vs HEAD
         $statusOut  = [];
         $statusCode = 0;
         exec("git -C {$dirArg} status --porcelain 2>&1", $statusOut, $statusCode);
@@ -341,7 +446,6 @@ class Admin
             return self::buildResult($groups);
         }
 
-        // Parse status output
         $modified  = [];
         $untracked = [];
         $deleted   = [];
@@ -356,9 +460,7 @@ class Admin
             else { $modified[] = $file; }
         }
 
-        // Paths to ignore — these change legitimately in production
         $ignorePrefixes = ['storage/', 'logs/', '.git/', 'assets/icons/'];
-        // FIX: install.php is intentionally removed by fix_permissions.sh — ignore it
         $ignoreExact    = ['config.php', 'fix_permissions.sh', 'install.php'];
 
         $filterFiles = function(array $files) use ($ignorePrefixes, $ignoreExact): array {
@@ -374,8 +476,6 @@ class Admin
         $modFiltered = $filterFiles($modified);
         $delFiltered = $filterFiles($deleted);
 
-        // Commits behind GitHub (public repo) — checked by Updater::gitCheck()
-        // Here we only show local state vs committed HEAD
         $integrity[] = self::chk(
             'Modified tracked files',
             count($modFiltered) === 0,
@@ -394,7 +494,6 @@ class Admin
             count($delFiltered) > 0 ? implode(', ', $delFiltered) : ''
         );
 
-        // Suspicious untracked files in code dirs
         $suspicious = array_values(array_filter($untracked, function($f) {
             return str_starts_with($f, 'src/')
                 || str_starts_with($f, 'api/')
@@ -408,7 +507,6 @@ class Admin
             count($suspicious) > 0 ? implode(', ', $suspicious) : ''
         );
 
-        // Note about login rate limit behavior
         $groups['File Integrity'] = $integrity;
         return self::buildResult($groups);
     }

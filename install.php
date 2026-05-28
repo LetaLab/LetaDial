@@ -297,8 +297,11 @@ function db_create_tables(PDO $pdo): void {
         "CREATE TABLE IF NOT EXISTS users (
             id               INT UNSIGNED     AUTO_INCREMENT PRIMARY KEY,
             login            VARCHAR(50)      NOT NULL,
-            email            VARCHAR(255)     NOT NULL,
-            password_hash    VARCHAR(255)     NOT NULL,
+            email                 VARCHAR(255)     NOT NULL,
+            email_pending         VARCHAR(255)     DEFAULT NULL COMMENT 'New email awaiting confirmation',
+            email_change_token    VARCHAR(64)      DEFAULT NULL COMMENT 'Token sent to new email address',
+            email_change_expires  DATETIME         DEFAULT NULL COMMENT 'Token expiry (1 hour)',
+            password_hash         VARCHAR(255)     NOT NULL,
             role             ENUM('admin','user') NOT NULL DEFAULT 'user',
             totp_secret      VARCHAR(128)     DEFAULT NULL COMMENT 'AES-256-GCM encrypted',
             totp_enabled     TINYINT(1)       NOT NULL DEFAULT 0,

@@ -12,8 +12,8 @@ class Mailer
     public static function send(
         string $to,
         string $subject,
-        string $body_text,      // Plain text
-        string $body_html = ''  // Optional HTML alternative
+        string $body_text,
+        string $body_html = ''
     ): bool {
         if (!defined('SMTP_ENABLED') || !SMTP_ENABLED) return false;
 
@@ -90,6 +90,42 @@ class Mailer
         return self::send($to, 'You\'ve been invited to ' . APP_NAME, $text, $html);
     }
 
+    /**
+     * Send email address change confirmation to the NEW email address.
+     * The user must click the link to confirm they own the new address.
+     *
+     * sesja 066
+     *
+     * @param string $to       New (unconfirmed) email address
+     * @param string $token    64-char hex token stored in users.email_change_token
+     */
+    public static function sendEmailChange(string $to, string $token): bool
+    {
+        $link = APP_URL . '/confirm-email?token=' . rawurlencode($token);
+        $app  = APP_NAME;
+
+        $text = "Hello,\n\n"
+              . "A request was made to change the email address on your {$app} account "
+              . "to this address.\n\n"
+              . "Click the link below to confirm and apply the change:\n"
+              . $link . "\n\n"
+              . "This link expires in 1 hour.\n\n"
+              . "If you did not request this change, you can safely ignore this email — "
+              . "your current email address will remain unchanged.\n\n"
+              . "— {$app}";
+
+        $html = self::wrapHtml('Confirm your new email address',
+            '<p>A request was made to change the email address on your <strong>'
+            . htmlspecialchars($app, ENT_QUOTES, 'UTF-8') . '</strong> account to this address.</p>'
+            . '<p><a href="' . htmlspecialchars($link, ENT_QUOTES, 'UTF-8')
+            . '" class="btn">Confirm Email Change</a></p>'
+            . '<p class="muted">This link expires in 1 hour.</p>'
+            . '<p class="muted">If you did not request this, ignore this email — '
+            . 'your current address remains unchanged.</p>');
+
+        return self::send($to, 'Confirm your new email address — ' . $app, $text, $html);
+    }
+
     // ── SMTP core ─────────────────────────────────────────────────────────────
 
     private static function smtp(
@@ -108,17 +144,13 @@ class Mailer
 
         stream_set_timeout($sock, 15);
 
-        // Greeting
         if (!self::expect($sock, 220)) {
             fclose($sock); throw new RuntimeException('SMTP: expected 220 greeting');
         }
 
-        // EHLO
         self::cmd($sock, "EHLO {$domain}");
         self::drainEhlo($sock);
 
-        // STARTTLS for port 587
-        // FIX: use fwrite+expect zamiast cmd+expect (cmd już konsumuje odpowiedź 220)
         if ($port === 587) {
             fwrite($sock, "STARTTLS\r\n");
             if (!self::expect($sock, 220)) {
@@ -127,17 +159,15 @@ class Mailer
             if (!stream_socket_enable_crypto($sock, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
                 fclose($sock); throw new RuntimeException('SMTP: TLS negotiation failed');
             }
-            // Re-EHLO after TLS
             self::cmd($sock, "EHLO {$domain}");
             self::drainEhlo($sock);
         }
 
-        // AUTH LOGIN
         if (SMTP_USER !== '') {
             fwrite($sock, "AUTH LOGIN\r\n");
-            self::read($sock); // 334
+            self::read($sock);
             fwrite($sock, base64_encode(SMTP_USER) . "\r\n");
-            self::read($sock); // 334
+            self::read($sock);
             fwrite($sock, base64_encode(SMTP_PASS) . "\r\n");
             $auth = self::read($sock);
             if ((int)substr($auth, 0, 3) !== 235) {
@@ -145,13 +175,11 @@ class Mailer
             }
         }
 
-        // Envelope
         self::cmd($sock, "MAIL FROM:<" . SMTP_FROM . ">");
         self::cmd($sock, "RCPT TO:<{$to}>");
         self::cmd($sock, "DATA");
         self::expect($sock, 354);
 
-        // Build message
         $msg = self::buildMessage($to, $subject, $text, $html, $domain);
         fwrite($sock, $msg . "\r\n.\r\n");
 
@@ -163,9 +191,6 @@ class Mailer
         return $code === 250;
     }
 
-    /**
-     * Sanitize email header value — strip CR/LF to prevent header injection.
-     */
     private static function sanitizeHeader(string $value): string
     {
         return str_replace(["\r", "\n", "\0"], '', $value);
@@ -174,7 +199,6 @@ class Mailer
     private static function buildMessage(
         string $to, string $subject, string $text, string $html, string $domain
     ): string {
-        // Sanitize $to against header injection (strip CR/LF/NUL)
         $to = self::sanitizeHeader($to);
         $date   = date('r');
         $msg_id = '<' . bin2hex(random_bytes(8)) . '@' . $domain . '>';
@@ -248,10 +272,7 @@ class Mailer
         return (int)substr(trim($response), 0, 3) === $code;
     }
 
-    private static function drainEhlo(mixed $sock): void
-    {
-        // read() handles multi-line EHLO correctly via '-' detection
-    }
+    private static function drainEhlo(mixed $sock): void {}
 
     // ── HTML email template ───────────────────────────────────────────────────
 

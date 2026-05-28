@@ -1,13 +1,14 @@
 <?php
 /**
- * LetaDial — Admin Panel (sesja 065)
+ * LetaDial — Admin Panel (sesja 065 + 066)
  *
  * Tabs:
  *   1. Blocked IPs    — rate_limits; unblock / export
- *   2. Users          — all accounts; delete
- *   3. Login History  — recent auth attempts; filter by IP
- *   4. Update         — git check vs github.com/LetaLab/LetaDial + git pull + fix_permissions
- *   5. Install Check  — full health check: PHP, DB, config, security, filesystem, file integrity
+ *   2. Users          — all accounts; delete; force-reset password (066)
+ *   3. Sessions       — all active sessions; delete single / all for user (066)
+ *   4. Login History  — recent auth attempts; filter by IP
+ *   5. Update         — git check vs github.com/LetaLab/LetaDial + git pull + fix_permissions
+ *   6. Install Check  — full health check
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die();
@@ -21,20 +22,26 @@ $icon_url   = htmlspecialchars(APP_URL . '/assets/icons/icon-192.png', ENT_QUOTE
 
 $blocked       = Admin::getBlocked(3);
 $users_list    = Admin::getUsers();
+$sessions_list = Admin::getSessions();
 $login_history = Admin::getLoginHistory(null, 100);
 $install_check = Admin::installCheck();
 
-$blocked_json = json_encode($blocked,       JSON_HEX_TAG | JSON_HEX_QUOT);
-$users_json   = json_encode($users_list,    JSON_HEX_TAG | JSON_HEX_QUOT);
-$history_json = json_encode($login_history, JSON_HEX_TAG | JSON_HEX_QUOT);
-$checks_json  = json_encode($install_check, JSON_HEX_TAG | JSON_HEX_QUOT);
+$blocked_json  = json_encode($blocked,       JSON_HEX_TAG | JSON_HEX_QUOT);
+$users_json    = json_encode($users_list,    JSON_HEX_TAG | JSON_HEX_QUOT);
+$sessions_json = json_encode($sessions_list, JSON_HEX_TAG | JSON_HEX_QUOT);
+$history_json  = json_encode($login_history, JSON_HEX_TAG | JSON_HEX_QUOT);
+$checks_json   = json_encode($install_check, JSON_HEX_TAG | JSON_HEX_QUOT);
 
 $checks_fail = count(array_filter($install_check, fn($c) => $c['required'] && !$c['ok']));
 $checks_warn = count(array_filter($install_check, fn($c) => !$c['required'] && !$c['ok']));
 
-// Login rate limit info (from Auth.php: 10 attempts / 300s)
 $login_rl_max = 10;
 $login_rl_win = 300;
+
+// Current admin session ID — mark it in the sessions list
+$my_session_id = Auth::getSessionId();
+
+$pw_rules = Password::jsRules();
 
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 ?>
@@ -67,7 +74,7 @@ body { min-height:100vh; background:var(--bg); }
 .back-link { color:var(--text-muted); text-decoration:none; transition:color .15s; }
 .back-link:hover { color:var(--primary); text-decoration:none; }
 
-.admin-main { max-width:1140px; margin:0 auto; padding:1.5rem; }
+.admin-main { max-width:1200px; margin:0 auto; padding:1.5rem; }
 .admin-title { font-size:1.4rem; font-weight:700; margin-bottom:1.25rem; }
 
 .admin-tabs { display:flex; border-bottom:2px solid var(--border); margin-bottom:1.5rem; gap:2px; overflow-x:auto; }
@@ -95,7 +102,7 @@ body { min-height:100vh; background:var(--bg); }
 .data-table tr:hover td { background:var(--surface-alt); }
 .mono  { font-family:var(--font-mono); font-size:.82rem; }
 .muted { color:var(--text-muted); }
-.ua    { max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+.ua    { max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
          color:var(--text-muted); font-size:.78rem; }
 
 .attempts-badge { display:inline-flex; align-items:center; justify-content:center;
@@ -124,6 +131,13 @@ body { min-height:100vh; background:var(--bg); }
     display:flex; align-items:center; gap:.6rem; background:var(--surface-alt); }
 .admin-card-header h3 { font-size:.92rem; font-weight:600; margin:0; flex:1; }
 .admin-card-body { padding:1.25rem; }
+
+/* ── Sessions ── */
+.sess-this { background:var(--primary-bg); border-left:3px solid var(--primary); }
+
+/* ── Password strength in modal ── */
+.pw-strength-modal { height:4px; border-radius:9999px; background:var(--border); margin-top:.4rem; overflow:hidden; }
+.pw-strength-modal-bar { height:100%; border-radius:9999px; transition:width .3s,background .3s; width:0; }
 
 /* ── Update tab ── */
 .update-state { text-align:center; padding:2.5rem 1.5rem; }
@@ -169,7 +183,7 @@ body { min-height:100vh; background:var(--bg); }
 .check-value-ok   { color:var(--success); }
 .check-value-fail { color:var(--error); font-weight:600; }
 
-/* ── Toast — standalone (nie wymaga app.css) ── */
+/* ── Toast ── */
 .toast-container { position:fixed; bottom:1.25rem; right:1.25rem; z-index:9999;
     display:flex; flex-direction:column; gap:.5rem; pointer-events:none; }
 .toast { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg);
@@ -185,12 +199,12 @@ body { min-height:100vh; background:var(--bg); }
 .toast-error   .toast-icon { color:var(--error); }
 .toast-info    .toast-icon { color:var(--info); }
 
-/* ── Confirm ── */
+/* ── Confirm / Modal ── */
 .confirm-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.45);
     z-index:300; align-items:center; justify-content:center; padding:1rem; }
 .confirm-overlay.show { display:flex; }
 .confirm-box { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg);
-    box-shadow:var(--shadow-xl); max-width:460px; width:100%; padding:1.75rem; }
+    box-shadow:var(--shadow-xl); max-width:480px; width:100%; padding:1.75rem; }
 .confirm-box h3 { font-size:1rem; margin-bottom:.75rem; }
 .confirm-box p  { font-size:.875rem; color:var(--text-muted); margin-bottom:1.25rem; line-height:1.6; white-space:pre-line; }
 .confirm-actions { display:flex; gap:.75rem; justify-content:flex-end; }
@@ -233,6 +247,10 @@ body { min-height:100vh; background:var(--bg); }
             👥 Users
             <span class="tab-badge tb-info"><?= count($users_list) ?></span>
         </button>
+        <button class="admin-tab" data-tab="sessions">
+            🖥️ Sessions
+            <span class="tab-badge tb-info"><?= count($sessions_list) ?></span>
+        </button>
         <button class="admin-tab" data-tab="history">📋 Login History</button>
         <button class="admin-tab" data-tab="update">🔄 Update</button>
         <button class="admin-tab" data-tab="check">
@@ -253,7 +271,6 @@ body { min-height:100vh; background:var(--bg); }
             <div class="admin-card-body" style="padding:.75rem 1.25rem;font-size:.82rem;color:var(--info)">
                 ℹ Login rate limit: <strong><?= $login_rl_max ?> failed attempts</strong> within
                 <strong><?= $login_rl_win ?>s</strong> triggers a block. Successful login clears the counter.
-                Forgot-password, 2FA and other actions have lower thresholds.
             </div>
         </div>
         <div class="panel-toolbar">
@@ -268,11 +285,9 @@ body { min-height:100vh; background:var(--bg); }
             </div>
         </div>
         <div class="filter-bar">
-            <input type="number" id="blocked-min-input" class="filter-input"
-                   value="3" min="1" max="999" style="width:90px" title="Minimum attempts">
+            <input type="number" id="blocked-min-input" class="filter-input" value="3" min="1" max="999" style="width:90px" title="Minimum attempts">
             <label style="font-size:.875rem;color:var(--text-muted);align-self:center">min attempts</label>
-            <input type="text" id="blocked-filter" class="filter-input"
-                   placeholder="Filter by IP / action…" style="min-width:200px">
+            <input type="text" id="blocked-filter" class="filter-input" placeholder="Filter by IP / action…" style="min-width:200px">
         </div>
         <div class="data-table-wrap">
             <table class="data-table">
@@ -293,8 +308,7 @@ body { min-height:100vh; background:var(--bg); }
                 <strong id="users-count"><?= count($users_list) ?></strong> user(s)
             </span>
             <div class="panel-toolbar-right">
-                <input type="text" id="users-filter" class="filter-input"
-                       placeholder="Filter by login / email…" style="min-width:200px">
+                <input type="text" id="users-filter" class="filter-input" placeholder="Filter by login / email…" style="min-width:200px">
                 <button class="btn btn-ghost btn-sm" id="btn-refresh-users">↻ Refresh</button>
             </div>
         </div>
@@ -310,13 +324,35 @@ body { min-height:100vh; background:var(--bg); }
         </div>
     </div>
 
-    <!-- ═══ TAB 3: LOGIN HISTORY ═══ -->
+    <!-- ═══ TAB 3: SESSIONS (sesja 066) ═══ -->
+    <div class="tab-pane" id="tab-sessions">
+        <div class="panel-toolbar">
+            <span style="font-size:.875rem;color:var(--text-muted)">
+                <strong id="sessions-count"><?= count($sessions_list) ?></strong> active session(s)
+            </span>
+            <div class="panel-toolbar-right">
+                <input type="text" id="sessions-filter" class="filter-input" placeholder="Filter by user / IP…" style="min-width:200px">
+                <button class="btn btn-ghost btn-sm" id="btn-refresh-sessions">↻ Refresh</button>
+            </div>
+        </div>
+        <div class="data-table-wrap">
+            <table class="data-table">
+                <thead><tr>
+                    <th>User</th><th>Role</th><th>IP</th>
+                    <th>Browser / OS</th><th>Last Active</th>
+                    <th>Signed In</th><th>2FA</th><th>Actions</th>
+                </tr></thead>
+                <tbody id="sessions-tbody"><tr><td colspan="8" class="table-empty">Loading…</td></tr></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- ═══ TAB 4: LOGIN HISTORY ═══ -->
     <div class="tab-pane" id="tab-history">
         <div class="panel-toolbar">
             <span style="font-size:.875rem;color:var(--text-muted)" id="history-count-label">Last 100 entries</span>
             <div class="panel-toolbar-right">
-                <input type="text" id="history-ip-filter" class="filter-input"
-                       placeholder="Filter by IP…" style="width:160px">
+                <input type="text" id="history-ip-filter" class="filter-input" placeholder="Filter by IP…" style="width:160px">
                 <select id="history-status-filter" class="filter-input">
                     <option value="">All statuses</option>
                     <option value="success">success</option>
@@ -339,31 +375,26 @@ body { min-height:100vh; background:var(--bg); }
         </div>
     </div>
 
-    <!-- ═══ TAB 4: UPDATE ═══ -->
+    <!-- ═══ TAB 5: UPDATE ═══ -->
     <div class="tab-pane" id="tab-update">
         <div class="admin-card">
             <div class="admin-card-header">
                 <h3>🔄 LetaDial Update</h3>
                 <span style="font-size:.78rem;color:var(--text-faint)">
-                    Checks: <a href="https://github.com/LetaLab/LetaDial" target="_blank" rel="noopener"
-                        style="color:var(--text-faint)">github.com/LetaLab/LetaDial</a> &nbsp;·&nbsp;
-                    Pulls: origin (coderepo)
+                    Checks: <a href="https://github.com/LetaLab/LetaDial" target="_blank" rel="noopener" style="color:var(--text-faint)">github.com/LetaLab/LetaDial</a>
                 </span>
             </div>
             <div class="admin-card-body">
-
                 <div id="update-idle" class="update-state">
                     <div class="update-icon">🔍</div>
                     <div class="update-title">Check for updates</div>
                     <div class="update-sub">Compares your local commit with the public GitHub repository.<br>No changes are made during the check.</div>
                     <button class="btn btn-primary" id="btn-check-update" style="min-width:180px">Check for updates</button>
                 </div>
-
                 <div id="update-checking" class="update-state" style="display:none">
                     <div class="spinner"></div>
                     <div class="update-sub">Comparing with github.com/LetaLab/LetaDial…</div>
                 </div>
-
                 <div id="update-current" class="update-state" style="display:none">
                     <div class="update-icon">✅</div>
                     <div class="update-title">You're up to date</div>
@@ -371,37 +402,31 @@ body { min-height:100vh; background:var(--bg); }
                     <div class="update-sha" id="update-current-sha"></div>
                     <button class="btn btn-ghost" id="btn-recheck-1" style="min-width:160px">↻ Check again</button>
                 </div>
-
                 <div id="update-available" class="update-state" style="display:none">
                     <div class="update-icon">🆕</div>
                     <div class="update-title">Update available!</div>
                     <div class="update-sub" id="update-available-sub"></div>
                     <div class="update-sha" id="update-available-sha"></div>
-                    <div style="margin-bottom:.75rem;font-size:.8rem;font-weight:700;text-transform:uppercase;
-                        letter-spacing:.06em;color:var(--text-muted)">What's new</div>
+                    <div style="margin-bottom:.75rem;font-size:.8rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted)">What's new</div>
                     <div class="commit-list" id="update-commit-list"></div>
                     <div style="display:flex;gap:.75rem;justify-content:center;flex-wrap:wrap">
                         <button class="btn btn-primary" id="btn-update-now" style="min-width:180px">⬆ Update now</button>
                         <button class="btn btn-ghost"   id="btn-recheck-2"  style="min-width:140px">↻ Re-check</button>
                     </div>
                 </div>
-
                 <div id="update-running" class="update-state" style="display:none">
                     <div class="spinner"></div>
                     <div class="update-title" style="font-size:1rem">Updating…</div>
                     <div class="update-sub">Running git pull origin main + fix_permissions.sh<br><strong>Do not close this page.</strong></div>
                 </div>
-
                 <div id="update-done" class="update-state" style="display:none">
                     <div class="update-icon" id="update-done-icon">✅</div>
                     <div class="update-title" id="update-done-title">Update complete!</div>
                     <div class="update-sub"  id="update-done-sub">Reload the page to use the new version.</div>
                     <div style="text-align:left;max-width:680px;margin:0 auto">
-                        <div style="font-size:.75rem;font-weight:700;color:var(--text-muted);
-                            text-transform:uppercase;letter-spacing:.06em;margin:.75rem 0 .35rem">git pull output</div>
+                        <div style="font-size:.75rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin:.75rem 0 .35rem">git pull output</div>
                         <div class="output-box" id="update-pull-output"></div>
-                        <div style="font-size:.75rem;font-weight:700;color:var(--text-muted);
-                            text-transform:uppercase;letter-spacing:.06em;margin:.75rem 0 .35rem">fix_permissions output</div>
+                        <div style="font-size:.75rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin:.75rem 0 .35rem">fix_permissions output</div>
                         <div class="output-box" id="update-perms-output"></div>
                     </div>
                     <div style="display:flex;gap:.75rem;justify-content:center;margin-top:1rem;flex-wrap:wrap">
@@ -409,12 +434,11 @@ body { min-height:100vh; background:var(--bg); }
                         <button class="btn btn-ghost"   id="btn-recheck-3">Check again</button>
                     </div>
                 </div>
-
             </div>
         </div>
     </div>
 
-    <!-- ═══ TAB 5: INSTALL CHECK ═══ -->
+    <!-- ═══ TAB 6: INSTALL CHECK ═══ -->
     <div class="tab-pane" id="tab-check">
         <div class="panel-toolbar">
             <div class="check-summary-bar" id="check-summary-bar"></div>
@@ -438,15 +462,39 @@ body { min-height:100vh; background:var(--bg); }
     </div>
 </div>
 
-<!-- Toast container — standalone CSS above, nie zależy od app.css -->
+<!-- Force Reset Password Modal -->
+<div class="confirm-overlay" id="pw-reset-overlay">
+    <div class="confirm-box" style="max-width:440px">
+        <h3>🔑 Force Reset Password</h3>
+        <p style="margin-bottom:.75rem">Setting a new password for: <strong id="pw-reset-login"></strong><br>
+        All sessions for this user will be invalidated.</p>
+        <input type="hidden" id="pw-reset-user-id">
+        <div style="margin-bottom:.75rem">
+            <label style="font-size:.78rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:.35rem">New Password</label>
+            <input type="password" id="pw-reset-input" class="form-input"
+                   placeholder="Min. 12 characters" autocomplete="new-password">
+            <div class="pw-strength-modal"><div class="pw-strength-modal-bar" id="pw-reset-strength-bar"></div></div>
+            <div style="font-size:.75rem;margin-top:.25rem" id="pw-reset-strength-label"></div>
+        </div>
+        <div id="pw-reset-error" style="display:none;padding:.5rem .75rem;background:var(--error-bg);color:var(--error);border-radius:var(--radius-sm);font-size:.85rem;margin-bottom:.75rem"></div>
+        <div class="confirm-actions">
+            <button class="btn btn-ghost" id="pw-reset-cancel">Cancel</button>
+            <button class="btn btn-danger" id="pw-reset-ok">Reset Password</button>
+        </div>
+    </div>
+</div>
+
 <div class="toast-container" id="toast-container"></div>
 
 <script>
-const CSRF  = <?= json_encode($csrf_token) ?>;
-const ME_ID = <?= (int)$user['id'] ?>;
+const CSRF   = <?= json_encode($csrf_token) ?>;
+const ME_ID  = <?= (int)$user['id'] ?>;
+const MY_SESSION = <?= json_encode($my_session_id) ?>;
+const PW_RULES   = <?= $pw_rules ?>;
 
 let blocked  = <?= $blocked_json ?>;
 let users    = <?= $users_json ?>;
+let sessions = <?= $sessions_json ?>;
 let history  = <?= $history_json ?>;
 let checks   = <?= $checks_json ?>;
 
@@ -517,6 +565,22 @@ function relTime(s) {
     if (diff<3600)  return `${Math.floor(diff/60)}m ago`;
     if (diff<86400) return `${Math.floor(diff/3600)}h ago`;
     return `${Math.floor(diff/86400)}d ago`;
+}
+
+function parseUA(ua) {
+    if (!ua) return 'Unknown';
+    let browser = 'Unknown', os = 'Unknown';
+    if (/EdgA?\//.test(ua))                               browser = 'Edge';
+    else if (/OPR\//.test(ua))                             browser = 'Opera';
+    else if (/Chrome\//.test(ua))                          browser = 'Chrome';
+    else if (/Safari\//.test(ua) && /Version\//.test(ua)) browser = 'Safari';
+    else if (/Firefox\//.test(ua))                         browser = 'Firefox';
+    if      (/Windows NT/.test(ua)) os = 'Windows';
+    else if (/Macintosh/.test(ua))  os = 'macOS';
+    else if (/Android/.test(ua))    os = 'Android';
+    else if (/iPhone|iPad/.test(ua))os = 'iOS';
+    else if (/Linux/.test(ua))      os = 'Linux';
+    return `${browser} / ${os}`;
 }
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
@@ -629,18 +693,23 @@ function renderUsers(data) {
         const role2fa=u.role==='admin'?`<span class="status-ok">admin</span>`:`<span class="muted">user</span>`;
         const twofa=u.totp_enabled?`<span class="status-ok">✓ on</span>`:`<span class="status-fail">✗ off</span>`;
         const isMe=parseInt(u.id)===ME_ID;
-        const del=isMe?`<span class="muted" title="Cannot delete own account">—</span>`
-            :`<button class="btn btn-danger btn-sm" onclick="doDeleteUser(${u.id},'${esc(u.login)}')">🗑 Delete</button>`;
+        const delBtn=isMe?`<span class="muted" title="Cannot delete own account">—</span>`
+            :`<button class="btn btn-danger btn-sm" onclick="doDeleteUser(${u.id},'${esc(u.login)}')">🗑</button>`;
+        const pwBtn=isMe?``
+            :`<button class="btn btn-ghost btn-sm" style="margin-left:.25rem"
+               onclick="showForceReset(${u.id},'${esc(u.login)}')">🔑</button>`;
+        const sessBtn=`<button class="btn btn-ghost btn-sm" style="margin-left:.25rem"
+            onclick="filterSessionsToUser(${u.id},'${esc(u.login)}')">🖥️ ${u.session_count||0}</button>`;
         return `<tr>
             <td><strong>${esc(u.login)}</strong>${isMe?' <span class="muted">(you)</span>':''}</td>
             <td class="muted">${esc(u.email||'')}</td>
             <td>${role2fa}</td><td>${twofa}</td>
             <td class="muted">${u.group_count||0}</td>
             <td class="muted">${u.dial_count||0}</td>
-            <td class="muted">${u.session_count||0}</td>
+            <td class="muted">${sessBtn}</td>
             <td class="muted" style="font-size:.8rem">${relTime(u.last_login)}</td>
             <td class="muted" style="font-size:.8rem">${relTime(u.created_at)}</td>
-            <td>${del}</td>
+            <td style="white-space:nowrap">${delBtn}${pwBtn}</td>
         </tr>`;
     }).join('');
 }
@@ -658,8 +727,164 @@ document.getElementById('btn-refresh-users').addEventListener('click',async()=>{
     users=r.users;renderUsers(users);toast('Refreshed.','success');
 });
 
+// ── Force Reset Password (sesja 066) ──────────────────────────────────────────
+const pwResetOverlay = document.getElementById('pw-reset-overlay');
+const pwResetInput   = document.getElementById('pw-reset-input');
+const pwResetBar     = document.getElementById('pw-reset-strength-bar');
+const pwResetLabel   = document.getElementById('pw-reset-strength-label');
+const pwResetError   = document.getElementById('pw-reset-error');
+const levels    = ['', 'Too short', 'Weak', 'Fair', 'Strong'];
+const levelClrs = ['', '#E53E3E', '#D69E2E', '#D69E2E', '#1D5C42'];
+const levelPct  = ['', '25%', '50%', '75%', '100%'];
+
+function calcStrength(pw) {
+    if (!pw || pw.length < (PW_RULES.minLength || 12)) return 1;
+    let s = 0;
+    if (/[A-Z]/.test(pw)) s++;
+    if (/[a-z]/.test(pw)) s++;
+    if (/[0-9]/.test(pw)) s++;
+    if (/[^A-Za-z0-9]/.test(pw)) s++;
+    if (pw.length >= 16) s = Math.min(s + 1, 4);
+    return Math.max(1, Math.min(s, 4));
+}
+
+pwResetInput?.addEventListener('input', function() {
+    const pw = this.value;
+    if (!pw) { pwResetBar.style.width='0'; pwResetLabel.textContent=''; return; }
+    const lvl = calcStrength(pw);
+    pwResetBar.style.width = levelPct[lvl];
+    pwResetBar.style.background = levelClrs[lvl];
+    pwResetLabel.textContent = levels[lvl];
+    pwResetLabel.style.color = levelClrs[lvl];
+});
+
+function showForceReset(userId, login) {
+    document.getElementById('pw-reset-user-id').value = userId;
+    document.getElementById('pw-reset-login').textContent = login;
+    if (pwResetInput) { pwResetInput.value = ''; pwResetInput.type = 'password'; }
+    if (pwResetBar) pwResetBar.style.width = '0';
+    if (pwResetLabel) pwResetLabel.textContent = '';
+    pwResetError.style.display = 'none';
+    pwResetOverlay.classList.add('show');
+    setTimeout(() => pwResetInput?.focus(), 80);
+}
+
+document.getElementById('pw-reset-cancel').addEventListener('click', () => {
+    pwResetOverlay.classList.remove('show');
+});
+pwResetOverlay.addEventListener('click', e => {
+    if (e.target === e.currentTarget) pwResetOverlay.classList.remove('show');
+});
+
+document.getElementById('pw-reset-ok').addEventListener('click', async () => {
+    const userId = parseInt(document.getElementById('pw-reset-user-id').value);
+    const pw = pwResetInput?.value || '';
+    pwResetError.style.display = 'none';
+    if (!pw) { pwResetError.textContent = 'Please enter a new password.'; pwResetError.style.display = ''; return; }
+
+    const btn = document.getElementById('pw-reset-ok');
+    btn.disabled = true; btn.textContent = '…';
+
+    const r = await api('POST', '/api/admin/force-password', { user_id: userId, password: pw });
+
+    btn.disabled = false; btn.textContent = 'Reset Password';
+
+    if (!r.ok) {
+        pwResetError.textContent = r.error || 'Could not reset password.';
+        pwResetError.style.display = '';
+        return;
+    }
+    pwResetOverlay.classList.remove('show');
+    toast(`Password reset for "${r.login}". All their sessions have been invalidated.`, 'success', 5000);
+    // Refresh sessions list if visible
+    const r2 = await api('GET', '/api/admin/sessions');
+    if (r2.ok) { sessions = r2.sessions; renderSessions(sessions); }
+});
+
 // ═════════════════════════════════════════════════════════════════════════════
-// TAB 3: LOGIN HISTORY
+// TAB 3: SESSIONS (sesja 066)
+// ═════════════════════════════════════════════════════════════════════════════
+function renderSessions(data) {
+    const tbody = document.getElementById('sessions-tbody');
+    const q = document.getElementById('sessions-filter').value.trim().toLowerCase();
+    const fil = q ? data.filter(s =>
+        (s.login||'').toLowerCase().includes(q) ||
+        (s.ip||'').toLowerCase().includes(q)
+    ) : data;
+
+    document.getElementById('sessions-count').textContent = fil.length;
+
+    if (!fil.length) { tbody.innerHTML = '<tr><td colspan="8" class="table-empty">No active sessions.</td></tr>'; return; }
+
+    tbody.innerHTML = fil.map(s => {
+        const isMine = s.id === MY_SESSION;
+        const ua = parseUA(s.user_agent);
+        const rowClass = isMine ? ' class="sess-this"' : '';
+        const badge    = isMine ? ' <span style="font-size:.7rem;background:var(--primary);color:var(--primary-fg);padding:.1rem .4rem;border-radius:9999px;font-weight:700">your session</span>' : '';
+        const twofa    = s.totp_verified ? '<span class="status-ok">✓</span>' : '<span class="muted">—</span>';
+        const roleDisp = s.role === 'admin'
+            ? `<span class="status-ok" style="font-size:.78rem">admin</span>`
+            : `<span class="muted" style="font-size:.78rem">user</span>`;
+
+        const actions = isMine
+            ? `<span class="muted" style="font-size:.75rem">current</span>`
+            : `<button class="btn btn-ghost btn-sm" style="border-color:var(--error-bdr);color:var(--error)"
+                onclick="doDeleteSession('${esc(s.id)}','${esc(s.login)}', this)">Sign out</button>
+               <button class="btn btn-ghost btn-sm" style="margin-left:.25rem"
+                onclick="doDeleteUserSessions(${s.user_id},'${esc(s.login)}')">All of user</button>`;
+
+        return `<tr${rowClass}>
+            <td><strong>${esc(s.login)}</strong>${badge}</td>
+            <td>${roleDisp}</td>
+            <td><span class="mono">${esc(s.ip)}</span>
+                <button class="btn btn-ghost btn-sm" style="margin-left:.3rem;padding:.15rem .4rem;font-size:.7rem"
+                    onclick="showHistoryFor('${esc(s.ip)}')">📋</button></td>
+            <td class="muted">${esc(ua)}</td>
+            <td class="muted" style="font-size:.8rem">${relTime(s.last_activity)}</td>
+            <td class="muted" style="font-size:.8rem">${relTime(s.created_at)}</td>
+            <td>${twofa}</td>
+            <td style="white-space:nowrap">${actions}</td>
+        </tr>`;
+    }).join('');
+}
+
+async function doDeleteSession(sessionId, login, btn) {
+    if (!await cfm('Sign out session', `Sign out this session for "${login}"?\nThey will be forced to log in again.`)) return;
+    btn.disabled = true; btn.textContent = '…';
+    const r = await api('POST', '/api/admin/sessions/delete', { session_id: sessionId });
+    if (!r.ok) { toast(r.error || 'Could not sign out session.', 'error'); btn.disabled = false; btn.textContent = 'Sign out'; return; }
+    toast(`Session signed out for "${login}".`, 'success');
+    sessions = sessions.filter(s => s.id !== sessionId);
+    renderSessions(sessions);
+}
+
+async function doDeleteUserSessions(userId, login) {
+    if (!await cfm('Sign out all sessions', `Sign out ALL sessions for "${login}"?\nThey will be forced to log in on all devices.`)) return;
+    const r = await api('POST', '/api/admin/sessions/delete-user', { user_id: userId });
+    if (!r.ok) { toast(r.error || 'Could not sign out sessions.', 'error'); return; }
+    toast(`${r.deleted} session${r.deleted!==1?'s':''} signed out for "${login}".`, 'success');
+    sessions = sessions.filter(s => s.user_id !== userId);
+    renderSessions(sessions);
+    // Refresh users to update session count
+    const r2 = await api('GET', '/api/admin/users');
+    if (r2.ok) { users = r2.users; renderUsers(users); }
+}
+
+function filterSessionsToUser(userId, login) {
+    document.querySelector('.admin-tab[data-tab="sessions"]').click();
+    document.getElementById('sessions-filter').value = login;
+    renderSessions(sessions);
+}
+
+document.getElementById('sessions-filter').addEventListener('input', () => renderSessions(sessions));
+document.getElementById('btn-refresh-sessions').addEventListener('click', async () => {
+    const r = await api('GET', '/api/admin/sessions');
+    if (!r.ok) { toast('Refresh failed.', 'error'); return; }
+    sessions = r.sessions; renderSessions(sessions); toast('Refreshed.', 'success');
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// TAB 4: LOGIN HISTORY
 // ═════════════════════════════════════════════════════════════════════════════
 function filterHistory() {
     const q=document.getElementById('history-ip-filter').value.trim().toLowerCase();
@@ -697,57 +922,39 @@ document.getElementById('btn-refresh-history').addEventListener('click',async()=
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
-// TAB 4: UPDATE
+// TAB 5: UPDATE
 // ═════════════════════════════════════════════════════════════════════════════
 function updateShow(id) {
     ['update-idle','update-checking','update-current','update-available','update-running','update-done']
         .forEach(s=>{const el=document.getElementById(s);if(el)el.style.display=s===id?'':'none';});
 }
-
 async function doGitCheck() {
     updateShow('update-checking');
     const r=await api('GET','/api/update/git-check');
     if(!r.ok){toast(r.error||'Check failed.','error');updateShow('update-idle');return;}
     if(!r.update_available){
         document.getElementById('update-current-sha').textContent=`Local: ${r.local_sha}`;
-        updateShow('update-current');
-        return;
+        updateShow('update-current'); return;
     }
-    document.getElementById('update-available-sub').textContent=
-        `${r.commit_count} new commit${r.commit_count!==1?'s':''} available on GitHub.`;
-    document.getElementById('update-available-sha').textContent=
-        `Local: ${r.local_sha}  →  GitHub main: ${r.remote_sha}`;
+    document.getElementById('update-available-sub').textContent=`${r.commit_count} new commit${r.commit_count!==1?'s':''} available on GitHub.`;
+    document.getElementById('update-available-sha').textContent=`Local: ${r.local_sha}  →  GitHub main: ${r.remote_sha}`;
     const cl=document.getElementById('update-commit-list');
     if(r.commits && r.commits.length) {
-        cl.innerHTML=r.commits.map(c=>
-            `<div class="commit-item"><span class="commit-sha">${esc(c.sha)}</span><span class="commit-msg">${esc(c.msg)}</span></div>`
-        ).join('');
+        cl.innerHTML=r.commits.map(c=>`<div class="commit-item"><span class="commit-sha">${esc(c.sha)}</span><span class="commit-msg">${esc(c.msg)}</span></div>`).join('');
         cl.style.display='';
-    } else {
-        cl.style.display='none';
-    }
+    } else { cl.style.display='none'; }
     updateShow('update-available');
 }
-
 async function doGitPull() {
-    if(!await cfm('Update LetaDial',
-        'This will run:\n  1. git pull origin main\n  2. bash fix_permissions.sh\n\nDo not close this page.'))return;
+    if(!await cfm('Update LetaDial','This will run:\n  1. git pull origin main\n  2. bash fix_permissions.sh\n\nDo not close this page.'))return;
     updateShow('update-running');
     const r=await api('POST','/api/update/git-pull',{});
     document.getElementById('update-pull-output').textContent=r.pull_output||'(no output)';
     document.getElementById('update-perms-output').textContent=r.perms_output||'(no output)';
-    if(r.ok){
-        document.getElementById('update-done-icon').textContent='✅';
-        document.getElementById('update-done-title').textContent='Update complete!';
-        document.getElementById('update-done-sub').textContent='Reload the page to use the new version.';
-    } else {
-        document.getElementById('update-done-icon').textContent='❌';
-        document.getElementById('update-done-title').textContent='Update failed';
-        document.getElementById('update-done-sub').textContent=r.error||'See output below for details.';
-    }
+    if(r.ok){document.getElementById('update-done-icon').textContent='✅';document.getElementById('update-done-title').textContent='Update complete!';document.getElementById('update-done-sub').textContent='Reload the page to use the new version.';}
+    else{document.getElementById('update-done-icon').textContent='❌';document.getElementById('update-done-title').textContent='Update failed';document.getElementById('update-done-sub').textContent=r.error||'See output below.';}
     updateShow('update-done');
 }
-
 document.getElementById('btn-check-update').addEventListener('click',doGitCheck);
 document.getElementById('btn-recheck-1').addEventListener('click',doGitCheck);
 document.getElementById('btn-recheck-2').addEventListener('click',doGitCheck);
@@ -755,68 +962,40 @@ document.getElementById('btn-recheck-3').addEventListener('click',doGitCheck);
 document.getElementById('btn-update-now').addEventListener('click',doGitPull);
 
 // ═════════════════════════════════════════════════════════════════════════════
-// TAB 5: INSTALL CHECK
+// TAB 6: INSTALL CHECK
 // ═════════════════════════════════════════════════════════════════════════════
 function renderChecks(data) {
     const total   = data.length;
     const passing = data.filter(c=>c.ok).length;
     const failing = data.filter(c=>!c.ok&&c.required).length;
     const warning = data.filter(c=>!c.ok&&!c.required).length;
-
     document.getElementById('check-summary-bar').innerHTML = `
-        <span class="check-summary-item">
-            <span style="color:var(--success);font-size:1.1rem">✓</span>
-            <strong>${passing}</strong> passing</span>
-        ${failing>0?`<span class="check-summary-item">
-            <span style="color:var(--error);font-size:1.1rem">✗</span>
-            <strong>${failing}</strong> required failing</span>`:''}
-        ${warning>0?`<span class="check-summary-item">
-            <span style="color:var(--warning);font-size:1.1rem">⚠</span>
-            <strong>${warning}</strong> warnings</span>`:''}
+        <span class="check-summary-item"><span style="color:var(--success);font-size:1.1rem">✓</span><strong>${passing}</strong> passing</span>
+        ${failing>0?`<span class="check-summary-item"><span style="color:var(--error);font-size:1.1rem">✗</span><strong>${failing}</strong> required failing</span>`:''}
+        ${warning>0?`<span class="check-summary-item"><span style="color:var(--warning);font-size:1.1rem">⚠</span><strong>${warning}</strong> warnings</span>`:''}
         <span class="check-summary-item muted" style="font-size:.8rem">${total} checks total</span>`;
-
     const groups = {};
     data.forEach(c => { const g=c.group||'General'; if(!groups[g])groups[g]=[]; groups[g].push(c); });
-
-    const groupIcons = {
-        'PHP':'🐘','Database':'🗄','Configuration':'⚙','Security':'🔒',
-        'Filesystem':'📁','File Integrity':'🔍','General':'📋'
-    };
-
+    const groupIcons = {'PHP':'🐘','Database':'🗄','Configuration':'⚙','Security':'🔒','Filesystem':'📁','File Integrity':'🔍','General':'📋'};
     document.getElementById('check-container').innerHTML = Object.entries(groups).map(([group, items]) => {
         const gFail = items.filter(i=>!i.ok&&i.required).length;
         const gWarn = items.filter(i=>!i.ok&&!i.required).length;
-        const groupStatus = gFail>0
-            ? `<span style="color:var(--error);font-size:.8rem">✗ ${gFail} fail${gFail!==1?'s':''}</span>`
-            : gWarn>0
-            ? `<span style="color:var(--warning);font-size:.8rem">⚠ ${gWarn} warn${gWarn!==1?'s':''}</span>`
-            : `<span style="color:var(--success);font-size:.8rem">✓ all OK</span>`;
-
+        const groupStatus = gFail>0?`<span style="color:var(--error);font-size:.8rem">✗ ${gFail} fail${gFail!==1?'s':''}</span>`
+            :gWarn>0?`<span style="color:var(--warning);font-size:.8rem">⚠ ${gWarn} warn${gWarn!==1?'s':''}</span>`
+            :`<span style="color:var(--success);font-size:.8rem">✓ all OK</span>`;
         const rows = items.map(c => {
-            const icon    = c.ok ? '✓' : (c.required ? '✗' : '⚠');
-            const iconCls = c.ok ? 'check-icon-ok' : (c.required ? 'check-icon-fail' : 'check-icon-warn');
-            const valCls  = c.ok ? 'check-value-ok' : (c.required ? 'check-value-fail' : '');
-            const note    = c.note ? `<div class="check-note-text">${esc(c.note)}</div>` : '';
-            const req     = !c.ok && c.required
-                ? ' <span style="font-size:.7rem;color:var(--error);font-weight:600">REQUIRED</span>' : '';
-            return `<div class="check-row">
-                <div class="check-icon-col ${iconCls}">${icon}</div>
-                <div class="check-label-col">
-                    <div class="check-label">${esc(c.label||'')}${req}</div>${note}
-                </div>
-                <div class="check-value-col ${valCls}">${esc(String(c.value||''))}</div>
-            </div>`;
+            const icon=c.ok?'✓':(c.required?'✗':'⚠');
+            const iconCls=c.ok?'check-icon-ok':(c.required?'check-icon-fail':'check-icon-warn');
+            const valCls=c.ok?'check-value-ok':(c.required?'check-value-fail':'');
+            const note=c.note?`<div class="check-note-text">${esc(c.note)}</div>`:'';
+            const req=!c.ok&&c.required?' <span style="font-size:.7rem;color:var(--error);font-weight:600">REQUIRED</span>':'';
+            return `<div class="check-row"><div class="check-icon-col ${iconCls}">${icon}</div>
+                <div class="check-label-col"><div class="check-label">${esc(c.label||'')}${req}</div>${note}</div>
+                <div class="check-value-col ${valCls}">${esc(String(c.value||''))}</div></div>`;
         }).join('');
-
-        return `<div class="admin-card">
-            <div class="admin-card-header">
-                <h3>${groupIcons[group]||'📋'} ${esc(group)}</h3>${groupStatus}
-            </div>
-            <div>${rows}</div>
-        </div>`;
+        return `<div class="admin-card"><div class="admin-card-header"><h3>${groupIcons[group]||'📋'} ${esc(group)}</h3>${groupStatus}</div><div>${rows}</div></div>`;
     }).join('');
 }
-
 document.getElementById('btn-refresh-check').addEventListener('click',async()=>{
     const r=await api('GET','/api/admin/install-check');
     if(!r.ok){toast('Check failed.','error');return;}
@@ -826,6 +1005,7 @@ document.getElementById('btn-refresh-check').addEventListener('click',async()=>{
 // ── INIT ──────────────────────────────────────────────────────────────────────
 renderBlocked(blocked);
 renderUsers(users);
+renderSessions(sessions);
 filterHistory();
 renderChecks(checks);
 </script>

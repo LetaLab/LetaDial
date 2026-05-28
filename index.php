@@ -58,6 +58,7 @@ $routes = [
     '/admin'           => 'pages/admin.php',
     '/forgot-password' => 'pages/forgot-password.php',
     '/reset-password'  => 'pages/reset-password.php',
+    '/confirm-email'   => 'pages/confirm-email.php',  // sesja 066
 ];
 
 $page = $routes[$uri] ?? null;

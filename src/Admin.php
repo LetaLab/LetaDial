@@ -317,7 +317,12 @@ class Admin
         $tables = ['users','sessions','remember_tokens','groups_list','dials',
                    'totp_backup_codes','rate_limits','settings','login_history'];
         foreach ($tables as $tbl) {
-            $exists = DB::val("SHOW TABLES LIKE ?", [$tbl]) !== null;
+            // FIX: SHOW TABLES LIKE ? nie dziala z PDO na MariaDB — uzyj information_schema
+            $exists = DB::val(
+                "SELECT TABLE_NAME FROM information_schema.TABLES
+                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?",
+                [$tbl]
+            ) !== null;
             $checks[] = self::chk("Table: {$tbl}", $exists, true,
                 $exists ? 'exists' : 'MISSING', 'Database');
         }

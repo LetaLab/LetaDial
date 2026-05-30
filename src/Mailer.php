@@ -92,14 +92,6 @@ class Mailer
 
     /**
      * Send invite to the NEW setup-account page (sesja 067).
-     *
-     * Unlike sendUserInvite() which links to /activate (just email verification),
-     * this sends to /setup-account where the user sets their password first.
-     * Used for admin-initiated invites where the user has no password yet.
-     *
-     * @param string $to         Email address of the invitee
-     * @param string $token      activation_token stored in users table
-     * @param string $invitedBy  Login of the admin who sent the invite
      */
     public static function sendInviteToSetup(string $to, string $token, string $invitedBy): bool
     {
@@ -110,7 +102,7 @@ class Mailer
               . "{$invitedBy} has invited you to join {$app}.\n\n"
               . "Click the link below to set your password and activate your account:\n"
               . $link . "\n\n"
-              . "This invitation link expires in 48 hours.\n\n"
+              . "This invitation link expires in 24 hours.\n\n"
               . "If you did not expect this invitation, you can safely ignore this email.\n\n"
               . "— {$app}";
 
@@ -121,7 +113,7 @@ class Mailer
             . '<p>Click the button below to set your password and activate your account:</p>'
             . '<p><a href="' . htmlspecialchars($link, ENT_QUOTES, 'UTF-8')
             . '" class="btn">Set Up My Account</a></p>'
-            . '<p class="muted">This link expires in 48 hours.</p>'
+            . '<p class="muted">This link expires in 24 hours.</p>'
             . '<p class="muted">If you did not expect this invitation, ignore this email.</p>');
 
         return self::send($to, "You've been invited to {$app}", $text, $html);

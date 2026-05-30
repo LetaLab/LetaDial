@@ -1,13 +1,13 @@
 <?php
 /**
- * LetaDial — Admin Panel (sesja 065 + 066)
+ * LetaDial — Admin Panel (sesja 065 + 066 + 067)
  *
  * Tabs:
  *   1. Blocked IPs    — rate_limits; unblock / export
- *   2. Users          — all accounts; delete; force-reset password (066)
- *   3. Sessions       — all active sessions; delete single / all for user (066)
+ *   2. Users          — accounts; delete; force-reset password; invite (067)
+ *   3. Sessions       — all active sessions; delete single / all for user
  *   4. Login History  — recent auth attempts; filter by IP
- *   5. Update         — git check vs github.com/LetaLab/LetaDial + git pull + fix_permissions
+ *   5. Update         — git check vs github.com/LetaLab/LetaDial + git pull
  *   6. Install Check  — full health check
  */
 declare(strict_types=1);
@@ -32,16 +32,14 @@ $sessions_json = json_encode($sessions_list, JSON_HEX_TAG | JSON_HEX_QUOT);
 $history_json  = json_encode($login_history, JSON_HEX_TAG | JSON_HEX_QUOT);
 $checks_json   = json_encode($install_check, JSON_HEX_TAG | JSON_HEX_QUOT);
 
-$checks_fail = count(array_filter($install_check, fn($c) => $c['required'] && !$c['ok']));
-$checks_warn = count(array_filter($install_check, fn($c) => !$c['required'] && !$c['ok']));
+$checks_fail   = count(array_filter($install_check, fn($c) => $c['required'] && !$c['ok']));
+$checks_warn   = count(array_filter($install_check, fn($c) => !$c['required'] && !$c['ok']));
+$smtp_enabled  = defined('SMTP_ENABLED') && SMTP_ENABLED;
+$my_session_id = Auth::getSessionId();
+$pw_rules      = Password::jsRules();
 
 $login_rl_max = 10;
 $login_rl_win = 300;
-
-// Current admin session ID — mark it in the sessions list
-$my_session_id = Auth::getSessionId();
-
-$pw_rules = Password::jsRules();
 
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 ?>
@@ -60,12 +58,10 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8')
 <script>(function(){const t=localStorage.getItem('dv-theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 <style>
 body { min-height:100vh; background:var(--bg); }
-
 .admin-topbar { height:56px; background:var(--surface); border-bottom:1px solid var(--border);
     display:flex; align-items:center; padding:0 1.5rem; gap:1rem;
     position:sticky; top:0; z-index:100; box-shadow:var(--shadow-xs); }
-.admin-brand { display:flex; align-items:center; gap:.6rem; text-decoration:none;
-    color:var(--text); font-weight:700; font-size:1rem; }
+.admin-brand { display:flex; align-items:center; gap:.6rem; text-decoration:none; color:var(--text); font-weight:700; font-size:1rem; }
 .admin-brand img { height:32px; width:32px; object-fit:contain; }
 .admin-brand:hover { color:var(--primary); text-decoration:none; }
 .admin-topbar-right { margin-left:auto; display:flex; align-items:center; gap:1rem; font-size:.875rem; }
@@ -73,10 +69,8 @@ body { min-height:100vh; background:var(--bg); }
     font-weight:700; padding:.1rem .5rem; border-radius:9999px; }
 .back-link { color:var(--text-muted); text-decoration:none; transition:color .15s; }
 .back-link:hover { color:var(--primary); text-decoration:none; }
-
 .admin-main { max-width:1200px; margin:0 auto; padding:1.5rem; }
 .admin-title { font-size:1.4rem; font-weight:700; margin-bottom:1.25rem; }
-
 .admin-tabs { display:flex; border-bottom:2px solid var(--border); margin-bottom:1.5rem; gap:2px; overflow-x:auto; }
 .admin-tab { padding:.6rem 1.2rem; font-size:.9rem; font-weight:500; color:var(--text-muted);
     background:none; border:none; border-bottom:3px solid transparent; margin-bottom:-2px;
@@ -88,10 +82,8 @@ body { min-height:100vh; background:var(--bg); }
 .tb-info  { background:var(--info-bg);  color:var(--info);  border:1px solid var(--info-bdr); }
 .tb-warn  { background:var(--warning-bg); color:var(--warning); border:1px solid var(--warning-bdr); }
 .tb-ok    { background:var(--success-bg); color:var(--success); border:1px solid var(--success-bdr); }
-
 .tab-pane { display:none; }
 .tab-pane.active { display:block; }
-
 .data-table-wrap { overflow-x:auto; border:1px solid var(--border); border-radius:var(--radius-md); background:var(--surface); }
 .data-table { width:100%; border-collapse:collapse; font-size:.875rem; }
 .data-table th { background:var(--surface-alt); padding:.6rem .85rem; text-align:left;
@@ -104,19 +96,15 @@ body { min-height:100vh; background:var(--bg); }
 .muted { color:var(--text-muted); }
 .ua    { max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
          color:var(--text-muted); font-size:.78rem; }
-
 .attempts-badge { display:inline-flex; align-items:center; justify-content:center;
     min-width:2rem; padding:.15rem .5rem; border-radius:9999px; font-size:.8rem; font-weight:700; }
 .ab-low  { background:var(--warning-bg); color:var(--warning); }
 .ab-high { background:var(--error-bg);   color:var(--error); }
 .ab-crit { background:var(--error);       color:#fff; }
-
 .status-ok   { color:var(--success); font-weight:600; }
 .status-fail { color:var(--error);   font-weight:600; }
-.status-warn { color:var(--warning); font-weight:600; }
 .hist-success { color:var(--success); }
 .hist-fail    { color:var(--error); }
-
 .panel-toolbar { display:flex; align-items:center; gap:.75rem; margin-bottom:1rem; flex-wrap:wrap; }
 .panel-toolbar-right { margin-left:auto; display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
 .table-empty { text-align:center; padding:3rem 1rem; color:var(--text-faint); font-size:.9rem; }
@@ -124,22 +112,16 @@ body { min-height:100vh; background:var(--bg); }
 .filter-input { padding:.4rem .75rem; background:var(--surface-alt); border:1px solid var(--border);
     border-radius:var(--radius-md); font-size:.875rem; color:var(--text); font-family:var(--font-sans); outline:none; }
 .filter-input:focus { border-color:var(--border-focus); box-shadow:0 0 0 3px var(--primary-bg); }
-
 .admin-card { background:var(--surface); border:1px solid var(--border);
     border-radius:var(--radius-lg); box-shadow:var(--shadow-sm); overflow:hidden; margin-bottom:1.25rem; }
 .admin-card-header { padding:.85rem 1.25rem; border-bottom:1px solid var(--border);
     display:flex; align-items:center; gap:.6rem; background:var(--surface-alt); }
 .admin-card-header h3 { font-size:.92rem; font-weight:600; margin:0; flex:1; }
 .admin-card-body { padding:1.25rem; }
-
-/* ── Sessions ── */
 .sess-this { background:var(--primary-bg); border-left:3px solid var(--primary); }
-
-/* ── Password strength in modal ── */
 .pw-strength-modal { height:4px; border-radius:9999px; background:var(--border); margin-top:.4rem; overflow:hidden; }
 .pw-strength-modal-bar { height:100%; border-radius:9999px; transition:width .3s,background .3s; width:0; }
-
-/* ── Update tab ── */
+/* Update tab */
 .update-state { text-align:center; padding:2.5rem 1.5rem; }
 .update-icon  { font-size:3.5rem; margin-bottom:1rem; line-height:1; }
 .update-title { font-size:1.2rem; font-weight:700; margin-bottom:.5rem; }
@@ -162,10 +144,7 @@ body { min-height:100vh; background:var(--bg); }
 .spinner { display:inline-block; width:28px; height:28px; border:3px solid var(--border);
     border-top-color:var(--primary); border-radius:50%; animation:spin .7s linear infinite; margin:0 auto 1rem; }
 @keyframes spin { to { transform:rotate(360deg); } }
-
-/* ── Install Check ── */
-.check-summary-bar { display:flex; gap:1rem; margin-bottom:1.25rem; flex-wrap:wrap; align-items:center; }
-.check-summary-item { display:flex; align-items:center; gap:.4rem; font-size:.875rem; }
+/* Install Check */
 .check-row { display:flex; align-items:flex-start; gap:.75rem; padding:.5rem .85rem;
     border-bottom:1px solid var(--border-light); font-size:.875rem; }
 .check-row:last-child { border-bottom:none; }
@@ -178,12 +157,10 @@ body { min-height:100vh; background:var(--bg); }
 .check-label     { font-weight:500; color:var(--text); }
 .check-note-text { font-size:.76rem; color:var(--text-muted); margin-top:.15rem; line-height:1.4; }
 .check-value-col { font-family:var(--font-mono); font-size:.78rem; color:var(--text-muted);
-    text-align:right; flex-shrink:0; max-width:280px; word-break:break-all;
-    padding-left:.5rem; padding-top:.05rem; }
+    text-align:right; flex-shrink:0; max-width:280px; word-break:break-all; padding-left:.5rem; padding-top:.05rem; }
 .check-value-ok   { color:var(--success); }
 .check-value-fail { color:var(--error); font-weight:600; }
-
-/* ── Toast ── */
+/* Toast */
 .toast-container { position:fixed; bottom:1.25rem; right:1.25rem; z-index:9999;
     display:flex; flex-direction:column; gap:.5rem; pointer-events:none; }
 .toast { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg);
@@ -198,8 +175,7 @@ body { min-height:100vh; background:var(--bg); }
 .toast-success .toast-icon { color:var(--success); }
 .toast-error   .toast-icon { color:var(--error); }
 .toast-info    .toast-icon { color:var(--info); }
-
-/* ── Confirm / Modal ── */
+/* Confirm overlay */
 .confirm-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.45);
     z-index:300; align-items:center; justify-content:center; padding:1rem; }
 .confirm-overlay.show { display:flex; }
@@ -208,7 +184,6 @@ body { min-height:100vh; background:var(--bg); }
 .confirm-box h3 { font-size:1rem; margin-bottom:.75rem; }
 .confirm-box p  { font-size:.875rem; color:var(--text-muted); margin-bottom:1.25rem; line-height:1.6; white-space:pre-line; }
 .confirm-actions { display:flex; gap:.75rem; justify-content:flex-end; }
-
 @media (max-width:640px) {
     .admin-main { padding:1rem; }
     .data-table { font-size:.8rem; }
@@ -270,7 +245,7 @@ body { min-height:100vh; background:var(--bg); }
         <div class="admin-card" style="margin-bottom:1rem;background:var(--info-bg);border-color:var(--info-bdr)">
             <div class="admin-card-body" style="padding:.75rem 1.25rem;font-size:.82rem;color:var(--info)">
                 ℹ Login rate limit: <strong><?= $login_rl_max ?> failed attempts</strong> within
-                <strong><?= $login_rl_win ?>s</strong> triggers a block. Successful login clears the counter.
+                <strong><?= $login_rl_win ?>s</strong> triggers a block.
             </div>
         </div>
         <div class="panel-toolbar">
@@ -285,7 +260,7 @@ body { min-height:100vh; background:var(--bg); }
             </div>
         </div>
         <div class="filter-bar">
-            <input type="number" id="blocked-min-input" class="filter-input" value="3" min="1" max="999" style="width:90px" title="Minimum attempts">
+            <input type="number" id="blocked-min-input" class="filter-input" value="3" min="1" max="999" style="width:90px">
             <label style="font-size:.875rem;color:var(--text-muted);align-self:center">min attempts</label>
             <input type="text" id="blocked-filter" class="filter-input" placeholder="Filter by IP / action…" style="min-width:200px">
         </div>
@@ -310,21 +285,28 @@ body { min-height:100vh; background:var(--bg); }
             <div class="panel-toolbar-right">
                 <input type="text" id="users-filter" class="filter-input" placeholder="Filter by login / email…" style="min-width:200px">
                 <button class="btn btn-ghost btn-sm" id="btn-refresh-users">↻ Refresh</button>
+                <button class="btn btn-primary btn-sm" id="btn-invite-user">✉ Invite user</button>
             </div>
         </div>
+        <?php if (!$smtp_enabled): ?>
+        <div class="alert alert-warning" style="margin-bottom:1rem">
+            <span class="alert-icon">⚠</span>
+            <span>SMTP is not configured — invite emails cannot be sent. Configure SMTP in <code>config.php</code> to enable user invites.</span>
+        </div>
+        <?php endif; ?>
         <div class="data-table-wrap">
             <table class="data-table">
                 <thead><tr>
-                    <th>Login</th><th>Email</th><th>Role</th><th>2FA</th>
+                    <th>Login</th><th>Email</th><th>Role</th><th>2FA</th><th>Verified</th>
                     <th>Groups</th><th>Dials</th><th>Sessions</th>
                     <th>Last Login</th><th>Created</th><th>Actions</th>
                 </tr></thead>
-                <tbody id="users-tbody"><tr><td colspan="10" class="table-empty">Loading…</td></tr></tbody>
+                <tbody id="users-tbody"><tr><td colspan="11" class="table-empty">Loading…</td></tr></tbody>
             </table>
         </div>
     </div>
 
-    <!-- ═══ TAB 3: SESSIONS (sesja 066) ═══ -->
+    <!-- ═══ TAB 3: SESSIONS ═══ -->
     <div class="tab-pane" id="tab-sessions">
         <div class="panel-toolbar">
             <span style="font-size:.875rem;color:var(--text-muted)">
@@ -398,7 +380,6 @@ body { min-height:100vh; background:var(--bg); }
                 <div id="update-current" class="update-state" style="display:none">
                     <div class="update-icon">✅</div>
                     <div class="update-title">You're up to date</div>
-                    <div class="update-sub" id="update-current-sub">Your installation matches the latest public release.</div>
                     <div class="update-sha" id="update-current-sha"></div>
                     <button class="btn btn-ghost" id="btn-recheck-1" style="min-width:160px">↻ Check again</button>
                 </div>
@@ -431,7 +412,7 @@ body { min-height:100vh; background:var(--bg); }
                     </div>
                     <div style="display:flex;gap:.75rem;justify-content:center;margin-top:1rem;flex-wrap:wrap">
                         <button class="btn btn-primary" onclick="location.reload()">↻ Reload page</button>
-                        <button class="btn btn-ghost"   id="btn-recheck-3">Check again</button>
+                        <button class="btn btn-ghost" id="btn-recheck-3">Check again</button>
                     </div>
                 </div>
             </div>
@@ -441,7 +422,7 @@ body { min-height:100vh; background:var(--bg); }
     <!-- ═══ TAB 6: INSTALL CHECK ═══ -->
     <div class="tab-pane" id="tab-check">
         <div class="panel-toolbar">
-            <div class="check-summary-bar" id="check-summary-bar"></div>
+            <div id="check-summary-bar" style="display:flex;gap:1rem;flex-wrap:wrap;align-items:center;font-size:.875rem"></div>
             <div class="panel-toolbar-right">
                 <button class="btn btn-ghost btn-sm" id="btn-refresh-check">↻ Re-run checks</button>
             </div>
@@ -471,8 +452,7 @@ body { min-height:100vh; background:var(--bg); }
         <input type="hidden" id="pw-reset-user-id">
         <div style="margin-bottom:.75rem">
             <label style="font-size:.78rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:.35rem">New Password</label>
-            <input type="password" id="pw-reset-input" class="form-input"
-                   placeholder="Min. 12 characters" autocomplete="new-password">
+            <input type="password" id="pw-reset-input" class="form-input" placeholder="Min. 12 characters" autocomplete="new-password">
             <div class="pw-strength-modal"><div class="pw-strength-modal-bar" id="pw-reset-strength-bar"></div></div>
             <div style="font-size:.75rem;margin-top:.25rem" id="pw-reset-strength-label"></div>
         </div>
@@ -484,13 +464,44 @@ body { min-height:100vh; background:var(--bg); }
     </div>
 </div>
 
+<!-- Invite User Modal (sesja 067) -->
+<div class="confirm-overlay" id="invite-overlay">
+    <div class="confirm-box" style="max-width:460px">
+        <h3>✉ Invite User</h3>
+        <p style="margin-bottom:1rem">
+            An email with a setup link will be sent to the address below.<br>
+            The link is valid for <strong>24 hours</strong>. Invite works regardless of registration settings.
+        </p>
+        <div style="margin-bottom:.75rem">
+            <label style="font-size:.78rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:.35rem">Email address</label>
+            <input type="email" id="invite-email" class="form-input" placeholder="user@example.com" autocomplete="off">
+        </div>
+        <div style="margin-bottom:.75rem">
+            <label style="font-size:.78rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:.35rem">Login <span style="font-weight:400;text-transform:none">(letters, numbers, underscore, 3–50 chars)</span></label>
+            <input type="text" id="invite-login" class="form-input" placeholder="username" autocomplete="off" maxlength="50">
+        </div>
+        <?php if (!$smtp_enabled): ?>
+        <div style="padding:.5rem .75rem;background:var(--warning-bg);color:var(--warning);border-radius:var(--radius-sm);font-size:.82rem;margin-bottom:.75rem;border:1px solid var(--warning-bdr)">
+            ⚠ SMTP not configured — the invite email will NOT be sent. The account will be created but the user won't receive the setup link.
+        </div>
+        <?php endif; ?>
+        <div id="invite-error" style="display:none;padding:.5rem .75rem;background:var(--error-bg);color:var(--error);border-radius:var(--radius-sm);font-size:.85rem;margin-bottom:.75rem"></div>
+        <div id="invite-success" style="display:none;padding:.5rem .75rem;background:var(--success-bg);color:var(--success);border-radius:var(--radius-sm);font-size:.85rem;margin-bottom:.75rem;border:1px solid var(--success-bdr)"></div>
+        <div class="confirm-actions">
+            <button class="btn btn-ghost" id="invite-cancel">Close</button>
+            <button class="btn btn-primary" id="invite-ok">Send invite →</button>
+        </div>
+    </div>
+</div>
+
 <div class="toast-container" id="toast-container"></div>
 
 <script>
-const CSRF   = <?= json_encode($csrf_token) ?>;
-const ME_ID  = <?= (int)$user['id'] ?>;
+const CSRF       = <?= json_encode($csrf_token) ?>;
+const ME_ID      = <?= (int)$user['id'] ?>;
 const MY_SESSION = <?= json_encode($my_session_id) ?>;
 const PW_RULES   = <?= $pw_rules ?>;
+const SMTP_OK    = <?= $smtp_enabled ? 'true' : 'false' ?>;
 
 let blocked  = <?= $blocked_json ?>;
 let users    = <?= $users_json ?>;
@@ -513,7 +524,7 @@ let checks   = <?= $checks_json ?>;
     });
 })();
 
-// ── Toast ─────────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 function toast(msg, type = 'info', dur = 3500) {
     const icons = { success:'✓', error:'✗', info:'ℹ' };
     const el = document.createElement('div');
@@ -524,7 +535,6 @@ function toast(msg, type = 'info', dur = 3500) {
     setTimeout(() => el.remove(), dur);
 }
 
-// ── Confirm ───────────────────────────────────────────────────────────────────
 let _cfResolve = null;
 function cfm(title, msg) {
     return new Promise(resolve => {
@@ -547,7 +557,6 @@ document.getElementById('confirm-overlay').addEventListener('click', e => {
 function esc(s) {
     return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
-
 async function api(method, url, body) {
     try {
         const opts = { method, headers:{'Content-Type':'application/json','X-CSRF-Token':CSRF}, credentials:'same-origin' };
@@ -556,7 +565,6 @@ async function api(method, url, body) {
         return await res.json();
     } catch(e) { return {ok:false, error:'Network error.'}; }
 }
-
 function relTime(s) {
     if (!s) return '—';
     const d = new Date(s.replace(' ','T'));
@@ -566,21 +574,20 @@ function relTime(s) {
     if (diff<86400) return `${Math.floor(diff/3600)}h ago`;
     return `${Math.floor(diff/86400)}d ago`;
 }
-
 function parseUA(ua) {
     if (!ua) return 'Unknown';
-    let browser = 'Unknown', os = 'Unknown';
-    if (/EdgA?\//.test(ua))                               browser = 'Edge';
-    else if (/OPR\//.test(ua))                             browser = 'Opera';
-    else if (/Chrome\//.test(ua))                          browser = 'Chrome';
-    else if (/Safari\//.test(ua) && /Version\//.test(ua)) browser = 'Safari';
-    else if (/Firefox\//.test(ua))                         browser = 'Firefox';
-    if      (/Windows NT/.test(ua)) os = 'Windows';
-    else if (/Macintosh/.test(ua))  os = 'macOS';
-    else if (/Android/.test(ua))    os = 'Android';
-    else if (/iPhone|iPad/.test(ua))os = 'iOS';
-    else if (/Linux/.test(ua))      os = 'Linux';
-    return `${browser} / ${os}`;
+    let b='Unknown', o='Unknown';
+    if (/EdgA?\//.test(ua)) b='Edge';
+    else if (/OPR\//.test(ua)) b='Opera';
+    else if (/Chrome\//.test(ua)) b='Chrome';
+    else if (/Safari\//.test(ua)&&/Version\//.test(ua)) b='Safari';
+    else if (/Firefox\//.test(ua)) b='Firefox';
+    if      (/Windows NT/.test(ua)) o='Windows';
+    else if (/Macintosh/.test(ua))  o='macOS';
+    else if (/Android/.test(ua))    o='Android';
+    else if (/iPhone|iPad/.test(ua))o='iOS';
+    else if (/Linux/.test(ua))      o='Linux';
+    return `${b} / ${o}`;
 }
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
@@ -593,77 +600,60 @@ document.querySelectorAll('.admin-tab').forEach(btn => {
     });
 });
 
-// ═════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 // TAB 1: BLOCKED
-// ═════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 function attemptBadge(n) {
-    n = parseInt(n)||0;
-    const cls = n>=20?'ab-crit':n>=10?'ab-high':'ab-low';
+    n=parseInt(n)||0;
+    const cls=n>=20?'ab-crit':n>=10?'ab-high':'ab-low';
     return `<span class="attempts-badge ${cls}">${n}</span>`;
 }
-
 function renderBlocked(data) {
-    const tbody  = document.getElementById('blocked-tbody');
-    const q      = document.getElementById('blocked-filter').value.trim().toLowerCase();
-    const minVal = parseInt(document.getElementById('blocked-min-input').value)||3;
-    const fil    = data.filter(r => (parseInt(r.attempts)||0)>=minVal
-        && (!q || (r.key_plain||'').toLowerCase().includes(q) || (r.action||'').toLowerCase().includes(q)));
-    if (!fil.length) { tbody.innerHTML='<tr><td colspan="8" class="table-empty">🎉 No blocked entries</td></tr>'; return; }
-    tbody.innerHTML = fil.map(r => {
-        const keyDisp = r.key_plain
-            ? `<span class="mono">${esc(r.key_plain)}</span>`
-            : `<span class="muted mono">hash:${esc((r.key_hash||'').slice(0,8))}…</span>`;
-        const ua = r.last_ua ? `<span class="ua" title="${esc(r.last_ua)}">${esc(r.last_ua)}</span>` : '<span class="muted">—</span>';
-        const histBtn = r.key_plain ? `<button class="btn btn-ghost btn-sm" onclick="showHistoryFor('${esc(r.key_plain)}')">📋</button>` : '';
-        return `<tr>
-            <td><code>${esc(r.action)}</code></td>
-            <td>${keyDisp}</td>
-            <td>${attemptBadge(r.attempts)}</td>
+    const tbody=document.getElementById('blocked-tbody');
+    const q=document.getElementById('blocked-filter').value.trim().toLowerCase();
+    const minVal=parseInt(document.getElementById('blocked-min-input').value)||3;
+    const fil=data.filter(r=>(parseInt(r.attempts)||0)>=minVal
+        &&(!q||(r.key_plain||'').toLowerCase().includes(q)||(r.action||'').toLowerCase().includes(q)));
+    if(!fil.length){tbody.innerHTML='<tr><td colspan="8" class="table-empty">🎉 No blocked entries</td></tr>';return;}
+    tbody.innerHTML=fil.map(r=>{
+        const kd=r.key_plain?`<span class="mono">${esc(r.key_plain)}</span>`:`<span class="muted mono">hash:${esc((r.key_hash||'').slice(0,8))}…</span>`;
+        const ua=r.last_ua?`<span class="ua" title="${esc(r.last_ua)}">${esc(r.last_ua)}</span>`:'<span class="muted">—</span>';
+        const hb=r.key_plain?`<button class="btn btn-ghost btn-sm" onclick="showHistoryFor('${esc(r.key_plain)}')">📋</button>`:'';
+        return `<tr><td><code>${esc(r.action)}</code></td><td>${kd}</td><td>${attemptBadge(r.attempts)}</td>
             <td class="muted" style="font-size:.8rem">${relTime(r.window_start)}</td>
-            <td class="mono muted">${esc(r.last_login_attempt||'—')}</td>
-            <td>${ua}</td>
-            <td>${histBtn}</td>
+            <td class="mono muted">${esc(r.last_login_attempt||'—')}</td><td>${ua}</td><td>${hb}</td>
             <td style="white-space:nowrap">
                 <button class="btn btn-ghost btn-sm" onclick="doUnblock('${esc(r.key_hash)}','${esc(r.action)}','${esc(r.key_plain||'')}')">✓ Unblock</button>
                 ${r.key_plain?`<button class="btn btn-danger btn-sm" style="margin-left:.25rem" onclick="doUnblockAll('${esc(r.key_plain)}')">All</button>`:''}
-            </td>
-        </tr>`;
+            </td></tr>`;
     }).join('');
 }
-
 async function doUnblock(kh,action,kp) {
-    if (!await cfm('Unblock',`Remove rate limit: ${action} for ${kp||kh.slice(0,8)+'…'}?`)) return;
+    if(!await cfm('Unblock',`Remove rate limit: ${action} for ${kp||kh.slice(0,8)+'…'}?`))return;
     const r=await api('POST','/api/admin/unblock',{key_hash:kh,action});
     if(!r.ok){toast(r.error||'Failed.','error');return;}
     toast('Entry unblocked.','success');
     blocked=blocked.filter(e=>!(e.key_hash===kh&&e.action===action));
-    renderBlocked(blocked); updateBlockedBadge();
+    renderBlocked(blocked);
 }
 async function doUnblockAll(kp) {
-    if (!await cfm('Unblock all',`Remove ALL rate limit entries for:\n${kp}?`)) return;
+    if(!await cfm('Unblock all',`Remove ALL rate limit entries for:\n${kp}?`))return;
     const r=await api('POST','/api/admin/unblock-all',{key_plain:kp});
     if(!r.ok){toast(r.error||'Failed.','error');return;}
     toast(`${r.deleted} entr${r.deleted!==1?'ies':'y'} removed.`,'success');
-    blocked=blocked.filter(e=>e.key_plain!==kp); renderBlocked(blocked); updateBlockedBadge();
+    blocked=blocked.filter(e=>e.key_plain!==kp);renderBlocked(blocked);
 }
 async function doUnblockAllGlobal() {
-    if (!blocked.length){toast('Nothing to unblock.','info');return;}
-    if (!await cfm('Unblock ALL',`Remove all ${blocked.length} rate limit entries?\nThis unblocks everyone.`)) return;
+    if(!blocked.length){toast('Nothing to unblock.','info');return;}
+    if(!await cfm('Unblock ALL',`Remove all ${blocked.length} rate limit entries?`))return;
     const keys=[...new Set(blocked.map(e=>e.key_plain).filter(Boolean))];
     let del=0;
     for(const k of keys){const r=await api('POST','/api/admin/unblock-all',{key_plain:k});if(r.ok)del+=r.deleted||0;}
     for(const e of blocked.filter(e=>!e.key_plain)){await api('POST','/api/admin/unblock',{key_hash:e.key_hash,action:e.action});del++;}
     toast(`All cleared (${del} entries).`,'success');
-    blocked=[];renderBlocked(blocked);updateBlockedBadge();
+    blocked=[];renderBlocked(blocked);
 }
-function updateBlockedBadge() {
-    const b=document.querySelector('.admin-tab[data-tab="blocked"] .tab-badge');
-    if(b){b.textContent=blocked.length||'';b.style.display=blocked.length?'':'none';}
-}
-function showHistoryFor(ip) {
-    document.querySelector('.admin-tab[data-tab="history"]').click();
-    document.getElementById('history-ip-filter').value=ip; filterHistory();
-}
+function showHistoryFor(ip){document.querySelector('.admin-tab[data-tab="history"]').click();document.getElementById('history-ip-filter').value=ip;filterHistory();}
 document.getElementById('blocked-filter').addEventListener('input',()=>renderBlocked(blocked));
 document.getElementById('blocked-min-input').addEventListener('change',()=>{
     const v=parseInt(document.getElementById('blocked-min-input').value)||3;
@@ -674,38 +664,35 @@ document.getElementById('btn-refresh-blocked').addEventListener('click',async()=
     const min=parseInt(document.getElementById('blocked-min-input').value)||3;
     const r=await api('GET',`/api/admin/blocked?min=${min}`);
     if(!r.ok){toast('Refresh failed.','error');return;}
-    blocked=r.entries;renderBlocked(blocked);updateBlockedBadge();toast('Refreshed.','success');
+    blocked=r.entries;renderBlocked(blocked);toast('Refreshed.','success');
 });
 document.getElementById('btn-unblock-all-global').addEventListener('click',doUnblockAllGlobal);
 document.getElementById('btn-export-csv').addEventListener('click',()=>{window.location.href='/api/admin/export-blocked?format=csv';});
 document.getElementById('btn-export-json').addEventListener('click',()=>{window.location.href='/api/admin/export-blocked?format=json';});
 
-// ═════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 // TAB 2: USERS
-// ═════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 function renderUsers(data) {
     const tbody=document.getElementById('users-tbody');
     const q=document.getElementById('users-filter').value.trim().toLowerCase();
     const fil=q?data.filter(u=>(u.login||'').toLowerCase().includes(q)||(u.email||'').toLowerCase().includes(q)):data;
     document.getElementById('users-count').textContent=fil.length;
-    if(!fil.length){tbody.innerHTML='<tr><td colspan="10" class="table-empty">No users.</td></tr>';return;}
+    if(!fil.length){tbody.innerHTML='<tr><td colspan="11" class="table-empty">No users.</td></tr>';return;}
     tbody.innerHTML=fil.map(u=>{
-        const role2fa=u.role==='admin'?`<span class="status-ok">admin</span>`:`<span class="muted">user</span>`;
-        const twofa=u.totp_enabled?`<span class="status-ok">✓ on</span>`:`<span class="status-fail">✗ off</span>`;
+        const roleDisp=u.role==='admin'?`<span class="status-ok">admin</span>`:`<span class="muted">user</span>`;
+        const twofa=u.totp_enabled?`<span class="status-ok">✓</span>`:`<span class="status-fail">✗</span>`;
+        const verified=parseInt(u.email_verified)?`<span class="status-ok">✓</span>`:`<span style="color:var(--warning)">pending</span>`;
         const isMe=parseInt(u.id)===ME_ID;
         const delBtn=isMe?`<span class="muted" title="Cannot delete own account">—</span>`
             :`<button class="btn btn-danger btn-sm" onclick="doDeleteUser(${u.id},'${esc(u.login)}')">🗑</button>`;
-        const pwBtn=isMe?``
-            :`<button class="btn btn-ghost btn-sm" style="margin-left:.25rem"
-               onclick="showForceReset(${u.id},'${esc(u.login)}')">🔑</button>`;
-        const sessBtn=`<button class="btn btn-ghost btn-sm" style="margin-left:.25rem"
-            onclick="filterSessionsToUser(${u.id},'${esc(u.login)}')">🖥️ ${u.session_count||0}</button>`;
+        const pwBtn=isMe?``:`<button class="btn btn-ghost btn-sm" style="margin-left:.25rem" onclick="showForceReset(${u.id},'${esc(u.login)}')">🔑</button>`;
+        const sessBtn=`<button class="btn btn-ghost btn-sm" style="margin-left:.25rem" onclick="filterSessionsToUser(${u.id},'${esc(u.login)}')">🖥️ ${u.session_count||0}</button>`;
         return `<tr>
             <td><strong>${esc(u.login)}</strong>${isMe?' <span class="muted">(you)</span>':''}</td>
             <td class="muted">${esc(u.email||'')}</td>
-            <td>${role2fa}</td><td>${twofa}</td>
-            <td class="muted">${u.group_count||0}</td>
-            <td class="muted">${u.dial_count||0}</td>
+            <td>${roleDisp}</td><td>${twofa}</td><td>${verified}</td>
+            <td class="muted">${u.group_count||0}</td><td class="muted">${u.dial_count||0}</td>
             <td class="muted">${sessBtn}</td>
             <td class="muted" style="font-size:.8rem">${relTime(u.last_login)}</td>
             <td class="muted" style="font-size:.8rem">${relTime(u.created_at)}</td>
@@ -727,171 +714,186 @@ document.getElementById('btn-refresh-users').addEventListener('click',async()=>{
     users=r.users;renderUsers(users);toast('Refreshed.','success');
 });
 
-// ── Force Reset Password (sesja 066) ──────────────────────────────────────────
-const pwResetOverlay = document.getElementById('pw-reset-overlay');
-const pwResetInput   = document.getElementById('pw-reset-input');
-const pwResetBar     = document.getElementById('pw-reset-strength-bar');
-const pwResetLabel   = document.getElementById('pw-reset-strength-label');
-const pwResetError   = document.getElementById('pw-reset-error');
-const levels    = ['', 'Too short', 'Weak', 'Fair', 'Strong'];
-const levelClrs = ['', '#E53E3E', '#D69E2E', '#D69E2E', '#1D5C42'];
-const levelPct  = ['', '25%', '50%', '75%', '100%'];
-
-function calcStrength(pw) {
-    if (!pw || pw.length < (PW_RULES.minLength || 12)) return 1;
-    let s = 0;
-    if (/[A-Z]/.test(pw)) s++;
-    if (/[a-z]/.test(pw)) s++;
-    if (/[0-9]/.test(pw)) s++;
-    if (/[^A-Za-z0-9]/.test(pw)) s++;
-    if (pw.length >= 16) s = Math.min(s + 1, 4);
-    return Math.max(1, Math.min(s, 4));
+// ── Force Reset Password ──────────────────────────────────────────────────────
+const pwResetOverlay=document.getElementById('pw-reset-overlay');
+const pwResetInput=document.getElementById('pw-reset-input');
+const pwResetBar=document.getElementById('pw-reset-strength-bar');
+const pwResetLabel=document.getElementById('pw-reset-strength-label');
+const pwResetError=document.getElementById('pw-reset-error');
+const levelClrs=['','#E53E3E','#D69E2E','#D69E2E','#1D5C42'];
+const levelPct=['','25%','50%','75%','100%'];
+const levelNames=['','Too short','Weak','Fair','Strong'];
+function calcStrength(pw){
+    if(!pw||pw.length<(PW_RULES.minLength||12))return 1;
+    let s=0;
+    if(/[A-Z]/.test(pw))s++;if(/[a-z]/.test(pw))s++;if(/[0-9]/.test(pw))s++;if(/[^A-Za-z0-9]/.test(pw))s++;
+    if(pw.length>=16)s=Math.min(s+1,4);
+    return Math.max(1,Math.min(s,4));
 }
-
-pwResetInput?.addEventListener('input', function() {
-    const pw = this.value;
-    if (!pw) { pwResetBar.style.width='0'; pwResetLabel.textContent=''; return; }
-    const lvl = calcStrength(pw);
-    pwResetBar.style.width = levelPct[lvl];
-    pwResetBar.style.background = levelClrs[lvl];
-    pwResetLabel.textContent = levels[lvl];
-    pwResetLabel.style.color = levelClrs[lvl];
+pwResetInput?.addEventListener('input',function(){
+    const pw=this.value;
+    if(!pw){pwResetBar.style.width='0';pwResetLabel.textContent='';return;}
+    const lvl=calcStrength(pw);
+    pwResetBar.style.width=levelPct[lvl];pwResetBar.style.background=levelClrs[lvl];
+    pwResetLabel.textContent=levelNames[lvl];pwResetLabel.style.color=levelClrs[lvl];
 });
-
-function showForceReset(userId, login) {
-    document.getElementById('pw-reset-user-id').value = userId;
-    document.getElementById('pw-reset-login').textContent = login;
-    if (pwResetInput) { pwResetInput.value = ''; pwResetInput.type = 'password'; }
-    if (pwResetBar) pwResetBar.style.width = '0';
-    if (pwResetLabel) pwResetLabel.textContent = '';
-    pwResetError.style.display = 'none';
+function showForceReset(userId,login){
+    document.getElementById('pw-reset-user-id').value=userId;
+    document.getElementById('pw-reset-login').textContent=login;
+    if(pwResetInput){pwResetInput.value='';pwResetInput.type='password';}
+    if(pwResetBar)pwResetBar.style.width='0';
+    if(pwResetLabel)pwResetLabel.textContent='';
+    pwResetError.style.display='none';
     pwResetOverlay.classList.add('show');
-    setTimeout(() => pwResetInput?.focus(), 80);
+    setTimeout(()=>pwResetInput?.focus(),80);
 }
-
-document.getElementById('pw-reset-cancel').addEventListener('click', () => {
+document.getElementById('pw-reset-cancel').addEventListener('click',()=>pwResetOverlay.classList.remove('show'));
+pwResetOverlay.addEventListener('click',e=>{if(e.target===e.currentTarget)pwResetOverlay.classList.remove('show');});
+document.getElementById('pw-reset-ok').addEventListener('click',async()=>{
+    const userId=parseInt(document.getElementById('pw-reset-user-id').value);
+    const pw=pwResetInput?.value||'';
+    pwResetError.style.display='none';
+    if(!pw){pwResetError.textContent='Please enter a new password.';pwResetError.style.display='';return;}
+    const btn=document.getElementById('pw-reset-ok');
+    btn.disabled=true;btn.textContent='…';
+    const r=await api('POST','/api/admin/force-password',{user_id:userId,password:pw});
+    btn.disabled=false;btn.textContent='Reset Password';
+    if(!r.ok){pwResetError.textContent=r.error||'Could not reset password.';pwResetError.style.display='';return;}
     pwResetOverlay.classList.remove('show');
+    toast(`Password reset for "${r.login}". All their sessions invalidated.`,'success',5000);
+    const r2=await api('GET','/api/admin/sessions');
+    if(r2.ok){sessions=r2.sessions;renderSessions(sessions);}
 });
-pwResetOverlay.addEventListener('click', e => {
-    if (e.target === e.currentTarget) pwResetOverlay.classList.remove('show');
+
+// ── Invite User (sesja 067) ───────────────────────────────────────────────────
+const inviteOverlay=document.getElementById('invite-overlay');
+const inviteEmail=document.getElementById('invite-email');
+const inviteLogin=document.getElementById('invite-login');
+const inviteError=document.getElementById('invite-error');
+const inviteSuccess=document.getElementById('invite-success');
+
+document.getElementById('btn-invite-user').addEventListener('click',()=>{
+    inviteEmail.value='';inviteLogin.value='';
+    inviteError.style.display='none';inviteSuccess.style.display='none';
+    document.getElementById('invite-ok').disabled=false;
+    document.getElementById('invite-ok').textContent='Send invite →';
+    inviteOverlay.classList.add('show');
+    setTimeout(()=>inviteEmail.focus(),80);
 });
-
-document.getElementById('pw-reset-ok').addEventListener('click', async () => {
-    const userId = parseInt(document.getElementById('pw-reset-user-id').value);
-    const pw = pwResetInput?.value || '';
-    pwResetError.style.display = 'none';
-    if (!pw) { pwResetError.textContent = 'Please enter a new password.'; pwResetError.style.display = ''; return; }
-
-    const btn = document.getElementById('pw-reset-ok');
-    btn.disabled = true; btn.textContent = '…';
-
-    const r = await api('POST', '/api/admin/force-password', { user_id: userId, password: pw });
-
-    btn.disabled = false; btn.textContent = 'Reset Password';
-
-    if (!r.ok) {
-        pwResetError.textContent = r.error || 'Could not reset password.';
-        pwResetError.style.display = '';
+document.getElementById('invite-cancel').addEventListener('click',()=>{
+    inviteOverlay.classList.remove('show');
+    // Refresh user list to show newly invited (pending) accounts
+    api('GET','/api/admin/users').then(r=>{if(r.ok){users=r.users;renderUsers(users);}});
+});
+inviteOverlay.addEventListener('click',e=>{
+    if(e.target===e.currentTarget){
+        inviteOverlay.classList.remove('show');
+        api('GET','/api/admin/users').then(r=>{if(r.ok){users=r.users;renderUsers(users);}});
+    }
+});
+[inviteEmail,inviteLogin].forEach(el=>el.addEventListener('keydown',e=>{
+    if(e.key==='Enter')document.getElementById('invite-ok').click();
+}));
+document.getElementById('invite-ok').addEventListener('click',async()=>{
+    inviteError.style.display='none';inviteSuccess.style.display='none';
+    const email=inviteEmail.value.trim();
+    const login=inviteLogin.value.trim();
+    if(!email||!login){
+        inviteError.textContent='Both email and login are required.';
+        inviteError.style.display='';return;
+    }
+    const btn=document.getElementById('invite-ok');
+    btn.disabled=true;btn.textContent='Sending…';
+    const r=await api('POST','/api/admin/invite',{email,login});
+    btn.disabled=false;btn.textContent='Send another →';
+    if(!r.ok){
+        inviteError.textContent=r.error||'Could not send invite.';
+        inviteError.style.display='';
+        btn.textContent='Send invite →';btn.disabled=false;
         return;
     }
-    pwResetOverlay.classList.remove('show');
-    toast(`Password reset for "${r.login}". All their sessions have been invalidated.`, 'success', 5000);
-    // Refresh sessions list if visible
-    const r2 = await api('GET', '/api/admin/sessions');
-    if (r2.ok) { sessions = r2.sessions; renderSessions(sessions); }
+    inviteEmail.value='';inviteLogin.value='';
+    if(r.email_sent){
+        inviteSuccess.textContent=`✓ Invite sent to ${email}. The link expires in 24 hours.`;
+    } else if(!r.smtp_enabled){
+        inviteSuccess.textContent=`✓ Account created for ${email} (login: ${login}), but SMTP is disabled — email not sent. Share the setup link manually.`;
+    } else {
+        inviteSuccess.textContent=`✓ Account created for ${email}, but the email could not be sent. Check SMTP settings.`;
+    }
+    inviteSuccess.style.display='';
+    btn.textContent='Send invite →';
+    users=[...users];// Will refresh on close
 });
 
-// ═════════════════════════════════════════════════════════════════════════════
-// TAB 3: SESSIONS (sesja 066)
-// ═════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+// TAB 3: SESSIONS
+// ═══════════════════════════════════════════════════════════════════════════════
 function renderSessions(data) {
-    const tbody = document.getElementById('sessions-tbody');
-    const q = document.getElementById('sessions-filter').value.trim().toLowerCase();
-    const fil = q ? data.filter(s =>
-        (s.login||'').toLowerCase().includes(q) ||
-        (s.ip||'').toLowerCase().includes(q)
-    ) : data;
-
-    document.getElementById('sessions-count').textContent = fil.length;
-
-    if (!fil.length) { tbody.innerHTML = '<tr><td colspan="8" class="table-empty">No active sessions.</td></tr>'; return; }
-
-    tbody.innerHTML = fil.map(s => {
-        const isMine = s.id === MY_SESSION;
-        const ua = parseUA(s.user_agent);
-        const rowClass = isMine ? ' class="sess-this"' : '';
-        const badge    = isMine ? ' <span style="font-size:.7rem;background:var(--primary);color:var(--primary-fg);padding:.1rem .4rem;border-radius:9999px;font-weight:700">your session</span>' : '';
-        const twofa    = s.totp_verified ? '<span class="status-ok">✓</span>' : '<span class="muted">—</span>';
-        const roleDisp = s.role === 'admin'
-            ? `<span class="status-ok" style="font-size:.78rem">admin</span>`
-            : `<span class="muted" style="font-size:.78rem">user</span>`;
-
-        const actions = isMine
-            ? `<span class="muted" style="font-size:.75rem">current</span>`
-            : `<button class="btn btn-ghost btn-sm" style="border-color:var(--error-bdr);color:var(--error)"
-                onclick="doDeleteSession('${esc(s.id)}','${esc(s.login)}', this)">Sign out</button>
+    const tbody=document.getElementById('sessions-tbody');
+    const q=document.getElementById('sessions-filter').value.trim().toLowerCase();
+    const fil=q?data.filter(s=>(s.login||'').toLowerCase().includes(q)||(s.ip||'').toLowerCase().includes(q)):data;
+    document.getElementById('sessions-count').textContent=fil.length;
+    if(!fil.length){tbody.innerHTML='<tr><td colspan="8" class="table-empty">No active sessions.</td></tr>';return;}
+    tbody.innerHTML=fil.map(s=>{
+        const isMine=s.id===MY_SESSION;
+        const ua=parseUA(s.user_agent);
+        const rc=isMine?' class="sess-this"':'';
+        const badge=isMine?' <span style="font-size:.7rem;background:var(--primary);color:var(--primary-fg);padding:.1rem .4rem;border-radius:9999px;font-weight:700">you</span>':'';
+        const twofa=s.totp_verified?'<span class="status-ok">✓</span>':'<span class="muted">—</span>';
+        const roleDisp=s.role==='admin'?`<span class="status-ok" style="font-size:.78rem">admin</span>`:`<span class="muted" style="font-size:.78rem">user</span>`;
+        const actions=isMine?`<span class="muted" style="font-size:.75rem">current</span>`
+            :`<button class="btn btn-ghost btn-sm" style="border-color:var(--error-bdr);color:var(--error)"
+                onclick="doDeleteSession('${esc(s.id)}','${esc(s.login)}',this)">Sign out</button>
                <button class="btn btn-ghost btn-sm" style="margin-left:.25rem"
                 onclick="doDeleteUserSessions(${s.user_id},'${esc(s.login)}')">All of user</button>`;
-
-        return `<tr${rowClass}>
-            <td><strong>${esc(s.login)}</strong>${badge}</td>
-            <td>${roleDisp}</td>
+        return `<tr${rc}>
+            <td><strong>${esc(s.login)}</strong>${badge}</td><td>${roleDisp}</td>
             <td><span class="mono">${esc(s.ip)}</span>
-                <button class="btn btn-ghost btn-sm" style="margin-left:.3rem;padding:.15rem .4rem;font-size:.7rem"
-                    onclick="showHistoryFor('${esc(s.ip)}')">📋</button></td>
+                <button class="btn btn-ghost btn-sm" style="margin-left:.3rem;padding:.15rem .4rem;font-size:.7rem" onclick="showHistoryFor('${esc(s.ip)}')">📋</button></td>
             <td class="muted">${esc(ua)}</td>
             <td class="muted" style="font-size:.8rem">${relTime(s.last_activity)}</td>
             <td class="muted" style="font-size:.8rem">${relTime(s.created_at)}</td>
-            <td>${twofa}</td>
-            <td style="white-space:nowrap">${actions}</td>
+            <td>${twofa}</td><td style="white-space:nowrap">${actions}</td>
         </tr>`;
     }).join('');
 }
-
-async function doDeleteSession(sessionId, login, btn) {
-    if (!await cfm('Sign out session', `Sign out this session for "${login}"?\nThey will be forced to log in again.`)) return;
-    btn.disabled = true; btn.textContent = '…';
-    const r = await api('POST', '/api/admin/sessions/delete', { session_id: sessionId });
-    if (!r.ok) { toast(r.error || 'Could not sign out session.', 'error'); btn.disabled = false; btn.textContent = 'Sign out'; return; }
-    toast(`Session signed out for "${login}".`, 'success');
-    sessions = sessions.filter(s => s.id !== sessionId);
-    renderSessions(sessions);
+async function doDeleteSession(sessionId,login,btn) {
+    if(!await cfm('Sign out session',`Sign out this session for "${login}"?`))return;
+    btn.disabled=true;btn.textContent='…';
+    const r=await api('POST','/api/admin/sessions/delete',{session_id:sessionId});
+    if(!r.ok){toast(r.error||'Could not sign out.','error');btn.disabled=false;btn.textContent='Sign out';return;}
+    toast(`Session signed out for "${login}".`,'success');
+    sessions=sessions.filter(s=>s.id!==sessionId);renderSessions(sessions);
 }
-
-async function doDeleteUserSessions(userId, login) {
-    if (!await cfm('Sign out all sessions', `Sign out ALL sessions for "${login}"?\nThey will be forced to log in on all devices.`)) return;
-    const r = await api('POST', '/api/admin/sessions/delete-user', { user_id: userId });
-    if (!r.ok) { toast(r.error || 'Could not sign out sessions.', 'error'); return; }
-    toast(`${r.deleted} session${r.deleted!==1?'s':''} signed out for "${login}".`, 'success');
-    sessions = sessions.filter(s => s.user_id !== userId);
-    renderSessions(sessions);
-    // Refresh users to update session count
-    const r2 = await api('GET', '/api/admin/users');
-    if (r2.ok) { users = r2.users; renderUsers(users); }
+async function doDeleteUserSessions(userId,login) {
+    if(!await cfm('Sign out all sessions',`Sign out ALL sessions for "${login}"?`))return;
+    const r=await api('POST','/api/admin/sessions/delete-user',{user_id:userId});
+    if(!r.ok){toast(r.error||'Could not sign out.','error');return;}
+    toast(`${r.deleted} session${r.deleted!==1?'s':''} signed out for "${login}".`,'success');
+    sessions=sessions.filter(s=>s.user_id!==userId);renderSessions(sessions);
+    const r2=await api('GET','/api/admin/users');
+    if(r2.ok){users=r2.users;renderUsers(users);}
 }
-
-function filterSessionsToUser(userId, login) {
+function filterSessionsToUser(userId,login){
     document.querySelector('.admin-tab[data-tab="sessions"]').click();
-    document.getElementById('sessions-filter').value = login;
-    renderSessions(sessions);
+    document.getElementById('sessions-filter').value=login;renderSessions(sessions);
 }
-
-document.getElementById('sessions-filter').addEventListener('input', () => renderSessions(sessions));
-document.getElementById('btn-refresh-sessions').addEventListener('click', async () => {
-    const r = await api('GET', '/api/admin/sessions');
-    if (!r.ok) { toast('Refresh failed.', 'error'); return; }
-    sessions = r.sessions; renderSessions(sessions); toast('Refreshed.', 'success');
+document.getElementById('sessions-filter').addEventListener('input',()=>renderSessions(sessions));
+document.getElementById('btn-refresh-sessions').addEventListener('click',async()=>{
+    const r=await api('GET','/api/admin/sessions');
+    if(!r.ok){toast('Refresh failed.','error');return;}
+    sessions=r.sessions;renderSessions(sessions);toast('Refreshed.','success');
 });
 
-// ═════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 // TAB 4: LOGIN HISTORY
-// ═════════════════════════════════════════════════════════════════════════════
-function filterHistory() {
+// ═══════════════════════════════════════════════════════════════════════════════
+function filterHistory(){
     const q=document.getElementById('history-ip-filter').value.trim().toLowerCase();
     const st=document.getElementById('history-status-filter').value;
     renderHistory(history.filter(h=>(!q||(h.ip||'').toLowerCase().includes(q))&&(!st||h.status===st)));
 }
-function renderHistory(data) {
+function renderHistory(data){
     const tbody=document.getElementById('history-tbody');
     document.getElementById('history-count-label').textContent=`${data.length} entries`;
     if(!data.length){tbody.innerHTML='<tr><td colspan="6" class="table-empty">No entries.</td></tr>';return;}
@@ -900,11 +902,9 @@ function renderHistory(data) {
         const u=h.resolved_login||(h.user_id?`#${h.user_id}`:'—');
         return `<tr>
             <td class="muted mono" style="font-size:.78rem">${esc(h.created_at||'')}</td>
-            <td>${esc(u)}</td>
-            <td class="muted">${esc(h.login_attempt||'—')}</td>
+            <td>${esc(u)}</td><td class="muted">${esc(h.login_attempt||'—')}</td>
             <td><span class="mono">${esc(h.ip||'')}</span>
-                <button class="btn btn-ghost btn-sm" style="margin-left:.3rem;padding:.15rem .4rem"
-                    onclick="filterToIp('${esc(h.ip||'')}')">🔍</button></td>
+                <button class="btn btn-ghost btn-sm" style="margin-left:.3rem;padding:.15rem .4rem" onclick="filterToIp('${esc(h.ip||'')}')">🔍</button></td>
             <td class="${cls}">${esc(h.status||'')}</td>
             <td class="ua" title="${esc(h.user_agent||'')}">${esc((h.user_agent||'').slice(0,80))}</td>
         </tr>`;
@@ -921,37 +921,37 @@ document.getElementById('btn-refresh-history').addEventListener('click',async()=
     history=r.history;filterHistory();toast('Refreshed.','success');
 });
 
-// ═════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 // TAB 5: UPDATE
-// ═════════════════════════════════════════════════════════════════════════════
-function updateShow(id) {
+// ═══════════════════════════════════════════════════════════════════════════════
+function updateShow(id){
     ['update-idle','update-checking','update-current','update-available','update-running','update-done']
         .forEach(s=>{const el=document.getElementById(s);if(el)el.style.display=s===id?'':'none';});
 }
-async function doGitCheck() {
+async function doGitCheck(){
     updateShow('update-checking');
     const r=await api('GET','/api/update/git-check');
     if(!r.ok){toast(r.error||'Check failed.','error');updateShow('update-idle');return;}
     if(!r.update_available){
         document.getElementById('update-current-sha').textContent=`Local: ${r.local_sha}`;
-        updateShow('update-current'); return;
+        updateShow('update-current');return;
     }
     document.getElementById('update-available-sub').textContent=`${r.commit_count} new commit${r.commit_count!==1?'s':''} available on GitHub.`;
     document.getElementById('update-available-sha').textContent=`Local: ${r.local_sha}  →  GitHub main: ${r.remote_sha}`;
     const cl=document.getElementById('update-commit-list');
-    if(r.commits && r.commits.length) {
+    if(r.commits&&r.commits.length){
         cl.innerHTML=r.commits.map(c=>`<div class="commit-item"><span class="commit-sha">${esc(c.sha)}</span><span class="commit-msg">${esc(c.msg)}</span></div>`).join('');
         cl.style.display='';
-    } else { cl.style.display='none'; }
+    }else{cl.style.display='none';}
     updateShow('update-available');
 }
-async function doGitPull() {
+async function doGitPull(){
     if(!await cfm('Update LetaDial','This will run:\n  1. git pull origin main\n  2. bash fix_permissions.sh\n\nDo not close this page.'))return;
     updateShow('update-running');
     const r=await api('POST','/api/update/git-pull',{});
     document.getElementById('update-pull-output').textContent=r.pull_output||'(no output)';
     document.getElementById('update-perms-output').textContent=r.perms_output||'(no output)';
-    if(r.ok){document.getElementById('update-done-icon').textContent='✅';document.getElementById('update-done-title').textContent='Update complete!';document.getElementById('update-done-sub').textContent='Reload the page to use the new version.';}
+    if(r.ok){document.getElementById('update-done-icon').textContent='✅';document.getElementById('update-done-title').textContent='Update complete!';}
     else{document.getElementById('update-done-icon').textContent='❌';document.getElementById('update-done-title').textContent='Update failed';document.getElementById('update-done-sub').textContent=r.error||'See output below.';}
     updateShow('update-done');
 }
@@ -961,39 +961,39 @@ document.getElementById('btn-recheck-2').addEventListener('click',doGitCheck);
 document.getElementById('btn-recheck-3').addEventListener('click',doGitCheck);
 document.getElementById('btn-update-now').addEventListener('click',doGitPull);
 
-// ═════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 // TAB 6: INSTALL CHECK
-// ═════════════════════════════════════════════════════════════════════════════
-function renderChecks(data) {
-    const total   = data.length;
-    const passing = data.filter(c=>c.ok).length;
-    const failing = data.filter(c=>!c.ok&&c.required).length;
-    const warning = data.filter(c=>!c.ok&&!c.required).length;
-    document.getElementById('check-summary-bar').innerHTML = `
-        <span class="check-summary-item"><span style="color:var(--success);font-size:1.1rem">✓</span><strong>${passing}</strong> passing</span>
-        ${failing>0?`<span class="check-summary-item"><span style="color:var(--error);font-size:1.1rem">✗</span><strong>${failing}</strong> required failing</span>`:''}
-        ${warning>0?`<span class="check-summary-item"><span style="color:var(--warning);font-size:1.1rem">⚠</span><strong>${warning}</strong> warnings</span>`:''}
-        <span class="check-summary-item muted" style="font-size:.8rem">${total} checks total</span>`;
-    const groups = {};
-    data.forEach(c => { const g=c.group||'General'; if(!groups[g])groups[g]=[]; groups[g].push(c); });
-    const groupIcons = {'PHP':'🐘','Database':'🗄','Configuration':'⚙','Security':'🔒','Filesystem':'📁','File Integrity':'🔍','General':'📋'};
-    document.getElementById('check-container').innerHTML = Object.entries(groups).map(([group, items]) => {
-        const gFail = items.filter(i=>!i.ok&&i.required).length;
-        const gWarn = items.filter(i=>!i.ok&&!i.required).length;
-        const groupStatus = gFail>0?`<span style="color:var(--error);font-size:.8rem">✗ ${gFail} fail${gFail!==1?'s':''}</span>`
-            :gWarn>0?`<span style="color:var(--warning);font-size:.8rem">⚠ ${gWarn} warn${gWarn!==1?'s':''}</span>`
+// ═══════════════════════════════════════════════════════════════════════════════
+function renderChecks(data){
+    const total=data.length;
+    const passing=data.filter(c=>c.ok).length;
+    const failing=data.filter(c=>!c.ok&&c.required).length;
+    const warning=data.filter(c=>!c.ok&&!c.required).length;
+    document.getElementById('check-summary-bar').innerHTML=`
+        <span style="display:flex;align-items:center;gap:.4rem"><span style="color:var(--success);font-size:1.1rem">✓</span><strong>${passing}</strong> passing</span>
+        ${failing>0?`<span style="display:flex;align-items:center;gap:.4rem"><span style="color:var(--error);font-size:1.1rem">✗</span><strong>${failing}</strong> required failing</span>`:''}
+        ${warning>0?`<span style="display:flex;align-items:center;gap:.4rem"><span style="color:var(--warning);font-size:1.1rem">⚠</span><strong>${warning}</strong> warnings</span>`:''}
+        <span style="color:var(--text-muted);font-size:.8rem">${total} checks total</span>`;
+    const groups={};
+    data.forEach(c=>{const g=c.group||'General';if(!groups[g])groups[g]=[];groups[g].push(c);});
+    const gicons={'PHP':'🐘','Database':'🗄','Configuration':'⚙','Security':'🔒','Filesystem':'📁','File Integrity':'🔍','General':'📋'};
+    document.getElementById('check-container').innerHTML=Object.entries(groups).map(([group,items])=>{
+        const gf=items.filter(i=>!i.ok&&i.required).length;
+        const gw=items.filter(i=>!i.ok&&!i.required).length;
+        const gs=gf>0?`<span style="color:var(--error);font-size:.8rem">✗ ${gf} fail${gf!==1?'s':''}</span>`
+            :gw>0?`<span style="color:var(--warning);font-size:.8rem">⚠ ${gw} warn${gw!==1?'s':''}</span>`
             :`<span style="color:var(--success);font-size:.8rem">✓ all OK</span>`;
-        const rows = items.map(c => {
-            const icon=c.ok?'✓':(c.required?'✗':'⚠');
-            const iconCls=c.ok?'check-icon-ok':(c.required?'check-icon-fail':'check-icon-warn');
-            const valCls=c.ok?'check-value-ok':(c.required?'check-value-fail':'');
+        const rows=items.map(c=>{
+            const ic=c.ok?'✓':(c.required?'✗':'⚠');
+            const icls=c.ok?'check-icon-ok':(c.required?'check-icon-fail':'check-icon-warn');
+            const vcls=c.ok?'check-value-ok':(c.required?'check-value-fail':'');
             const note=c.note?`<div class="check-note-text">${esc(c.note)}</div>`:'';
             const req=!c.ok&&c.required?' <span style="font-size:.7rem;color:var(--error);font-weight:600">REQUIRED</span>':'';
-            return `<div class="check-row"><div class="check-icon-col ${iconCls}">${icon}</div>
+            return `<div class="check-row"><div class="check-icon-col ${icls}">${ic}</div>
                 <div class="check-label-col"><div class="check-label">${esc(c.label||'')}${req}</div>${note}</div>
-                <div class="check-value-col ${valCls}">${esc(String(c.value||''))}</div></div>`;
+                <div class="check-value-col ${vcls}">${esc(String(c.value||''))}</div></div>`;
         }).join('');
-        return `<div class="admin-card"><div class="admin-card-header"><h3>${groupIcons[group]||'📋'} ${esc(group)}</h3>${groupStatus}</div><div>${rows}</div></div>`;
+        return `<div class="admin-card"><div class="admin-card-header"><h3>${gicons[group]||'📋'} ${esc(group)}</h3>${gs}</div><div>${rows}</div></div>`;
     }).join('');
 }
 document.getElementById('btn-refresh-check').addEventListener('click',async()=>{

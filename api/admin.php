@@ -1,6 +1,6 @@
 <?php
 /**
- * LetaDial — Admin API (sesja 065 + 066)
+ * LetaDial — Admin API (sesja 065 + 066 + 067)
  *
  * GET  /api/admin/blocked          — list blocked rate_limit entries
  * POST /api/admin/unblock          — unblock one entry  {key_hash, action}
@@ -16,6 +16,9 @@
  * POST /api/admin/sessions/delete       — delete one session  {session_id}
  * POST /api/admin/sessions/delete-user  — delete all for user {user_id}
  * POST /api/admin/force-password        — force reset password {user_id, password}
+ *
+ * sesja 067:
+ * POST /api/admin/invite                — invite user {email, login}
  *
  * All endpoints: admin role required.
  * All POST endpoints: CSRF required.
@@ -35,12 +38,9 @@ if ($user['role'] !== 'admin') {
     echo json_encode(['ok' => false, 'error' => 'Admin only.']); exit;
 }
 
-$method = $_SERVER['REQUEST_METHOD'];
-$path   = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
-$parts  = array_values(array_filter(explode('/', trim($path, '/'))));
-// /api/admin/blocked        → parts[2] = 'blocked'
-// /api/admin/sessions       → parts[2] = 'sessions'
-// /api/admin/sessions/delete → parts[2] = 'sessions', parts[3] = 'delete'
+$method     = $_SERVER['REQUEST_METHOD'];
+$path       = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
+$parts      = array_values(array_filter(explode('/', trim($path, '/'))));
 $action     = $parts[2] ?? null;
 $sub_action = $parts[3] ?? null;
 
@@ -61,8 +61,7 @@ if ($method === 'POST' && $action === 'unblock') {
         http_response_code(422);
         echo json_encode(['ok' => false, 'error' => 'key_hash and action required.']); exit;
     }
-    $ok = Admin::unblock($keyHash, $act);
-    echo json_encode(['ok' => $ok]);
+    echo json_encode(['ok' => Admin::unblock($keyHash, $act)]);
     exit;
 }
 
@@ -75,8 +74,7 @@ if ($method === 'POST' && $action === 'unblock-all') {
         http_response_code(422);
         echo json_encode(['ok' => false, 'error' => 'key_plain required.']); exit;
     }
-    $count = Admin::unblockByKey($keyPlain);
-    echo json_encode(['ok' => true, 'deleted' => $count]);
+    echo json_encode(['ok' => true, 'deleted' => Admin::unblockByKey($keyPlain)]);
     exit;
 }
 
@@ -134,16 +132,13 @@ if ($method === 'GET' && $action === 'export-blocked') {
 
 // ── sesja 066: Sessions ───────────────────────────────────────────────────────
 
-// GET /api/admin/sessions[?user_id=N]
 if ($method === 'GET' && $action === 'sessions' && $sub_action === null) {
     $filterUserId = isset($_GET['user_id']) && ctype_digit($_GET['user_id'])
         ? (int)$_GET['user_id'] : null;
-    $sessions = Admin::getSessions($filterUserId);
-    echo json_encode(['ok' => true, 'sessions' => $sessions]);
+    echo json_encode(['ok' => true, 'sessions' => Admin::getSessions($filterUserId)]);
     exit;
 }
 
-// POST /api/admin/sessions/delete  — {session_id}
 if ($method === 'POST' && $action === 'sessions' && $sub_action === 'delete') {
     CSRF::require();
     $body      = json_decode(file_get_contents('php://input'), true) ?? [];
@@ -152,17 +147,15 @@ if ($method === 'POST' && $action === 'sessions' && $sub_action === 'delete') {
         http_response_code(422);
         echo json_encode(['ok' => false, 'error' => 'session_id required.']); exit;
     }
-    // Prevent admin from deleting their own current session via this endpoint
     if ($sessionId === Auth::getSessionId()) {
         http_response_code(422);
-        echo json_encode(['ok' => false, 'error' => 'Cannot delete your own current session. Use Sign out instead.']); exit;
+        echo json_encode(['ok' => false, 'error' => 'Cannot delete your own current session.']); exit;
     }
     $ok = Admin::deleteSession($sessionId);
     echo json_encode(['ok' => $ok, 'error' => $ok ? null : 'Session not found.']);
     exit;
 }
 
-// POST /api/admin/sessions/delete-user  — {user_id}
 if ($method === 'POST' && $action === 'sessions' && $sub_action === 'delete-user') {
     CSRF::require();
     $body   = json_decode(file_get_contents('php://input'), true) ?? [];
@@ -171,35 +164,51 @@ if ($method === 'POST' && $action === 'sessions' && $sub_action === 'delete-user
         http_response_code(422);
         echo json_encode(['ok' => false, 'error' => 'user_id required.']); exit;
     }
-    // If targeting current admin, warn (they will be logged out)
-    $count = Admin::deleteUserSessions($userId);
-    echo json_encode(['ok' => true, 'deleted' => $count]);
+    echo json_encode(['ok' => true, 'deleted' => Admin::deleteUserSessions($userId)]);
     exit;
 }
 
-// ── sesja 066: Force Password Reset ──────────────────────────────────────────
-
-// POST /api/admin/force-password  — {user_id, password}
 if ($method === 'POST' && $action === 'force-password') {
     CSRF::require();
-
-    // Rate limit: 10 force-resets per hour (brute-force protection)
     if (RateLimit::check('admin_force_pw', (string)$user['id'], 10, 3600, 3600)) {
         http_response_code(429);
         echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again in an hour.']); exit;
     }
-
     $body     = json_decode(file_get_contents('php://input'), true) ?? [];
     $targetId = (int)($body['user_id']  ?? 0);
     $password = $body['password'] ?? '';
-
     if (!$targetId || !$password) {
         http_response_code(422);
         echo json_encode(['ok' => false, 'error' => 'user_id and password required.']); exit;
     }
-
     $result = Admin::forcePasswordReset($targetId, $password, $user['id']);
     http_response_code($result['ok'] ? 200 : 422);
+    echo json_encode($result);
+    exit;
+}
+
+// ── sesja 067: Invite User ────────────────────────────────────────────────────
+
+if ($method === 'POST' && $action === 'invite') {
+    CSRF::require();
+
+    // Rate limit: 10 invites per hour per admin
+    if (RateLimit::check('admin_invite', (string)$user['id'], 10, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many invite requests. Try again in an hour.']); exit;
+    }
+
+    $body  = json_decode(file_get_contents('php://input'), true) ?? [];
+    $email = trim($body['email'] ?? '');
+    $login = trim($body['login'] ?? '');
+
+    if (!$email || !$login) {
+        http_response_code(422);
+        echo json_encode(['ok' => false, 'error' => 'Email and login are required.']); exit;
+    }
+
+    $result = Admin::inviteUser($email, $login, $user['id']);
+    http_response_code($result['ok'] ? 201 : 422);
     echo json_encode($result);
     exit;
 }

@@ -1,63 +1,73 @@
 <?php
 /**
- * LetaDial — Admin Model (sesja 065 + 066)
+ * LetaDial — Admin Model (sesja 065 + 066 + 067)
  *
- * sesja 066 additions:
- *   getSessions()         — list all active sessions with user info
- *   deleteSession()       — delete a single session by ID
- *   deleteUserSessions()  — delete all sessions for a user
- *   forcePasswordReset()  — set new password for any user (admin only)
+ * Static methods for the admin panel.
+ * 065: Blocked IPs, Users, Login History, Install Check, Export
+ * 066: Sessions management, Force Password Reset
+ * 067: Invite User (send setup-account link to new user email)
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
 
 class Admin
 {
-    // ── Rate Limits / Blocked ─────────────────────────────────────────────────
+    // ── Blocked IPs (Rate Limits) ─────────────────────────────────────────────
 
     public static function getBlocked(int $min = 3): array
     {
-        return DB::rows(
-            "SELECT
-                rl.id,
-                rl.key_hash,
-                rl.key_plain,
-                rl.action,
-                rl.attempts,
-                rl.window_start,
-                (SELECT user_agent
-                 FROM login_history
-                 WHERE ip = rl.key_plain
-                 ORDER BY created_at DESC LIMIT 1)   AS last_ua,
-                (SELECT login_attempt
-                 FROM login_history
-                 WHERE ip = rl.key_plain
-                 ORDER BY created_at DESC LIMIT 1)   AS last_login_attempt,
-                (SELECT COUNT(*)
-                 FROM login_history
-                 WHERE ip = rl.key_plain
-                   AND status NOT IN ('success'))     AS total_failures,
-                (SELECT MAX(created_at)
-                 FROM login_history
-                 WHERE ip = rl.key_plain)             AS last_seen
+        $rows = DB::rows(
+            "SELECT rl.id, rl.key_hash, rl.action, rl.attempts, rl.window_start,
+                    rl.key_plain,
+                    (SELECT login_attempt FROM login_history
+                     WHERE ip = rl.key_plain ORDER BY created_at DESC LIMIT 1) AS last_login_attempt,
+                    (SELECT user_agent FROM login_history
+                     WHERE ip = rl.key_plain ORDER BY created_at DESC LIMIT 1) AS last_ua
              FROM rate_limits rl
              WHERE rl.attempts >= ?
              ORDER BY rl.attempts DESC, rl.window_start DESC",
             [$min]
         );
+        return $rows ?: [];
     }
 
     public static function unblock(string $keyHash, string $action): bool
     {
-        return DB::run(
+        $affected = DB::run(
             "DELETE FROM rate_limits WHERE key_hash = ? AND action = ?",
             [$keyHash, $action]
-        ) > 0;
+        );
+        return $affected > 0;
     }
 
     public static function unblockByKey(string $keyPlain): int
     {
-        return DB::run("DELETE FROM rate_limits WHERE key_plain = ?", [$keyPlain]);
+        return DB::run(
+            "DELETE FROM rate_limits WHERE key_plain = ?",
+            [$keyPlain]
+        );
+    }
+
+    public static function exportBlocked(string $format): string
+    {
+        $rows = DB::rows(
+            "SELECT key_plain, action, attempts, window_start FROM rate_limits ORDER BY attempts DESC"
+        );
+
+        if ($format === 'csv') {
+            $out = "ip_or_key,action,attempts,window_start\n";
+            foreach ($rows as $r) {
+                $out .= implode(',', [
+                    '"' . str_replace('"', '""', $r['key_plain'] ?? '') . '"',
+                    '"' . str_replace('"', '""', $r['action']) . '"',
+                    (int)$r['attempts'],
+                    '"' . ($r['window_start'] ?? '') . '"',
+                ]) . "\n";
+            }
+            return $out;
+        }
+
+        return json_encode($rows, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
     }
 
     // ── Users ─────────────────────────────────────────────────────────────────
@@ -65,501 +75,408 @@ class Admin
     public static function getUsers(): array
     {
         return DB::rows(
-            "SELECT
-                u.id, u.login, u.email, u.role,
-                u.totp_enabled, u.email_verified,
-                u.created_at, u.last_login,
-                (SELECT COUNT(*) FROM groups_list g WHERE g.user_id = u.id) AS group_count,
-                (SELECT COUNT(*) FROM dials d       WHERE d.user_id = u.id) AS dial_count,
-                (SELECT COUNT(*) FROM sessions s    WHERE s.user_id = u.id) AS session_count
+            "SELECT u.id, u.login, u.email, u.role, u.totp_enabled, u.email_verified,
+                    u.created_at, u.last_login,
+                    (SELECT COUNT(*) FROM groups_list g WHERE g.user_id = u.id) AS group_count,
+                    (SELECT COUNT(*) FROM dials d WHERE d.user_id = u.id) AS dial_count,
+                    (SELECT COUNT(*) FROM sessions s WHERE s.user_id = u.id AND s.expires_at > NOW()) AS session_count
              FROM users u
              ORDER BY u.created_at DESC"
-        );
+        ) ?: [];
     }
 
-    public static function deleteUser(int $userId, int $currentUserId): array
+    public static function deleteUser(int $userId, int $adminId): array
     {
-        if ($userId === $currentUserId) {
-            return ['ok' => false, 'error' => 'You cannot delete your own account.'];
-        }
-        $user = DB::row("SELECT id, login, role FROM users WHERE id = ?", [$userId]);
-        if (!$user) return ['ok' => false, 'error' => 'User not found.'];
-
-        if ($user['role'] === 'admin') {
-            $adminCount = (int)(DB::val("SELECT COUNT(*) FROM users WHERE role = 'admin'") ?? 0);
-            if ($adminCount <= 1) {
-                return ['ok' => false, 'error' => 'Cannot delete the last admin account.'];
-            }
+        if ($userId === $adminId) {
+            return ['ok' => false, 'error' => 'Cannot delete your own account.'];
         }
 
-        foreach (['storage/thumbnails', 'storage/group_icons'] as $base) {
-            $dir = __DIR__ . '/../' . $base . '/u' . $userId;
-            if (is_dir($dir)) {
-                array_map('unlink', glob($dir . '/*.webp') ?: []);
-                @rmdir($dir);
-            }
-        }
-        $avatarPath = DB::val("SELECT avatar_path FROM users WHERE id = ?", [$userId]);
-        if ($avatarPath && file_exists(__DIR__ . '/../' . $avatarPath)) {
-            @unlink(__DIR__ . '/../' . $avatarPath);
+        $user = DB::row("SELECT id, login FROM users WHERE id = ?", [$userId]);
+        if (!$user) {
+            return ['ok' => false, 'error' => 'User not found.'];
         }
 
+        // Delete thumbnail files
+        $thumbDir = __DIR__ . '/../storage/thumbnails/u' . $userId;
+        if (is_dir($thumbDir)) {
+            array_map('unlink', glob($thumbDir . '/*.webp') ?: []);
+            @rmdir($thumbDir);
+        }
+
+        // Delete group icon files
+        $iconDir = __DIR__ . '/../storage/group_icons/u' . $userId;
+        if (is_dir($iconDir)) {
+            array_map('unlink', glob($iconDir . '/*.webp') ?: []);
+            @rmdir($iconDir);
+        }
+
+        // Delete user (cascades to sessions, dials, groups, backup codes, remember tokens)
         DB::run("DELETE FROM users WHERE id = ?", [$userId]);
+
         return ['ok' => true, 'login' => $user['login']];
     }
 
-    // ── Sessions (sesja 066) ──────────────────────────────────────────────────
+    // ── Sessions (066) ────────────────────────────────────────────────────────
 
-    /**
-     * Get all active sessions with joined user info.
-     * If $userId is provided, returns only sessions for that user.
-     *
-     * @param int|null $userId   Filter to a specific user (null = all users)
-     * @param int      $limit    Maximum rows returned
-     */
-    public static function getSessions(?int $userId = null, int $limit = 300): array
+    public static function getSessions(?int $filterUserId = null): array
     {
-        if ($userId !== null) {
+        if ($filterUserId !== null) {
             return DB::rows(
-                "SELECT s.id, s.user_id, s.ip, s.user_agent,
-                        s.created_at, s.last_activity, s.expires_at,
-                        s.totp_verified,
-                        u.login, u.role
+                "SELECT s.id, s.user_id, s.ip, s.user_agent, s.created_at, s.last_activity,
+                        s.expires_at, s.totp_verified, u.login, u.role
                  FROM sessions s
                  JOIN users u ON u.id = s.user_id
-                 WHERE s.user_id = ?
-                 ORDER BY s.last_activity DESC
-                 LIMIT ?",
-                [$userId, $limit]
-            );
+                 WHERE s.expires_at > NOW() AND s.user_id = ?
+                 ORDER BY s.last_activity DESC",
+                [$filterUserId]
+            ) ?: [];
         }
+
         return DB::rows(
-            "SELECT s.id, s.user_id, s.ip, s.user_agent,
-                    s.created_at, s.last_activity, s.expires_at,
-                    s.totp_verified,
-                    u.login, u.role
+            "SELECT s.id, s.user_id, s.ip, s.user_agent, s.created_at, s.last_activity,
+                    s.expires_at, s.totp_verified, u.login, u.role
              FROM sessions s
              JOIN users u ON u.id = s.user_id
-             ORDER BY s.last_activity DESC
-             LIMIT ?",
-            [$limit]
-        );
+             WHERE s.expires_at > NOW()
+             ORDER BY s.last_activity DESC"
+        ) ?: [];
     }
 
-    /**
-     * Delete a single session by its ID (SHA-256 hash).
-     * Returns true if a row was deleted.
-     */
     public static function deleteSession(string $sessionId): bool
     {
         return DB::run("DELETE FROM sessions WHERE id = ?", [$sessionId]) > 0;
     }
 
-    /**
-     * Delete all sessions for a given user.
-     * Returns the number of deleted sessions.
-     */
     public static function deleteUserSessions(int $userId): int
     {
         return DB::run("DELETE FROM sessions WHERE user_id = ?", [$userId]);
     }
 
-    /**
-     * Force-reset a user's password (admin action — no current password required).
-     *
-     * Security:
-     *   - Admin cannot use this on their own account (use Settings instead)
-     *   - New password goes through the same validation as regular password changes
-     *   - All existing sessions for the target user are invalidated
-     *
-     * @param int    $targetUserId  User whose password to reset
-     * @param string $newPassword   Plain-text new password (validated here)
-     * @param int    $adminId       Currently logged-in admin (cannot be same as target)
-     */
-    public static function forcePasswordReset(int $targetUserId, string $newPassword, int $adminId): array
+    // ── Force Password Reset (066) ────────────────────────────────────────────
+
+    public static function forcePasswordReset(int $targetId, string $password, int $adminId): array
     {
-        if ($targetUserId === $adminId) {
-            return ['ok' => false, 'error' => 'Use Settings to change your own password.'];
+        if ($targetId === $adminId) {
+            return ['ok' => false, 'error' => 'Use the Settings page to change your own password.'];
         }
 
-        $user = DB::row("SELECT id, login FROM users WHERE id = ?", [$targetUserId]);
-        if (!$user) {
+        $target = DB::row("SELECT id, login FROM users WHERE id = ?", [$targetId]);
+        if (!$target) {
             return ['ok' => false, 'error' => 'User not found.'];
         }
 
-        $errors = Password::validate($newPassword);
+        $errors = Password::validate($password);
         if (!empty($errors)) {
             return ['ok' => false, 'error' => implode(' ', $errors)];
         }
 
-        $hash = Password::hash($newPassword);
-        DB::run("UPDATE users SET password_hash = ? WHERE id = ?", [$hash, $targetUserId]);
+        $hash = Password::hash($password);
+        DB::run("UPDATE users SET password_hash = ? WHERE id = ?", [$hash, $targetId]);
 
-        // Invalidate all sessions so the user must log in with the new password
-        Auth::logoutAllSessions($targetUserId);
+        // Invalidate all sessions for that user
+        Auth::logoutAllSessions($targetId);
 
-        return ['ok' => true, 'login' => $user['login']];
+        return ['ok' => true, 'login' => $target['login']];
+    }
+
+    // ── Invite User (067) ─────────────────────────────────────────────────────
+
+    /**
+     * Invite a new user by email.
+     *
+     * Creates an account with no password (invalid hash) and sends an
+     * email with a link to /setup-account?token=XXX where they set their
+     * own password. Token reuses the existing activation_token column.
+     *
+     * @param string $email     Email address of the invitee
+     * @param string $login     Desired login (3–50 chars, letters/numbers/underscore)
+     * @param int    $adminId   ID of the admin doing the invite (for the email)
+     * @return array ['ok' => bool, 'error'? => string, 'email_sent'? => bool]
+     */
+    public static function inviteUser(string $email, string $login, int $adminId): array
+    {
+        $email = strtolower(trim($email));
+        $login = trim($login);
+
+        // Validate email
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            return ['ok' => false, 'error' => 'Invalid email address.'];
+        }
+
+        // Validate login
+        if (!preg_match('/^[a-zA-Z0-9_]{3,50}$/', $login)) {
+            return ['ok' => false, 'error' => 'Login must be 3–50 characters: letters, numbers, underscore only.'];
+        }
+
+        // Check uniqueness
+        $emailTaken = DB::val("SELECT id FROM users WHERE email = ?", [$email]);
+        if ($emailTaken) {
+            return ['ok' => false, 'error' => 'This email address is already registered.'];
+        }
+
+        $loginTaken = DB::val("SELECT id FROM users WHERE login = ?", [$login]);
+        if ($loginTaken) {
+            return ['ok' => false, 'error' => 'This login is already taken.'];
+        }
+
+        // Get admin login for the invite email
+        $admin = DB::row("SELECT login FROM users WHERE id = ?", [$adminId]);
+        $adminLogin = $admin['login'] ?? 'Admin';
+
+        // Generate activation token
+        $token = bin2hex(random_bytes(32)); // 64-char hex
+
+        // Create user with an invalid password hash (cannot log in without setting password)
+        // Using a dummy hash that can never match any real password
+        $dummyHash = '$2y$12$InvalidHashThatCanNeverMatchAnyRealPassword00000000000000';
+
+        DB::run(
+            "INSERT INTO users
+                (login, email, password_hash, role, email_verified, activation_token,
+                 totp_required, created_at)
+             VALUES (?, ?, ?, 'user', 0, ?, 0, NOW())",
+            [$login, $email, $dummyHash, $token]
+        );
+
+        $newUserId = (int)DB::lastId();
+
+        // Send invite email
+        $sent = false;
+        if (defined('SMTP_ENABLED') && SMTP_ENABLED) {
+            $sent = Mailer::sendInviteToSetup($email, $token, $adminLogin);
+        }
+
+        return [
+            'ok'         => true,
+            'user_id'    => $newUserId,
+            'email_sent' => $sent,
+            'smtp_enabled' => defined('SMTP_ENABLED') && SMTP_ENABLED,
+        ];
     }
 
     // ── Login History ─────────────────────────────────────────────────────────
 
-    public static function getLoginHistory(?string $ip = null, int $limit = 100): array
+    public static function getLoginHistory(?string $ip, int $limit = 100): array
     {
-        if ($ip !== null) {
+        $limit = max(10, min(500, $limit));
+
+        if ($ip) {
             return DB::rows(
                 "SELECT lh.*, u.login AS resolved_login
                  FROM login_history lh
                  LEFT JOIN users u ON u.id = lh.user_id
                  WHERE lh.ip = ?
-                 ORDER BY lh.created_at DESC LIMIT ?",
-                [$ip, $limit]
-            );
+                 ORDER BY lh.created_at DESC
+                 LIMIT " . $limit,
+                [$ip]
+            ) ?: [];
         }
+
         return DB::rows(
             "SELECT lh.*, u.login AS resolved_login
              FROM login_history lh
              LEFT JOIN users u ON u.id = lh.user_id
-             ORDER BY lh.created_at DESC LIMIT ?",
-            [$limit]
-        );
+             ORDER BY lh.created_at DESC
+             LIMIT " . $limit
+        ) ?: [];
     }
 
-    // ── Installation Check ────────────────────────────────────────────────────
+    // ── Install Check ─────────────────────────────────────────────────────────
 
     public static function installCheck(): array
     {
-        $root   = realpath(__DIR__ . '/..') ?: dirname(__DIR__);
-        $groups = [];
+        $checks = [];
+        $appDir = realpath(__DIR__ . '/..') ?: dirname(__DIR__);
 
-        // ── 1. PHP ────────────────────────────────────────────────────────────
-        $php = [];
+        // ── PHP ───────────────────────────────────────────────────────────────
         $phpVer = PHP_VERSION;
-        $php[] = self::chk('PHP version ≥ 8.1', version_compare($phpVer, '8.1.0', '>='), true, $phpVer);
+        $checks[] = self::chk('PHP ≥ 8.1', version_compare($phpVer, '8.1.0', '>='), true,
+            "Found: {$phpVer}", 'PHP');
 
         foreach (['pdo_mysql', 'gd', 'mbstring', 'openssl', 'json'] as $ext) {
-            $ok = extension_loaded($ext);
-            $php[] = self::chk("Extension: {$ext}", $ok, true, $ok ? 'loaded' : 'MISSING');
+            $checks[] = self::chk("Extension: {$ext}", extension_loaded($ext), true,
+                extension_loaded($ext) ? 'loaded' : 'MISSING', 'PHP');
         }
 
-        $gd   = function_exists('gd_info') ? gd_info() : [];
-        $webp = !empty($gd['WebP Support']);
-        $php[] = self::chk('GD WebP support', $webp, true, $webp ? 'yes' : 'MISSING');
+        $gdInfo  = function_exists('gd_info') ? gd_info() : [];
+        $webpOk  = !empty($gdInfo['WebP Support']);
+        $checks[] = self::chk('GD WebP support', $webpOk, true,
+            $webpOk ? 'yes' : 'MISSING — install php-gd with WebP', 'PHP');
 
         $imagick = extension_loaded('imagick');
-        $php[] = self::chk('Extension: imagick', $imagick, false,
-            $imagick ? 'loaded' : 'not loaded',
-            $imagick ? '' : 'Optional — enables better thumbnails and OG image capture.');
+        $checks[] = self::chk('Imagick extension', $imagick, false,
+            $imagick ? 'loaded (better thumbnails)' : 'not installed (optional)', 'PHP',
+            'Imagick enables OG image capture and better thumbnail quality.');
 
-        $execOk = function_exists('exec') && !in_array('exec', array_map('trim', explode(',', ini_get('disable_functions'))));
-        $php[] = self::chk('exec() available', $execOk, false,
-            $execOk ? 'yes' : 'disabled',
-            $execOk ? '' : 'Required for git-based updates (Admin → Update tab).');
+        $execOk = function_exists('exec') && !in_array('exec', explode(',', ini_get('disable_functions') ?: ''));
+        $checks[] = self::chk('exec() available', $execOk, false,
+            $execOk ? 'yes' : 'disabled — git-based auto-update will not work', 'PHP',
+            'Required for Admin → Update tab (git pull). Not needed for normal operation.');
 
-        $groups['PHP'] = $php;
-
-        // ── 2. Database ───────────────────────────────────────────────────────
-        $db = [];
-        try {
-            $ver  = DB::val("SELECT VERSION()") ?? 'unknown';
-            $db[] = self::chk('DB connection', true, true, $ver);
-
-            foreach (['users','sessions','groups_list','dials','rate_limits','settings',
-                      'login_history','totp_backup_codes','remember_tokens'] as $tbl) {
-                $exists = (int)(DB::val(
-                    "SELECT COUNT(*) FROM information_schema.TABLES
-                     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?",
-                    [$tbl]
-                ) ?? 0) > 0;
-                $db[] = self::chk("Table: {$tbl}", $exists, true, $exists ? 'exists' : 'MISSING');
-            }
-
-            // rate_limits.key_plain (sesja 065)
-            $hasKP = (int)(DB::val(
-                "SELECT COUNT(*) FROM information_schema.COLUMNS
-                 WHERE TABLE_SCHEMA = DATABASE()
-                   AND TABLE_NAME   = 'rate_limits'
-                   AND COLUMN_NAME  = 'key_plain'"
-            ) ?? 0) > 0;
-            $db[] = self::chk('rate_limits.key_plain column', $hasKP, false,
-                $hasKP ? 'present' : 'missing',
-                $hasKP ? '' : 'Run migrate_065.sql.');
-
-            // users.recent_disabled (sesja 064)
-            $hasRD = (int)(DB::val(
-                "SELECT COUNT(*) FROM information_schema.COLUMNS
-                 WHERE TABLE_SCHEMA = DATABASE()
-                   AND TABLE_NAME   = 'users'
-                   AND COLUMN_NAME  = 'recent_disabled'"
-            ) ?? 0) > 0;
-            $db[] = self::chk('users.recent_disabled column', $hasRD, false,
-                $hasRD ? 'present' : 'missing',
-                $hasRD ? '' : 'Run migrate_064.sql.');
-
-            // users.email_pending (sesja 066)
-            $hasEP = (int)(DB::val(
-                "SELECT COUNT(*) FROM information_schema.COLUMNS
-                 WHERE TABLE_SCHEMA = DATABASE()
-                   AND TABLE_NAME   = 'users'
-                   AND COLUMN_NAME  = 'email_pending'"
-            ) ?? 0) > 0;
-            $db[] = self::chk('users.email_pending column', $hasEP, false,
-                $hasEP ? 'present' : 'missing',
-                $hasEP ? '' : 'Run migrate_066.sql to enable email change feature.');
-
-        } catch (\Throwable $e) {
-            $db[] = self::chk('DB connection', false, true, 'FAILED', $e->getMessage());
-        }
-        $groups['Database'] = $db;
-
-        // ── 3. Configuration ──────────────────────────────────────────────────
-        $cfg = [];
-        $cfgPath = $root . '/config.php';
-
-        $cfgExists = file_exists($cfgPath);
-        $cfg[] = self::chk('config.php exists', $cfgExists, true, $cfgExists ? 'yes' : 'MISSING');
-
-        if ($cfgExists) {
-            $cfgPerms = substr(sprintf('%o', fileperms($cfgPath)), -4);
-            $cfg[] = self::chk('config.php permissions', in_array($cfgPerms, ['0600','0400'], true), true,
-                $cfgPerms, 'Should be 600. Run: chmod 600 config.php');
+        // ── Database ──────────────────────────────────────────────────────────
+        $tables = ['users','sessions','remember_tokens','groups_list','dials',
+                   'totp_backup_codes','rate_limits','settings','login_history'];
+        foreach ($tables as $tbl) {
+            $exists = DB::val("SHOW TABLES LIKE ?", [$tbl]) !== null;
+            $checks[] = self::chk("Table: {$tbl}", $exists, true,
+                $exists ? 'exists' : 'MISSING', 'Database');
         }
 
-        $constants = ['APP_NAME','APP_URL','APP_VERSION','DB_HOST','DB_NAME','DB_USER',
-                      'ENCRYPTION_KEY','HMAC_KEY','SESSION_TTL'];
+        // Key columns — sesja 053/054/061/062/064/065/066
+        $colChecks = [
+            ['users',       'totp_secret',          'VARCHAR — 2FA support'],
+            ['users',       'totp_enabled',          'TINYINT — 2FA flag'],
+            ['users',       'avatar_path',           'VARCHAR — sesja 001 migrate'],
+            ['users',       'reset_token',           'VARCHAR — password reset'],
+            ['users',       'reset_expires',         'DATETIME — password reset expiry'],
+            ['users',       'recent_disabled',       'TINYINT — sesja 064'],
+            ['users',       'email_pending',         'VARCHAR — sesja 066 email change'],
+            ['users',       'email_change_token',    'VARCHAR — sesja 066 email change'],
+            ['users',       'email_change_expires',  'DATETIME — sesja 066 email change'],
+            ['sessions',    'totp_verified',         'TINYINT — 2FA session flag'],
+            ['sessions',    'pending_totp',          'VARCHAR — 2FA setup token'],
+            ['dials',       'notes',                 'TEXT — sesja 054'],
+            ['dials',       'pinned',                'TINYINT — sesja 061'],
+            ['dials',       'click_count',           'INT — click tracking'],
+            ['dials',       'last_click',            'DATETIME — recent tab'],
+            ['groups_list', 'icon',                  'VARCHAR — emoji icon'],
+            ['groups_list', 'color',                 'VARCHAR — tab color'],
+            ['groups_list', 'icon_path',             'VARCHAR — custom icon image'],
+            ['rate_limits', 'key_plain',             'VARCHAR — admin blocked IPs display'],
+        ];
+
+        foreach ($colChecks as [$table, $col, $desc]) {
+            $exists = DB::val(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS
+                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?",
+                [$table, $col]
+            ) !== null;
+            $label = "Column: {$table}.{$col}";
+            $checks[] = self::chk($label, $exists, true,
+                $exists ? 'ok' : "MISSING — run migration SQL", 'Database',
+                $exists ? '' : "ALTER TABLE {$table} ADD COLUMN {$col} ... — see README Troubleshooting");
+        }
+
+        // ── Configuration ─────────────────────────────────────────────────────
+        $constants = ['APP_NAME','APP_URL','APP_VERSION','ENCRYPTION_KEY','HMAC_KEY',
+                      'DB_HOST','DB_NAME','DB_USER','SESSION_TTL'];
         foreach ($constants as $c) {
             $defined = defined($c);
-            $val     = $defined
-                ? (str_contains($c, 'KEY') || str_contains($c, 'PASS') ? '***hidden***' : constant($c))
-                : 'NOT DEFINED';
-            $cfg[] = self::chk("define('{$c}')", $defined, true, (string)$val);
+            $checks[] = self::chk("Constant: {$c}", $defined, true,
+                $defined ? 'defined' : 'MISSING in config.php', 'Configuration');
         }
 
-        $urlHttps = str_starts_with(APP_URL, 'https://');
-        $cfg[] = self::chk('APP_URL uses HTTPS', $urlHttps, false, APP_URL,
-            $urlHttps ? '' : 'Strongly recommended for production.');
+        $smtpConfigured = defined('SMTP_ENABLED') && SMTP_ENABLED;
+        $checks[] = self::chk('SMTP configured', $smtpConfigured, false,
+            $smtpConfigured ? 'yes' : 'disabled — email features unavailable', 'Configuration',
+            'Required for password reset, activation emails, and user invites.');
 
-        $encLen = strlen(ENCRYPTION_KEY ?? '');
-        $cfg[] = self::chk('ENCRYPTION_KEY length', $encLen === 64, true,
-            "{$encLen} chars", $encLen !== 64 ? 'Must be exactly 64 hex chars (32 bytes).' : '');
+        $githubRepo = defined('GITHUB_REPO') && GITHUB_REPO !== '';
+        $checks[] = self::chk('GITHUB_REPO configured', $githubRepo, false,
+            $githubRepo ? (defined('GITHUB_REPO') ? GITHUB_REPO : '') : 'not set — auto-update banner disabled', 'Configuration',
+            "Add define('GITHUB_REPO', 'LetaLab/LetaDial'); to config.php to enable update notifications.");
 
-        $hmacLen = strlen(HMAC_KEY ?? '');
-        $cfg[] = self::chk('HMAC_KEY length', $hmacLen === 64, true,
-            "{$hmacLen} chars", $hmacLen !== 64 ? 'Must be exactly 64 hex chars (32 bytes).' : '');
+        // ── Security ──────────────────────────────────────────────────────────
+        $cfgPath   = $appDir . '/config.php';
+        $cfgExists = file_exists($cfgPath);
+        $cfgPerms  = $cfgExists ? substr(sprintf('%o', fileperms($cfgPath)), -4) : '????';
+        $cfgSafe   = in_array($cfgPerms, ['0600', '0400'], true);
+        $checks[] = self::chk('config.php permissions', $cfgSafe, true,
+            $cfgExists ? "{$cfgPerms} (should be 0600)" : 'file not found', 'Security',
+            $cfgSafe ? '' : 'Run: chmod 600 config.php — or: bash fix_permissions.sh');
 
-        $groups['Configuration'] = $cfg;
+        $installExists = file_exists($appDir . '/install.php');
+        $checks[] = self::chk('install.php removed', !$installExists, true,
+            $installExists ? 'STILL PRESENT — security risk!' : 'not found (good)', 'Security',
+            $installExists ? 'Delete install.php immediately or run fix_permissions.sh' : '');
 
-        // ── 4. Security ───────────────────────────────────────────────────────
-        $sec = [];
+        $keyLen = defined('ENCRYPTION_KEY') ? strlen(ENCRYPTION_KEY) : 0;
+        $checks[] = self::chk('ENCRYPTION_KEY length', $keyLen === 64, true,
+            "{$keyLen} chars (must be 64 hex = 32 bytes)", 'Security');
 
-        $noInstall = !file_exists($root . '/install.php');
-        $sec[] = self::chk('install.php absent', $noInstall, true,
-            $noInstall ? 'removed ✓' : 'PRESENT — delete it!',
-            $noInstall ? '' : 'Delete install.php immediately — it allows full reinstall.');
+        $hmacLen = defined('HMAC_KEY') ? strlen(HMAC_KEY) : 0;
+        $checks[] = self::chk('HMAC_KEY length', $hmacLen === 64, true,
+            "{$hmacLen} chars (must be 64 hex = 32 bytes)", 'Security');
 
-        $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-               || ($_SERVER['SERVER_PORT'] ?? 80) == 443;
-        $sec[] = self::chk('HTTPS active', $https, false,
-            $https ? 'yes' : 'no',
-            $https ? '' : 'Strongly recommended.');
-
-        $gitExists = is_dir($root . '/.git');
-        $sec[] = self::chk('.git directory present', $gitExists, false,
-            $gitExists ? 'yes (verify nginx blocks /.git/)' : 'no',
-            $gitExists ? 'Ensure nginx: location ~ /\\. { deny all; }' : '');
-
-        $smtpOk = defined('SMTP_ENABLED') && SMTP_ENABLED;
-        $sec[] = self::chk('SMTP configured', $smtpOk, false,
-            $smtpOk ? (SMTP_HOST . ':' . SMTP_PORT) : 'disabled',
-            $smtpOk ? '' : 'Optional — needed for password reset and email change emails.');
-
-        $groups['Security'] = $sec;
-
-        // ── 5. Filesystem ─────────────────────────────────────────────────────
-        $fs = [];
-        $dirsToCheck = [
-            'storage'             => true,
-            'storage/thumbnails'  => true,
-            'storage/sessions'    => true,
-            'storage/avatars'     => true,
-            'storage/group_icons' => true,
-            'logs'                => true,
-            'assets/css'          => false,
-            'assets/js'           => false,
-            'assets/icons'        => false,
+        // ── Filesystem ────────────────────────────────────────────────────────
+        $dirs = [
+            'storage'             => ['writable' => true,  'required' => true],
+            'storage/thumbnails'  => ['writable' => true,  'required' => true],
+            'storage/sessions'    => ['writable' => false, 'required' => true],
+            'storage/avatars'     => ['writable' => true,  'required' => true],
+            'storage/group_icons' => ['writable' => true,  'required' => true],
+            'logs'                => ['writable' => true,  'required' => true],
         ];
-        foreach ($dirsToCheck as $rel => $required) {
-            $path   = $root . '/' . $rel;
-            $exists = is_dir($path);
-            $wr     = $exists && is_writable($path);
-            $perms  = $exists ? substr(sprintf('%o', fileperms($path)), -4) : 'n/a';
-            $fs[] = self::chk("Dir: {$rel}/", $exists && ($required ? $wr : true), $required,
-                $exists ? "{$perms}" . ($wr ? ' writable' : ' NOT writable') : 'MISSING');
+        foreach ($dirs as $rel => $opts) {
+            $full   = $appDir . '/' . $rel;
+            $exists = is_dir($full);
+            $ok     = $exists && (!$opts['writable'] || is_writable($full));
+            $checks[] = self::chk("Dir: {$rel}", $ok, $opts['required'],
+                $ok ? ($opts['writable'] ? 'exists + writable' : 'exists') : ($exists ? 'not writable' : 'MISSING'),
+                'Filesystem',
+                $ok ? '' : "Run: bash fix_permissions.sh");
         }
 
-        $htFiles = [
-            'storage/.htaccess',
-            'storage/thumbnails/.htaccess',
-            'storage/sessions/.htaccess',
-            'logs/.htaccess',
+        // ── File Integrity (key files must exist) ─────────────────────────────
+        $keyFiles = [
+            'index.php'                => true,
+            'src/Auth.php'             => true,
+            'src/DB.php'               => true,
+            'src/CSRF.php'             => true,
+            'src/Dial.php'             => true,
+            'src/Group.php'            => true,
+            'src/Thumbnail.php'        => true,
+            'src/Admin.php'            => true,
+            'src/Mailer.php'           => true,
+            'src/TOTP.php'             => true,
+            'src/RateLimit.php'        => true,
+            'src/Password.php'         => true,
+            'src/Import.php'           => true,
+            'src/Export.php'           => true,
+            'src/Meta.php'             => true,
+            'src/Updater.php'          => true,
+            'src/GroupIcon.php'        => true,
+            'pages/login.php'          => true,
+            'pages/dashboard.php'      => true,
+            'pages/setup-2fa.php'      => true,
+            'pages/logout.php'         => true,
+            'pages/activate.php'       => true,
+            'pages/admin.php'          => true,
+            'pages/settings.php'       => true,
+            'pages/forgot-password.php'=> true,
+            'pages/reset-password.php' => true,
+            'pages/confirm-email.php'  => true,   // sesja 066
+            'pages/setup-account.php'  => true,   // sesja 067
+            'api/dials.php'            => true,
+            'api/groups.php'           => true,
+            'api/thumbs.php'           => true,
+            'api/export.php'           => true,
+            'api/import.php'           => true,
+            'api/admin.php'            => true,
+            'api/settings.php'         => true,
+            'api/update.php'           => true,
+            'api/meta.php'             => true,
+            'api/group_icons.php'      => true,
+            'assets/css/app.css'       => true,
+            'assets/css/design-system.css' => true,
+            'assets/js/app.js'         => true,
+            'fix_permissions.sh'       => false,
         ];
-        foreach ($htFiles as $rel) {
-            $exists = file_exists($root . '/' . $rel);
-            $fs[] = self::chk($rel, $exists, true,
-                $exists ? 'present' : 'MISSING',
-                $exists ? '' : 'Run fix_permissions.sh to create it.');
-        }
-        $groups['Filesystem'] = $fs;
-
-        // ── 6. File Integrity (git diff vs local HEAD) ────────────────────────
-        $integrity = [];
-
-        if (!$gitExists) {
-            $integrity[] = self::chk('Git repository', false, false, 'not found',
-                'Git not found in app directory — integrity check unavailable.');
-            $groups['File Integrity'] = $integrity;
-            return self::buildResult($groups);
+        foreach ($keyFiles as $rel => $required) {
+            $exists = file_exists($appDir . '/' . $rel);
+            $checks[] = self::chk("File: {$rel}", $exists, $required,
+                $exists ? 'present' : ($required ? 'MISSING' : 'not found'), 'File Integrity');
         }
 
-        $execAvail = function_exists('exec') && !in_array('exec', array_map('trim', explode(',', ini_get('disable_functions'))));
-        if (!$execAvail) {
-            $integrity[] = self::chk('exec() for git', false, false, 'disabled',
-                'Enable exec() in php.ini to use file integrity checks.');
-            $groups['File Integrity'] = $integrity;
-            return self::buildResult($groups);
-        }
-
-        $dirArg = escapeshellarg($root);
-
-        $shaOut = [];
-        exec("git -C {$dirArg} rev-parse --short HEAD 2>&1", $shaOut);
-        $localSha = trim($shaOut[0] ?? 'unknown');
-        $integrity[] = self::chk('Local commit (HEAD)', true, false, $localSha);
-
-        $statusOut  = [];
-        $statusCode = 0;
-        exec("git -C {$dirArg} status --porcelain 2>&1", $statusOut, $statusCode);
-
-        if ($statusCode !== 0) {
-            $integrity[] = self::chk('git status', false, false,
-                'error', implode(' ', $statusOut));
-            $groups['File Integrity'] = $integrity;
-            return self::buildResult($groups);
-        }
-
-        $modified  = [];
-        $untracked = [];
-        $deleted   = [];
-        foreach ($statusOut as $line) {
-            if (strlen($line) < 4) continue;
-            $xy   = substr($line, 0, 2);
-            $file = trim(substr($line, 3));
-            $x    = $xy[0];
-            $y    = $xy[1];
-            if ($x === '?' && $y === '?') { $untracked[] = $file; }
-            elseif ($x === 'D' || $y === 'D') { $deleted[] = $file; }
-            else { $modified[] = $file; }
-        }
-
-        $ignorePrefixes = ['storage/', 'logs/', '.git/', 'assets/icons/'];
-        $ignoreExact    = ['config.php', 'fix_permissions.sh', 'install.php'];
-
-        $filterFiles = function(array $files) use ($ignorePrefixes, $ignoreExact): array {
-            return array_values(array_filter($files, function($f) use ($ignorePrefixes, $ignoreExact) {
-                if (in_array($f, $ignoreExact)) return false;
-                foreach ($ignorePrefixes as $pfx) {
-                    if (str_starts_with($f, $pfx)) return false;
-                }
-                return true;
-            }));
-        };
-
-        $modFiltered = $filterFiles($modified);
-        $delFiltered = $filterFiles($deleted);
-
-        $integrity[] = self::chk(
-            'Modified tracked files',
-            count($modFiltered) === 0,
-            false,
-            count($modFiltered) === 0 ? 'none' : count($modFiltered) . ' file(s) modified',
-            count($modFiltered) > 0
-                ? implode(', ', array_slice($modFiltered, 0, 8)) . (count($modFiltered) > 8 ? '…' : '')
-                : ''
-        );
-
-        $integrity[] = self::chk(
-            'Deleted tracked files',
-            count($delFiltered) === 0,
-            false,
-            count($delFiltered) === 0 ? 'none' : count($delFiltered) . ' file(s) deleted',
-            count($delFiltered) > 0 ? implode(', ', $delFiltered) : ''
-        );
-
-        $suspicious = array_values(array_filter($untracked, function($f) {
-            return str_starts_with($f, 'src/')
-                || str_starts_with($f, 'api/')
-                || str_starts_with($f, 'pages/');
-        }));
-        $integrity[] = self::chk(
-            'Untracked files in src/ api/ pages/',
-            count($suspicious) === 0,
-            false,
-            count($suspicious) === 0 ? 'none' : count($suspicious) . ' file(s)',
-            count($suspicious) > 0 ? implode(', ', $suspicious) : ''
-        );
-
-        $groups['File Integrity'] = $integrity;
-        return self::buildResult($groups);
+        return $checks;
     }
 
-    private static function chk(string $label, bool $ok, bool $required,
-                                  string $value = '', string $note = ''): array
-    {
-        return compact('label', 'ok', 'required', 'value', 'note');
-    }
+    // ── Helper ────────────────────────────────────────────────────────────────
 
-    private static function buildResult(array $groups): array
-    {
-        $flat = [];
-        foreach ($groups as $group => $items) {
-            foreach ($items as $item) {
-                $flat[] = array_merge(['group' => $group], $item);
-            }
-        }
-        return $flat;
-    }
-
-    // ── Export ────────────────────────────────────────────────────────────────
-
-    public static function exportBlocked(string $format = 'json'): string
-    {
-        $rows = DB::rows(
-            "SELECT action, key_plain, attempts, window_start
-             FROM rate_limits
-             ORDER BY attempts DESC, window_start DESC"
-        );
-        if ($format === 'csv') {
-            $lines = ["action,key,attempts,window_start"];
-            foreach ($rows as $r) {
-                $lines[] = implode(',', [
-                    self::_csv($r['action']),
-                    self::_csv($r['key_plain'] ?? ''),
-                    (int)$r['attempts'],
-                    self::_csv($r['window_start'] ?? ''),
-                ]);
-            }
-            return implode("\r\n", $lines);
-        }
-        return json_encode([
-            'exported_at' => gmdate('Y-m-d\TH:i:s\Z'),
-            'entries'     => $rows,
-        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
-    }
-
-    private static function _csv(string $v): string
-    {
-        if (strpbrk($v, '",\r\n') !== false) {
-            return '"' . str_replace('"', '""', $v) . '"';
-        }
-        return $v;
+    private static function chk(
+        string $label, bool $ok, bool $required,
+        string $value = '', string $group = 'General', string $note = ''
+    ): array {
+        return compact('label', 'ok', 'required', 'value', 'group', 'note');
     }
 }

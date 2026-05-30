@@ -208,7 +208,13 @@ server {
     # Hide nginx version
     server_tokens off;
 
-    # Block .git and all dotfiles
+    # Block .git directory — explicit block before the dotfile catch-all
+    location ^~ /.git {
+        deny all;
+        return 404;
+    }
+
+    # Block all dotfiles and dot-directories (.htaccess, .env, etc.)
     location ~ /\. {
         deny all;
         return 404;

@@ -30,7 +30,7 @@ require_once __DIR__ . '/src/Meta.php';       // OG/title meta fetcher — sesja
 require_once __DIR__ . '/src/Updater.php';    // GitHub release checker + git update — sesja 059/065
 require_once __DIR__ . '/src/Admin.php';      // Admin panel model — sesja 065
 require_once __DIR__ . '/src/Dial.php';       // Speed dial CRUD — after Thumbnail (uses it)
-require_once __DIR__ . '/src/Import.php';     // JSON import (LetaDial format + compatible speed dial exports)
+require_once __DIR__ . '/src/Import.php';     // JSON import
 require_once __DIR__ . '/src/Export.php';     // JSON export
 
 // ── URI ───────────────────────────────────────────────────────────────────────
@@ -58,7 +58,8 @@ $routes = [
     '/admin'           => 'pages/admin.php',
     '/forgot-password' => 'pages/forgot-password.php',
     '/reset-password'  => 'pages/reset-password.php',
-    '/confirm-email'   => 'pages/confirm-email.php',  // sesja 066
+    '/confirm-email'   => 'pages/confirm-email.php',   // sesja 066
+    '/setup-account'   => 'pages/setup-account.php',   // sesja 067 — invite flow
 ];
 
 $page = $routes[$uri] ?? null;

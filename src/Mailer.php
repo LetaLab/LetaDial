@@ -91,13 +91,45 @@ class Mailer
     }
 
     /**
+     * Send invite to the NEW setup-account page (sesja 067).
+     *
+     * Unlike sendUserInvite() which links to /activate (just email verification),
+     * this sends to /setup-account where the user sets their password first.
+     * Used for admin-initiated invites where the user has no password yet.
+     *
+     * @param string $to         Email address of the invitee
+     * @param string $token      activation_token stored in users table
+     * @param string $invitedBy  Login of the admin who sent the invite
+     */
+    public static function sendInviteToSetup(string $to, string $token, string $invitedBy): bool
+    {
+        $link = APP_URL . '/setup-account?token=' . rawurlencode($token);
+        $app  = APP_NAME;
+
+        $text = "Hello,\n\n"
+              . "{$invitedBy} has invited you to join {$app}.\n\n"
+              . "Click the link below to set your password and activate your account:\n"
+              . $link . "\n\n"
+              . "This invitation link expires in 48 hours.\n\n"
+              . "If you did not expect this invitation, you can safely ignore this email.\n\n"
+              . "— {$app}";
+
+        $html = self::wrapHtml("You've been invited to {$app}",
+            '<p><strong>' . htmlspecialchars($invitedBy, ENT_QUOTES, 'UTF-8')
+            . '</strong> has invited you to join <strong>'
+            . htmlspecialchars($app, ENT_QUOTES, 'UTF-8') . '</strong>.</p>'
+            . '<p>Click the button below to set your password and activate your account:</p>'
+            . '<p><a href="' . htmlspecialchars($link, ENT_QUOTES, 'UTF-8')
+            . '" class="btn">Set Up My Account</a></p>'
+            . '<p class="muted">This link expires in 48 hours.</p>'
+            . '<p class="muted">If you did not expect this invitation, ignore this email.</p>');
+
+        return self::send($to, "You've been invited to {$app}", $text, $html);
+    }
+
+    /**
      * Send email address change confirmation to the NEW email address.
-     * The user must click the link to confirm they own the new address.
-     *
      * sesja 066
-     *
-     * @param string $to       New (unconfirmed) email address
-     * @param string $token    64-char hex token stored in users.email_change_token
      */
     public static function sendEmailChange(string $to, string $token): bool
     {
@@ -110,8 +142,7 @@ class Mailer
               . "Click the link below to confirm and apply the change:\n"
               . $link . "\n\n"
               . "This link expires in 1 hour.\n\n"
-              . "If you did not request this change, you can safely ignore this email — "
-              . "your current email address will remain unchanged.\n\n"
+              . "If you did not request this change, you can safely ignore this email.\n\n"
               . "— {$app}";
 
         $html = self::wrapHtml('Confirm your new email address',
@@ -120,8 +151,7 @@ class Mailer
             . '<p><a href="' . htmlspecialchars($link, ENT_QUOTES, 'UTF-8')
             . '" class="btn">Confirm Email Change</a></p>'
             . '<p class="muted">This link expires in 1 hour.</p>'
-            . '<p class="muted">If you did not request this, ignore this email — '
-            . 'your current address remains unchanged.</p>');
+            . '<p class="muted">If you did not request this, ignore this email.</p>');
 
         return self::send($to, 'Confirm your new email address — ' . $app, $text, $html);
     }
@@ -221,7 +251,7 @@ class Mailer
         $msg .= "Subject: {$encoded_subj}\r\n";
         $msg .= "Message-ID: {$msg_id}\r\n";
         $msg .= "MIME-Version: 1.0\r\n";
-        $msg .= "X-Mailer: DialVault/" . APP_VERSION . "\r\n";
+        $msg .= "X-Mailer: LetaDial/" . APP_VERSION . "\r\n";
 
         if ($html) {
             $msg .= "Content-Type: multipart/alternative; boundary=\"{$boundary}\"\r\n";
@@ -246,8 +276,6 @@ class Mailer
 
         return $msg;
     }
-
-    // ── SMTP socket helpers ───────────────────────────────────────────────────
 
     private static function cmd(mixed $sock, string $cmd): string
     {
@@ -274,8 +302,6 @@ class Mailer
 
     private static function drainEhlo(mixed $sock): void {}
 
-    // ── HTML email template ───────────────────────────────────────────────────
-
     private static function wrapHtml(string $title, string $body): string
     {
         $app  = htmlspecialchars(APP_NAME, ENT_QUOTES, 'UTF-8');
@@ -288,9 +314,9 @@ class Mailer
 body{font-family:system-ui,sans-serif;background:#f0f2f5;margin:0;padding:2rem}
 .wrap{max-width:520px;margin:0 auto;background:#fff;border-radius:10px;
       box-shadow:0 2px 16px rgba(0,0,0,.08);padding:2rem}
-h1{color:#4f46e5;font-size:1.3rem;margin:0 0 1.5rem}
+h1{color:#690B22;font-size:1.3rem;margin:0 0 1.5rem}
 p{color:#374151;line-height:1.6;margin:.75rem 0}
-.btn{display:inline-block;background:#4f46e5;color:#fff!important;
+.btn{display:inline-block;background:#690B22;color:#fff!important;
      padding:.7rem 1.5rem;border-radius:6px;text-decoration:none;
      font-weight:600;margin:1rem 0}
 .muted{color:#9ca3af!important;font-size:.85rem}

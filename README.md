@@ -1,5 +1,17 @@
 # LetaDial
 
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/a914458f-d3bb-463b-874e-e8498b87ae23" alt="OG" width="100%">
+</p>
+
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/e6230a1e-3fbd-48f7-965c-fdb42e52d370" alt="icon-512" width="220">
+</p>
+
+<p align="center">
+  <em>Hi, I'm Leta - the mascot of projects under the LetaLab umbrella!</em>
+</p>
+
 ---
 
 <h2 align="center">

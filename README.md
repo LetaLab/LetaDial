@@ -7,8 +7,8 @@
 ---
 
 <p align="center">
-  <em>Hi, I'm Leta - the mascot of projects under the LetaLab umbrella!</em>
-  <em>Andrzej brought me to life using Inkscape!</em>
+  <em>Hi, I'm Leta - the mascot of all projects under the LetaLab umbrella!</em><br><br>
+  <em>Andrzej brought me to life using Inkscape! I am related to Tux!</em><br>
 </p>
 
 <p align="center">

@@ -1,7 +1,7 @@
 # LetaDial
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/a914458f-d3bb-463b-874e-e8498b87ae23" alt="OG" width="100%">
+  <img src="https://github.com/user-attachments/assets/a914458f-d3bb-463b-874e-e8498b87ae23" alt="OG" width="50%">
 </p>
 
 <p align="center">

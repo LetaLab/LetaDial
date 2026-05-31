@@ -1,4 +1,9 @@
-# LetaDial <p align="center">  <img src="https://github.com/user-attachments/assets/a914458f-d3bb-463b-874e-e8498b87ae23" alt="OG" width="15%"></p>
+# LetaDial 
+<p align="left">  
+<img src="https://github.com/user-attachments/assets/a914458f-d3bb-463b-874e-e8498b87ae23" alt="OG" width="25%">
+</p>
+
+---
 
 <p align="center">
   <em>Hi, I'm Leta - the mascot of projects under the LetaLab umbrella!</em>

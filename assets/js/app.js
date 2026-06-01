@@ -1351,6 +1351,7 @@ const LetaDial = (() => {
                 const btnAll = document.createElement('button'); btnAll.type = 'button'; btnAll.className = 'btn btn-ghost btn-sm'; btnAll.textContent = 'All'; btnAll.addEventListener('click', () => this.selectAll()); bar.appendChild(btnAll);
                 const btnMove = document.createElement('button'); btnMove.type = 'button'; btnMove.className = 'btn btn-ghost btn-sm'; btnMove.innerHTML = '📂 Move to…'; btnMove.addEventListener('click', () => this._showGroupPicker('move')); bar.appendChild(btnMove);
                 const btnDup = document.createElement('button'); btnDup.type = 'button'; btnDup.className = 'btn btn-ghost btn-sm'; btnDup.innerHTML = '⧉ Duplicate to…'; btnDup.addEventListener('click', () => this._showGroupPicker('duplicate')); bar.appendChild(btnDup);
+                const btnRefresh = document.createElement('button'); btnRefresh.type = 'button'; btnRefresh.className = 'btn btn-ghost btn-sm'; btnRefresh.innerHTML = '🔄 Refresh thumbs'; btnRefresh.addEventListener('click', () => this._bulkRefreshThumbs()); bar.appendChild(btnRefresh);
                 const btnDel = document.createElement('button'); btnDel.type = 'button'; btnDel.className = 'btn btn-danger btn-sm'; btnDel.innerHTML = '🗑 Delete'; btnDel.addEventListener('click', () => this._confirmBulkDelete()); bar.appendChild(btnDel);
             }
             const btnCancel = document.createElement('button'); btnCancel.type = 'button'; btnCancel.className = 'btn btn-ghost btn-sm'; btnCancel.textContent = '✕ Cancel'; btnCancel.addEventListener('click', () => this.exit()); bar.appendChild(btnCancel);
@@ -1397,6 +1398,60 @@ const LetaDial = (() => {
                 }
             });
         },
+        /**
+         * Bulk refresh thumbnails (sesja 068).
+         * Fires POST /api/thumbs/{id} for each selected dial sequentially.
+         * Shows a progress toast and updates card images inline without a full reload.
+         * Rate limited server-side (60 refreshes/hour/user) — we cap at 60 client-side
+         * to avoid hammering the limit; more than that is impractical anyway.
+         */
+        async _bulkRefreshThumbs() {
+            const ids   = [...this.selected];
+            const count = ids.length;
+            if (!count) return;
+
+            const CAP = 60;
+            const toRefresh = ids.slice(0, CAP);
+            const skipped   = ids.length - toRefresh.length;
+
+            toast.info(`Refreshing ${toRefresh.length} thumbnail${toRefresh.length !== 1 ? 's' : ''}…`);
+
+            let ok = 0, fail = 0;
+            for (const dialId of toRefresh) {
+                try {
+                    const r = await api.post(`/api/thumbs/${dialId}`, {});
+                    if (r.ok) {
+                        ok++;
+                        // Update the card image inline
+                        const card = document.querySelector(`[data-dial-id="${dialId}"]`);
+                        const wrap = card?.querySelector('.dial-thumb-wrap');
+                        if (wrap) {
+                            let img = wrap.querySelector('img');
+                            if (!img) {
+                                img = document.createElement('img');
+                                img.alt     = '';
+                                img.loading = 'lazy';
+                                img.onerror = () => img.remove();
+                                wrap.appendChild(img);
+                            }
+                            img.src = `/api/thumbs/${dialId}?t=${Date.now()}`;
+                        }
+                    } else {
+                        fail++;
+                    }
+                } catch {
+                    fail++;
+                }
+            }
+
+            let msg = `Refreshed ${ok} thumbnail${ok !== 1 ? 's' : ''}.`;
+            if (fail > 0) msg += ` ${fail} failed.`;
+            if (skipped > 0) msg += ` ${skipped} skipped (rate limit cap).`;
+
+            if (fail > 0) toast.error(msg);
+            else          toast.success(msg);
+        },
+
         _confirmBulkDelete() {
             const count = this.selected.size;
             modal.show({

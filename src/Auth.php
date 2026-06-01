@@ -8,6 +8,7 @@
  *   getUser()           → returns user ONLY if totp_verified=1
  *   getPartialUser()    → returns user regardless of totp_verified (2FA page)
  *   loginFromRemember() → creates session with totp_verified=0 if user has 2FA
+ *   register()          → sesja 068: self-registration (if enabled)
  *
  * CSRF consistency note:
  *   self::$sessionId is ALWAYS set to hash('sha256', raw_token) — the same
@@ -42,7 +43,6 @@ class Auth
         );
 
         if (!$user || !password_verify($password, $user['password_hash'])) {
-            // RateLimit::check() already incremented the counter above — no separate increment needed
             DB::run("INSERT INTO login_history (user_id, login_attempt, ip, user_agent, status)
                      VALUES (?, ?, ?, ?, 'fail_password')",
                 [$user['id'] ?? null, $login, $ip, self::ua()]
@@ -67,7 +67,6 @@ class Auth
             self::createRememberToken($user['id']);
         }
 
-        // CONSISTENCY: always store sha256(raw_token) = DB session id
         self::$sessionId   = hash('sha256', $raw_token);
         self::$currentUser = $user;
 
@@ -78,6 +77,94 @@ class Auth
             return ['ok' => true, 'needs_2fa' => false, 'needs_setup' => true];
         }
         return ['ok' => true, 'needs_2fa' => false, 'needs_setup' => false];
+    }
+
+    /**
+     * Self-registration (sesja 068).
+     *
+     * Returns:
+     *   ['ok' => true, 'auto_verified' => bool]   — success
+     *   ['ok' => false, 'error' => string]         — validation failed
+     *
+     * If SMTP is enabled: creates unverified account, sends activation email.
+     * If SMTP is disabled: creates verified account immediately (no email needed).
+     *
+     * Rate limit: 5 registrations per IP per hour.
+     */
+    public static function register(
+        string $login,
+        string $email,
+        string $password,
+        string $confirm
+    ): array {
+        $ip = self::ip();
+
+        // Rate limit — stricter than login (registration is more expensive)
+        if (RateLimit::check('register', $ip, 5, 3600, 3600)) {
+            return ['ok' => false, 'error' => 'Too many registration attempts. Try again in an hour.'];
+        }
+
+        // ── Validate login ────────────────────────────────────────────────────
+        if (!$login) {
+            return ['ok' => false, 'error' => 'Login is required.'];
+        }
+        if (!preg_match('/^[a-zA-Z0-9_]{3,50}$/', $login)) {
+            return ['ok' => false, 'error' => 'Login must be 3–50 characters: letters, numbers, underscore only.'];
+        }
+
+        // ── Validate email ────────────────────────────────────────────────────
+        $email = strtolower(trim($email));
+        if (!$email || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            return ['ok' => false, 'error' => 'Please enter a valid email address.'];
+        }
+
+        // ── Validate password ─────────────────────────────────────────────────
+        $pwErrors = Password::validate($password);
+        if (!empty($pwErrors)) {
+            return ['ok' => false, 'error' => implode(' ', $pwErrors)];
+        }
+        if ($password !== $confirm) {
+            return ['ok' => false, 'error' => 'Passwords do not match.'];
+        }
+
+        // ── Check uniqueness ──────────────────────────────────────────────────
+        $loginTaken = DB::val("SELECT id FROM users WHERE login = ?", [$login]);
+        if ($loginTaken) {
+            return ['ok' => false, 'error' => 'This login is already taken.'];
+        }
+
+        $emailTaken = DB::val("SELECT id FROM users WHERE email = ?", [$email]);
+        if ($emailTaken) {
+            return ['ok' => false, 'error' => 'This email address is already registered.'];
+        }
+
+        // ── Enforce max users limit (optional) ────────────────────────────────
+        $maxUsers = (int)(DB::val("SELECT value FROM settings WHERE key_name = 'max_users'") ?? 0);
+        if ($maxUsers > 0) {
+            $userCount = (int)(DB::val("SELECT COUNT(*) FROM users") ?? 0);
+            if ($userCount >= $maxUsers) {
+                return ['ok' => false, 'error' => 'Registration is currently full. Contact the administrator.'];
+            }
+        }
+
+        // ── Create account ────────────────────────────────────────────────────
+        $smtpEnabled   = defined('SMTP_ENABLED') && SMTP_ENABLED;
+        $autoVerified  = !$smtpEnabled;
+        $activToken    = $autoVerified ? null : bin2hex(random_bytes(32));
+        $passwordHash  = Password::hash($password);
+
+        DB::run(
+            "INSERT INTO users (login, email, password_hash, role, email_verified, activation_token, created_at)
+             VALUES (?, ?, ?, 'user', ?, ?, NOW())",
+            [$login, $email, $passwordHash, $autoVerified ? 1 : 0, $activToken]
+        );
+
+        // ── Send activation email ─────────────────────────────────────────────
+        if (!$autoVerified && $activToken) {
+            Mailer::sendActivation($email, $activToken);
+        }
+
+        return ['ok' => true, 'auto_verified' => $autoVerified];
     }
 
     public static function verify2FA(string $code): array
@@ -91,7 +178,6 @@ class Auth
         }
 
         $secret_enc = $user['totp_secret'] ?? '';
-        // FIX: TOTP::decrypt() not TOTP::decryptSecret()
         if ($secret_enc && TOTP::verify(TOTP::decrypt($secret_enc), $code)) {
             RateLimit::clear('2fa', $ip);
             DB::run("UPDATE sessions SET totp_verified = 1 WHERE id = ?", [self::$sessionId]);
@@ -108,7 +194,6 @@ class Auth
             }
         }
 
-        // RateLimit::check() already incremented the counter above — no separate increment needed
         DB::run("INSERT INTO login_history (user_id, login_attempt, ip, user_agent, status)
                  VALUES (?, ?, ?, ?, 'fail_2fa')",
             [$user['id'], $user['login'], $ip, self::ua()]
@@ -120,7 +205,6 @@ class Auth
     {
         $sid = self::getSessionId();
         if (!$sid) return;
-        // FIX: TOTP::encrypt() not TOTP::encryptSecret()
         DB::run("UPDATE sessions SET pending_totp = ? WHERE id = ?",
             [TOTP::encrypt($secret), $sid]);
     }
@@ -131,7 +215,6 @@ class Auth
         if (!$sid) return null;
         $enc = DB::val("SELECT pending_totp FROM sessions WHERE id = ?", [$sid]);
         if (!$enc) return null;
-        // FIX: TOTP::decrypt() not TOTP::decryptSecret()
         return TOTP::decrypt($enc);
     }
 
@@ -147,13 +230,11 @@ class Auth
             return ['ok' => false, 'error' => 'Invalid code. Check your authenticator app.'];
         }
 
-        // FIX: TOTP::encrypt() not TOTP::encryptSecret()
         DB::run("UPDATE users SET totp_secret = ?, totp_enabled = 1 WHERE id = ?",
             [TOTP::encrypt($secret), $user['id']]);
 
         DB::run("DELETE FROM totp_backup_codes WHERE user_id = ?", [$user['id']]);
         $codes = [];
-        // FIX: DB::get()->prepare() not DB::prepare()
         $stmt  = DB::get()->prepare("INSERT INTO totp_backup_codes (user_id, code_hash) VALUES (?, ?)");
         for ($i = 0; $i < 10; $i++) {
             $raw     = strtoupper(bin2hex(random_bytes(4))) . '-' . strtoupper(bin2hex(random_bytes(4)));
@@ -167,17 +248,6 @@ class Auth
         return ['ok' => true, 'backup_codes' => $codes];
     }
 
-    /**
-     * Get fully-authenticated user (totp_verified = 1 in DB session).
-     * Returns null if not logged in OR if 2FA step not completed.
-     *
-     * FIX (sesja 23): If a valid dv_s session exists (even partial/totp_verified=0),
-     * do NOT call loginFromRemember(). Calling it would create a NEW dv_s cookie,
-     * causing a CSRF mismatch: GET renders token from OLD session, POST sends NEW
-     * cookie, CSRF::token() derives different hash → 403.
-     *
-     * loginFromRemember() is only called when dv_s is absent or expired.
-     */
     public static function getUser(): ?array
     {
         if (self::$userLoaded) return self::$currentUser;
@@ -187,20 +257,15 @@ class Auth
         if ($token) {
             $row = self::loadSession($token);
             if ($row) {
-                // Valid session exists — set sessionId regardless of 2FA status.
-                // Do NOT fall through to loginFromRemember: that would create a new
-                // dv_s cookie and break CSRF token consistency between GET and POST.
-                self::$sessionId = $row['session_id']; // sha256 hash from DB
+                self::$sessionId = $row['session_id'];
                 if ($row['totp_verified']) {
                     self::$currentUser = self::fetchUser($row['user_id']);
                     return self::$currentUser;
                 }
-                // Partial session (2FA pending) — return null so login page shows TOTP form
                 return null;
             }
         }
 
-        // No valid dv_s session — try remember-me cookie
         $rem = $_COOKIE[self::COOKIE_REMEMBER] ?? '';
         if ($rem && ($user = self::loginFromRemember($rem))) {
             self::$currentUser = $user;
@@ -210,14 +275,13 @@ class Auth
         return null;
     }
 
-    /** Get user with partial auth (for 2FA verification page). */
     public static function getPartialUser(): ?array
     {
         $token = $_COOKIE[self::COOKIE_SESSION] ?? '';
         if (!$token) return null;
         $row = self::loadSession($token);
         if (!$row) return null;
-        self::$sessionId = $row['session_id']; // sha256 hash from DB
+        self::$sessionId = $row['session_id'];
         return self::fetchUser($row['user_id']);
     }
 
@@ -266,17 +330,15 @@ class Auth
         DB::run("DELETE FROM remember_tokens");
     }
 
-    /** Returns the DB session id (sha256 hash) or null if no session. */
     public static function getSessionId(): ?string { return self::$sessionId; }
 
     // ── Session Helpers ───────────────────────────────────────────────────────
 
-    /** Create a DB session. Returns the RAW token (stored as sha256 in DB). */
     private static function createSession(int $userId, int $totpVerified = 0): string
     {
         $lifetime = (int)(DB::val("SELECT value FROM settings WHERE key_name = 'session_lifetime'") ?? SESSION_TTL);
-        $token    = bin2hex(random_bytes(32));       // raw token for cookie
-        $id       = hash('sha256', $token);           // sha256 stored in DB
+        $token    = bin2hex(random_bytes(32));
+        $id       = hash('sha256', $token);
         $expires  = date('Y-m-d H:i:s', time() + $lifetime);
 
         DB::run(
@@ -285,7 +347,7 @@ class Auth
             [$id, $userId, self::ip(), self::ua(), $expires, $totpVerified]
         );
 
-        return $token; // return raw token, caller stores as cookie
+        return $token;
     }
 
     private static function loadSession(string $rawToken): ?array
@@ -316,7 +378,6 @@ class Auth
 
     private static function clearCookies(): void
     {
-        // SEC-055: secure flag matches how cookies were set (true on HTTPS)
         $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
         $past = ['expires' => time() - 86400, 'path' => '/', 'secure' => $isHttps, 'httponly' => true, 'samesite' => 'Lax'];
         setcookie(self::COOKIE_SESSION,  '', $past);
@@ -330,11 +391,6 @@ class Auth
 
     private static function ip(): string
     {
-        // SEC-055: Use REMOTE_ADDR only.
-        // nginx → php-fpm (fastcgi): REMOTE_ADDR = real client IP, set by nginx via fastcgi_params.
-        // HTTP_X_FORWARDED_FOR is a client-controlled header — any client can spoof it
-        // to bypass rate limiting. Do NOT trust it unless nginx is configured to
-        // overwrite it from a trusted upstream (use real_ip_module in that case).
         return $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
     }
 
@@ -372,20 +428,6 @@ class Auth
         ]);
     }
 
-    /**
-     * Resume session from remember-me cookie.
-     *
-     * SECURITY: totp_verified = 0 if user has 2FA enabled.
-     * (Was: always 1 — bypassed 2FA on any device with remember-me cookie)
-     *
-     * CONSISTENCY: self::$sessionId = hash('sha256', raw_token) = DB session id,
-     * same as getPartialUser() / getUser() — CSRF::token() produces identical
-     * results regardless of which code path set the session.
-     *
-     * NOTE: This is only called from getUser() when dv_s is absent or expired.
-     * Never called when a valid dv_s session exists (even partial), to avoid
-     * creating a new dv_s cookie that would break CSRF token consistency.
-     */
     private static function loginFromRemember(string $cookie): ?array
     {
         if (!str_contains($cookie, ':')) return null;
@@ -401,7 +443,6 @@ class Auth
         $verifier_hash = hash('sha256', $verifier_raw);
 
         if (!hash_equals($row['verifier'], $verifier_hash)) {
-            // Token mismatch — possible theft, revoke all tokens for this user
             DB::run("DELETE FROM remember_tokens WHERE user_id = ?", [$row['user_id']]);
             self::clearCookies();
             return null;
@@ -411,20 +452,16 @@ class Auth
         $user = self::fetchUser($row['user_id']);
         if (!$user) return null;
 
-        // FIX (sesja 21): was hardcoded 1 — bypassed 2FA for all remember-me users!
         $totp_verified = ($user['totp_enabled'] ? 0 : 1);
         $raw_token     = self::createSession($user['id'], $totp_verified);
 
         self::setSessionCookie($raw_token);
         self::createRememberToken($user['id']);
 
-        // CONSISTENCY (sesja 22): set sha256 hash, not raw token
         self::$sessionId = hash('sha256', $raw_token);
 
         DB::run("UPDATE users SET last_login = NOW() WHERE id = ?", [$user['id']]);
 
-        // User has 2FA: session created with totp_verified=0.
-        // getUser() must return null so login page shows TOTP form.
         if ($user['totp_enabled']) {
             return null;
         }

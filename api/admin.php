@@ -1,6 +1,6 @@
 <?php
 /**
- * LetaDial — Admin API (sesja 065 + 066 + 067)
+ * LetaDial — Admin API (sesja 065 + 066 + 067 + 068)
  *
  * GET  /api/admin/blocked          — list blocked rate_limit entries
  * POST /api/admin/unblock          — unblock one entry  {key_hash, action}
@@ -19,6 +19,10 @@
  *
  * sesja 067:
  * POST /api/admin/invite                — invite user {email, login}
+ *
+ * sesja 068:
+ * GET  /api/admin/registration          — get registration_enabled status
+ * POST /api/admin/registration          — set registration_enabled {enabled: bool}
  *
  * All endpoints: admin role required.
  * All POST endpoints: CSRF required.
@@ -192,7 +196,6 @@ if ($method === 'POST' && $action === 'force-password') {
 if ($method === 'POST' && $action === 'invite') {
     CSRF::require();
 
-    // Rate limit: 10 invites per hour per admin
     if (RateLimit::check('admin_invite', (string)$user['id'], 10, 3600, 3600)) {
         http_response_code(429);
         echo json_encode(['ok' => false, 'error' => 'Too many invite requests. Try again in an hour.']); exit;
@@ -210,6 +213,31 @@ if ($method === 'POST' && $action === 'invite') {
     $result = Admin::inviteUser($email, $login, $user['id']);
     http_response_code($result['ok'] ? 201 : 422);
     echo json_encode($result);
+    exit;
+}
+
+// ── sesja 068: Registration Toggle ───────────────────────────────────────────
+
+// GET /api/admin/registration — current status
+if ($method === 'GET' && $action === 'registration') {
+    echo json_encode([
+        'ok'      => true,
+        'enabled' => Admin::getRegistrationEnabled(),
+    ]);
+    exit;
+}
+
+// POST /api/admin/registration — set {enabled: true|false}
+if ($method === 'POST' && $action === 'registration') {
+    CSRF::require();
+    $body    = json_decode(file_get_contents('php://input'), true) ?? [];
+    if (!array_key_exists('enabled', $body)) {
+        http_response_code(422);
+        echo json_encode(['ok' => false, 'error' => 'enabled (bool) required.']); exit;
+    }
+    $enabled = (bool)$body['enabled'];
+    $result  = Admin::setRegistrationEnabled($enabled);
+    echo json_encode(['ok' => true, 'enabled' => $result]);
     exit;
 }
 

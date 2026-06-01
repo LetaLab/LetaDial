@@ -1,4 +1,10 @@
 <?php
+/**
+ * LetaDial — Login Page (sesja 068: self-registration added)
+ *
+ * Handles three steps: login, 2FA verification, registration.
+ * Registration is shown only if settings.registration_enabled = '1'.
+ */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die();
 
@@ -7,13 +13,12 @@ if (Auth::isLoggedIn()) { header('Location: /'); exit; }
 // ── PRE-WARM CSRF TOKEN ───────────────────────────────────────────────────────
 // MUST happen before any HTML output. For pre-auth (no DB session), this
 // triggers CSRF::preAuthToken() which calls setcookie('dv_pa', ...).
-// If setcookie() is called after output starts, the cookie is never sent
-// and all form submissions fail with 403 CSRF error.
 $_csrf_prewarm = CSRF::token();
 // ─────────────────────────────────────────────────────────────────────────────
 
-$error  = '';
-$step   = 'login';
+$error   = '';
+$success = '';
+$step    = 'login';
 
 $partial = Auth::getPartialUser();
 if ($partial && !Auth::isLoggedIn()) {
@@ -21,9 +26,16 @@ if ($partial && !Auth::isLoggedIn()) {
     if ($step === 'setup') { header('Location: /setup-2fa'); exit; }
 }
 
+// ── Check registration enabled ────────────────────────────────────────────────
+$registration_enabled = (DB::val(
+    "SELECT value FROM settings WHERE key_name = 'registration_enabled'"
+) ?? '1') === '1';
+
+// ── Handle POST ───────────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     CSRF::require();
     $action = $_POST['action'] ?? 'login';
+
     if ($action === 'login' && $step === 'login') {
         $login    = trim($_POST['login']    ?? '');
         $password = $_POST['password']      ?? '';
@@ -38,13 +50,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             else                                        { header('Location: /');         exit; }
         }
     }
+
     if ($action === 'verify_2fa' && $step === 'totp') {
         $code   = preg_replace('/\s/', '', $_POST['code'] ?? '');
         $result = Auth::verify2FA($code);
         if ($result['ok']) { header('Location: ' . (!empty($result['used_backup']) ? '/?bcu=1' : '/')); exit; }
         $error = $result['error'];
     }
+
     if ($action === 'cancel_2fa') { Auth::logout(); header('Location: /login'); exit; }
+
+    // ── Registration ──────────────────────────────────────────────────────────
+    if ($action === 'register' && $step === 'login') {
+        if (!$registration_enabled) {
+            $error = 'Registration is currently disabled.';
+        } else {
+            $reg_result = Auth::register(
+                trim($_POST['reg_login']   ?? ''),
+                trim($_POST['reg_email']   ?? ''),
+                $_POST['reg_password']     ?? '',
+                $_POST['reg_confirm']      ?? ''
+            );
+            if (!$reg_result['ok']) {
+                $error = $reg_result['error'];
+                $step  = 'register';
+            } elseif ($reg_result['auto_verified'] ?? false) {
+                // SMTP disabled — account immediately active
+                $success = 'Account created! You can sign in now.';
+                $step    = 'login';
+            } else {
+                // SMTP enabled — activation email sent
+                $success = 'Account created! Check your email to activate your account.';
+                $step    = 'login';
+            }
+        }
+    }
 }
 
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
@@ -55,6 +95,7 @@ function eyeSvg(bool $show): string {
 }
 $app_name = h(APP_NAME);
 $icon_url = h(APP_URL . '/assets/icons/icon-192.png');
+$pw_rules = Password::jsRules();
 ?>
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
@@ -62,7 +103,7 @@ $icon_url = h(APP_URL . '/assets/icons/icon-192.png');
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
-<title>Sign in - <?= $app_name ?></title>
+<title><?= $step === 'register' ? 'Create account' : 'Sign in' ?> — <?= $app_name ?></title>
 <link rel="shortcut icon" href="/assets/icons/favicon.png" type="image/png">
 <link rel="icon" href="/assets/icons/favicon.png" type="image/png" sizes="48x48">
 <link rel="icon" href="/assets/icons/favicon.svg" type="image/svg+xml">
@@ -85,6 +126,11 @@ body { display:flex; align-items:center; justify-content:center; min-height:100v
 .form-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:1.5rem; font-size:.85rem; flex-wrap:wrap; gap:.5rem; }
 .code-input { text-align:center !important; letter-spacing:.28em !important; font-size:1.5rem !important; font-weight:700 !important; font-family:var(--font-mono) !important; padding:.75rem !important; }
 .totp-info { text-align:center; color:var(--text-muted); font-size:.875rem; margin-bottom:1.25rem; line-height:1.6; }
+.register-switch { text-align:center; margin-top:1.25rem; font-size:.85rem; color:var(--text-muted); }
+.register-switch a { color:var(--primary); cursor:pointer; text-decoration:none; }
+.register-switch a:hover { text-decoration:underline; }
+.pw-strength { height:4px; border-radius:var(--radius-full); background:var(--border); margin-top:var(--space-2); overflow:hidden; }
+.pw-strength-bar { height:100%; border-radius:var(--radius-full); transition:width 0.3s ease, background-color 0.3s ease; width:0%; }
 /* Cookie Consent Banner */
 .cookie-overlay {
     position:fixed; inset:0;
@@ -104,7 +150,6 @@ body { display:flex; align-items:center; justify-content:center; min-height:100v
 .cookie-banner p:last-of-type { margin-bottom:1rem; }
 .cookie-banner a  { color:var(--primary); }
 .cookie-buttons   { display:flex; gap:.75rem; flex-wrap:wrap; }
-/* Equal prominence - EU requirement */
 .cookie-buttons .cbtn {
     flex:1; min-width:140px;
     background:var(--surface-alt); color:var(--text);
@@ -147,7 +192,11 @@ body { display:flex; align-items:center; justify-content:center; min-height:100v
     <div class="logo">
         <img src="<?= $icon_url ?>" alt="<?= $app_name ?>" class="logo-img">
         <h1><?= $app_name ?></h1>
-        <p><?= $step === 'login' ? 'Sign in to your account' : 'Two-factor authentication' ?></p>
+        <p id="logo-subtitle"><?php
+            if ($step === 'register') echo 'Create your account';
+            elseif ($step === 'totp') echo 'Two-factor authentication';
+            else echo 'Sign in to your account';
+        ?></p>
     </div>
 
     <?php if ($error): ?>
@@ -156,8 +205,15 @@ body { display:flex; align-items:center; justify-content:center; min-height:100v
     </div>
     <?php endif; ?>
 
+    <?php if ($success): ?>
+    <div class="alert alert-success" style="margin-bottom:1.25rem">
+        <span class="alert-icon">&#10003;</span><span><?= h($success) ?></span>
+    </div>
+    <?php endif; ?>
+
     <?php if ($step === 'login'): ?>
-    <form method="post" autocomplete="on">
+    <!-- ── LOGIN FORM ── -->
+    <form method="post" autocomplete="on" id="form-login">
         <?= CSRF::field() ?>
         <input type="hidden" name="action" value="login">
         <div class="form-group">
@@ -189,7 +245,117 @@ body { display:flex; align-items:center; justify-content:center; min-height:100v
         <button type="submit" class="btn btn-primary btn-block btn-lg">Sign in &rarr;</button>
     </form>
 
+    <?php if ($registration_enabled): ?>
+    <div class="register-switch">
+        Don't have an account? <a href="#" onclick="switchToRegister(event)">Create one</a>
+    </div>
+    <?php endif; ?>
+
+    <!-- ── REGISTER FORM (hidden by default, shown via JS or when $step==='register') ── -->
+    <?php if ($registration_enabled): ?>
+    <form method="post" autocomplete="off" id="form-register" style="display:none">
+        <?= CSRF::field() ?>
+        <input type="hidden" name="action" value="register">
+        <div class="form-group">
+            <label class="form-label" for="reg_login">Login</label>
+            <input type="text" id="reg_login" name="reg_login" class="form-input"
+                   autocomplete="username" maxlength="50"
+                   value="<?= h($_POST['reg_login'] ?? '') ?>"
+                   placeholder="letters, numbers, underscore (3–50)" required>
+            <div class="form-hint">Letters, numbers, underscore. No spaces.</div>
+        </div>
+        <div class="form-group">
+            <label class="form-label" for="reg_email">Email address</label>
+            <input type="email" id="reg_email" name="reg_email" class="form-input"
+                   autocomplete="email"
+                   value="<?= h($_POST['reg_email'] ?? '') ?>"
+                   placeholder="you@example.com" required>
+        </div>
+        <div class="form-group">
+            <label class="form-label" for="reg_password">Password</label>
+            <div class="input-wrap">
+                <input type="password" id="reg_password" name="reg_password" class="form-input"
+                       autocomplete="new-password" placeholder="Min. 12 characters" required>
+                <button type="button" class="eye-btn" onclick="togglePw('reg_password',this)" aria-label="Show/hide">
+                    <?= eyeSvg(true) ?>
+                </button>
+            </div>
+            <div class="pw-strength">
+                <div class="pw-strength-bar" id="reg-pw-bar"></div>
+            </div>
+            <div class="form-hint" id="reg-pw-label"></div>
+        </div>
+        <div class="form-group">
+            <label class="form-label" for="reg_confirm">Confirm password</label>
+            <div class="input-wrap">
+                <input type="password" id="reg_confirm" name="reg_confirm" class="form-input"
+                       autocomplete="new-password" placeholder="Repeat password" required>
+                <button type="button" class="eye-btn" onclick="togglePw('reg_confirm',this)" aria-label="Show/hide">
+                    <?= eyeSvg(true) ?>
+                </button>
+            </div>
+            <div class="form-hint" id="reg-confirm-hint" style="display:none;color:var(--error)">Passwords do not match.</div>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block btn-lg">Create account &rarr;</button>
+        <div class="register-switch" style="margin-top:1rem">
+            Already have an account? <a href="#" onclick="switchToLogin(event)">Sign in</a>
+        </div>
+    </form>
+    <?php endif; ?>
+
+    <?php elseif ($step === 'register' && $registration_enabled): ?>
+    <!-- ── REGISTER FORM (server-side rendered when POST failed validation) ── -->
+    <form method="post" autocomplete="off">
+        <?= CSRF::field() ?>
+        <input type="hidden" name="action" value="register">
+        <div class="form-group">
+            <label class="form-label" for="reg_login">Login</label>
+            <input type="text" id="reg_login" name="reg_login" class="form-input"
+                   autocomplete="username" maxlength="50"
+                   value="<?= h($_POST['reg_login'] ?? '') ?>"
+                   placeholder="letters, numbers, underscore (3–50)" autofocus required>
+            <div class="form-hint">Letters, numbers, underscore. No spaces.</div>
+        </div>
+        <div class="form-group">
+            <label class="form-label" for="reg_email">Email address</label>
+            <input type="email" id="reg_email" name="reg_email" class="form-input"
+                   autocomplete="email"
+                   value="<?= h($_POST['reg_email'] ?? '') ?>"
+                   placeholder="you@example.com" required>
+        </div>
+        <div class="form-group">
+            <label class="form-label" for="reg_password">Password</label>
+            <div class="input-wrap">
+                <input type="password" id="reg_password" name="reg_password" class="form-input"
+                       autocomplete="new-password" placeholder="Min. 12 characters" required>
+                <button type="button" class="eye-btn" onclick="togglePw('reg_password',this)" aria-label="Show/hide">
+                    <?= eyeSvg(true) ?>
+                </button>
+            </div>
+            <div class="pw-strength">
+                <div class="pw-strength-bar" id="reg-pw-bar"></div>
+            </div>
+            <div class="form-hint" id="reg-pw-label"></div>
+        </div>
+        <div class="form-group">
+            <label class="form-label" for="reg_confirm">Confirm password</label>
+            <div class="input-wrap">
+                <input type="password" id="reg_confirm" name="reg_confirm" class="form-input"
+                       autocomplete="new-password" placeholder="Repeat password" required>
+                <button type="button" class="eye-btn" onclick="togglePw('reg_confirm',this)" aria-label="Show/hide">
+                    <?= eyeSvg(true) ?>
+                </button>
+            </div>
+            <div class="form-hint" id="reg-confirm-hint" style="display:none;color:var(--error)">Passwords do not match.</div>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block btn-lg">Create account &rarr;</button>
+        <div class="register-switch" style="margin-top:1rem">
+            Already have an account? <a href="/login">Sign in</a>
+        </div>
+    </form>
+
     <?php elseif ($step === 'totp'): ?>
+    <!-- ── 2FA FORM ── -->
     <p class="totp-info">
         Open your authenticator app and enter<br>
         the 6-digit code for <strong><?= $app_name ?></strong>.
@@ -239,19 +405,18 @@ body { display:flex; align-items:center; justify-content:center; min-height:100v
     var btnOk   = document.getElementById('btn-accept-cookies');
     var btnNo   = document.getElementById('btn-decline-cookies');
 
+    if (!overlay) return;
+
     if (localStorage.getItem(CONSENT_KEY) !== '1') {
         overlay.style.display = 'flex';
         card.classList.add('login-blocked');
     }
 
-    // Accept: record consent + reload so PHP sends a fresh dv_pa CSRF cookie
-    // and renders the form with a matching token.
     btnOk.addEventListener('click', function() {
         localStorage.setItem(CONSENT_KEY, '1');
         window.location.reload();
     });
 
-    // Decline: clear JS-accessible storage + navigate away
     btnNo.addEventListener('click', function() {
         localStorage.clear();
         sessionStorage.clear();
@@ -272,11 +437,94 @@ function togglePw(id, btn) {
         : '<?= addslashes(eyeSvg(false)) ?>';
 }
 
+// ── 2FA code auto-submit ───────────────────────────────────────────────────────
 var ci = document.querySelector('.code-input');
 if (ci) ci.addEventListener('input', function() {
     this.value = this.value.replace(/\D/g, '');
     if (this.value.length === 6) this.closest('form').submit();
 });
+
+// ── Password strength meter ────────────────────────────────────────────────────
+var PW_RULES  = <?= $pw_rules ?>;
+var levels    = ['', 'Too short', 'Weak', 'Fair', 'Strong'];
+var levelClrs = ['', '#E53E3E', '#D69E2E', '#D69E2E', '#1D5C42'];
+var levelPct  = ['', '25%', '50%', '75%', '100%'];
+
+function calcStrength(pw) {
+    if (!pw || pw.length < (PW_RULES.minLength || 12)) return 1;
+    var s = 0;
+    if (/[A-Z]/.test(pw)) s++;
+    if (/[a-z]/.test(pw)) s++;
+    if (/[0-9]/.test(pw)) s++;
+    if (/[^A-Za-z0-9]/.test(pw)) s++;
+    if (pw.length >= 16) s = Math.min(s + 1, 4);
+    return Math.max(1, Math.min(s, 4));
+}
+
+var regPwInput = document.getElementById('reg_password');
+var regPwBar   = document.getElementById('reg-pw-bar');
+var regPwLabel = document.getElementById('reg-pw-label');
+var regConfirm = document.getElementById('reg_confirm');
+var regConfHint = document.getElementById('reg-confirm-hint');
+
+if (regPwInput) {
+    regPwInput.addEventListener('input', function() {
+        var pw = this.value;
+        if (!pw) { regPwBar.style.width='0'; regPwLabel.textContent=''; return; }
+        var lvl = calcStrength(pw);
+        regPwBar.style.width = levelPct[lvl];
+        regPwBar.style.background = levelClrs[lvl];
+        regPwLabel.textContent = levels[lvl];
+        regPwLabel.style.color = levelClrs[lvl];
+        checkRegMatch();
+    });
+}
+if (regConfirm) {
+    regConfirm.addEventListener('input', checkRegMatch);
+}
+function checkRegMatch() {
+    if (!regConfirm || !regPwInput) return;
+    if (!regConfirm.value) { if (regConfHint) regConfHint.style.display='none'; return; }
+    if (regConfHint) regConfHint.style.display = regPwInput.value === regConfirm.value ? 'none' : '';
+}
+
+// ── Login / Register form toggle ──────────────────────────────────────────────
+function switchToRegister(e) {
+    e.preventDefault();
+    var fl = document.getElementById('form-login');
+    var fr = document.getElementById('form-register');
+    var sub = document.getElementById('logo-subtitle');
+    if (!fr) return;
+    if (fl) fl.style.display = 'none';
+    fr.style.display = '';
+    if (sub) sub.textContent = 'Create your account';
+    var rl = document.getElementById('reg_login');
+    if (rl) rl.focus();
+    // Hide switch link under login form if present
+    var sw = document.querySelector('.register-switch');
+    if (sw && sw.closest('#form-login') === null) sw.style.display = 'none';
+}
+function switchToLogin(e) {
+    e.preventDefault();
+    var fl = document.getElementById('form-login');
+    var fr = document.getElementById('form-register');
+    var sub = document.getElementById('logo-subtitle');
+    if (fl) fl.style.display = '';
+    if (fr) fr.style.display = 'none';
+    if (sub) sub.textContent = 'Sign in to your account';
+    var sw = document.querySelector('.register-switch');
+    if (sw) sw.style.display = '';
+    var lf = document.getElementById('lf');
+    if (lf) lf.focus();
+}
+
+<?php if ($step === 'register' && $registration_enabled): ?>
+// Server sent us back to register step (validation failed) — show strength meter
+document.addEventListener('DOMContentLoaded', function() {
+    var pw = document.getElementById('reg_password');
+    if (pw) pw.focus();
+});
+<?php endif; ?>
 </script>
 </body>
 </html>

@@ -1,11 +1,12 @@
 <?php
 /**
- * LetaDial — Admin Model (sesja 065 + 066 + 067)
+ * LetaDial — Admin Model (sesja 065 + 066 + 067 + 068)
  *
  * Static methods for the admin panel.
  * 065: Blocked IPs, Users, Login History, Install Check, Export
  * 066: Sessions management, Force Password Reset
  * 067: Invite User (send setup-account link to new user email)
+ * 068: Registration toggle (registration_enabled setting)
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -116,6 +117,34 @@ class Admin
         return ['ok' => true, 'login' => $user['login']];
     }
 
+    // ── Registration Toggle (sesja 068) ───────────────────────────────────────
+
+    /**
+     * Get current registration_enabled value.
+     * Returns true if registration is open, false if disabled.
+     */
+    public static function getRegistrationEnabled(): bool
+    {
+        $val = DB::val("SELECT value FROM settings WHERE key_name = 'registration_enabled'");
+        return ($val ?? '1') === '1';
+    }
+
+    /**
+     * Toggle (or explicitly set) registration_enabled setting.
+     *
+     * @param bool|null $enabled Pass true/false to set explicitly, null to toggle.
+     * @return bool The new value after change.
+     */
+    public static function setRegistrationEnabled(bool $enabled): bool
+    {
+        DB::run(
+            "INSERT INTO settings (key_name, value) VALUES ('registration_enabled', ?)
+             ON DUPLICATE KEY UPDATE value = VALUES(value)",
+            [$enabled ? '1' : '0']
+        );
+        return $enabled;
+    }
+
     // ── Sessions (066) ────────────────────────────────────────────────────────
 
     public static function getSessions(?int $filterUserId = null): array
@@ -173,7 +202,6 @@ class Admin
         $hash = Password::hash($password);
         DB::run("UPDATE users SET password_hash = ? WHERE id = ?", [$hash, $targetId]);
 
-        // Invalidate all sessions for that user
         Auth::logoutAllSessions($targetId);
 
         return ['ok' => true, 'login' => $target['login']];
@@ -183,32 +211,21 @@ class Admin
 
     /**
      * Invite a new user by email.
-     *
-     * Creates an account with no password (invalid hash) and sends an
-     * email with a link to /setup-account?token=XXX where they set their
-     * own password. Token reuses the existing activation_token column.
-     *
-     * @param string $email     Email address of the invitee
-     * @param string $login     Desired login (3–50 chars, letters/numbers/underscore)
-     * @param int    $adminId   ID of the admin doing the invite (for the email)
-     * @return array ['ok' => bool, 'error'? => string, 'email_sent'? => bool]
+     * Invite works regardless of registration_enabled setting.
      */
     public static function inviteUser(string $email, string $login, int $adminId): array
     {
         $email = strtolower(trim($email));
         $login = trim($login);
 
-        // Validate email
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             return ['ok' => false, 'error' => 'Invalid email address.'];
         }
 
-        // Validate login
         if (!preg_match('/^[a-zA-Z0-9_]{3,50}$/', $login)) {
             return ['ok' => false, 'error' => 'Login must be 3–50 characters: letters, numbers, underscore only.'];
         }
 
-        // Check uniqueness
         $emailTaken = DB::val("SELECT id FROM users WHERE email = ?", [$email]);
         if ($emailTaken) {
             return ['ok' => false, 'error' => 'This email address is already registered.'];
@@ -219,15 +236,11 @@ class Admin
             return ['ok' => false, 'error' => 'This login is already taken.'];
         }
 
-        // Get admin login for the invite email
         $admin = DB::row("SELECT login FROM users WHERE id = ?", [$adminId]);
         $adminLogin = $admin['login'] ?? 'Admin';
 
-        // Generate activation token
-        $token = bin2hex(random_bytes(32)); // 64-char hex
+        $token = bin2hex(random_bytes(32));
 
-        // Create user with an invalid password hash (cannot log in without setting password)
-        // Using a dummy hash that can never match any real password
         $dummyHash = '$2y$12$InvalidHashThatCanNeverMatchAnyRealPassword00000000000000';
 
         DB::run(
@@ -240,16 +253,15 @@ class Admin
 
         $newUserId = (int)DB::lastId();
 
-        // Send invite email
         $sent = false;
         if (defined('SMTP_ENABLED') && SMTP_ENABLED) {
             $sent = Mailer::sendInviteToSetup($email, $token, $adminLogin);
         }
 
         return [
-            'ok'         => true,
-            'user_id'    => $newUserId,
-            'email_sent' => $sent,
+            'ok'           => true,
+            'user_id'      => $newUserId,
+            'email_sent'   => $sent,
             'smtp_enabled' => defined('SMTP_ENABLED') && SMTP_ENABLED,
         ];
     }
@@ -317,7 +329,6 @@ class Admin
         $tables = ['users','sessions','remember_tokens','groups_list','dials',
                    'totp_backup_codes','rate_limits','settings','login_history'];
         foreach ($tables as $tbl) {
-            // FIX: SHOW TABLES LIKE ? nie dziala z PDO na MariaDB — uzyj information_schema
             $exists = DB::val(
                 "SELECT TABLE_NAME FROM information_schema.TABLES
                  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?",
@@ -327,7 +338,7 @@ class Admin
                 $exists ? 'exists' : 'MISSING', 'Database');
         }
 
-        // Key columns — sesja 053/054/061/062/064/065/066
+        // Key columns
         $colChecks = [
             ['users',       'totp_secret',          'VARCHAR — 2FA support'],
             ['users',       'totp_enabled',          'TINYINT — 2FA flag'],
@@ -361,6 +372,13 @@ class Admin
                 $exists ? 'ok' : "MISSING — run migration SQL", 'Database',
                 $exists ? '' : "ALTER TABLE {$table} ADD COLUMN {$col} ... — see README Troubleshooting");
         }
+
+        // ── Settings ──────────────────────────────────────────────────────────
+        $regEnabled = self::getRegistrationEnabled();
+        $checks[] = self::chk('registration_enabled setting', true, false,
+            $regEnabled ? 'open (users can self-register)' : 'disabled (invite-only)',
+            'Configuration',
+            'Toggle in Admin → Users → Registration.');
 
         // ── Configuration ─────────────────────────────────────────────────────
         $constants = ['APP_NAME','APP_URL','APP_VERSION','ENCRYPTION_KEY','HMAC_KEY',
@@ -422,50 +440,50 @@ class Admin
                 $ok ? '' : "Run: bash fix_permissions.sh");
         }
 
-        // ── File Integrity (key files must exist) ─────────────────────────────
+        // ── File Integrity ────────────────────────────────────────────────────
         $keyFiles = [
-            'index.php'                => true,
-            'src/Auth.php'             => true,
-            'src/DB.php'               => true,
-            'src/CSRF.php'             => true,
-            'src/Dial.php'             => true,
-            'src/Group.php'            => true,
-            'src/Thumbnail.php'        => true,
-            'src/Admin.php'            => true,
-            'src/Mailer.php'           => true,
-            'src/TOTP.php'             => true,
-            'src/RateLimit.php'        => true,
-            'src/Password.php'         => true,
-            'src/Import.php'           => true,
-            'src/Export.php'           => true,
-            'src/Meta.php'             => true,
-            'src/Updater.php'          => true,
-            'src/GroupIcon.php'        => true,
-            'pages/login.php'          => true,
-            'pages/dashboard.php'      => true,
-            'pages/setup-2fa.php'      => true,
-            'pages/logout.php'         => true,
-            'pages/activate.php'       => true,
-            'pages/admin.php'          => true,
-            'pages/settings.php'       => true,
-            'pages/forgot-password.php'=> true,
-            'pages/reset-password.php' => true,
-            'pages/confirm-email.php'  => true,   // sesja 066
-            'pages/setup-account.php'  => true,   // sesja 067
-            'api/dials.php'            => true,
-            'api/groups.php'           => true,
-            'api/thumbs.php'           => true,
-            'api/export.php'           => true,
-            'api/import.php'           => true,
-            'api/admin.php'            => true,
-            'api/settings.php'         => true,
-            'api/update.php'           => true,
-            'api/meta.php'             => true,
-            'api/group_icons.php'      => true,
-            'assets/css/app.css'       => true,
+            'index.php'                    => true,
+            'src/Auth.php'                 => true,
+            'src/DB.php'                   => true,
+            'src/CSRF.php'                 => true,
+            'src/Dial.php'                 => true,
+            'src/Group.php'                => true,
+            'src/Thumbnail.php'            => true,
+            'src/Admin.php'                => true,
+            'src/Mailer.php'               => true,
+            'src/TOTP.php'                 => true,
+            'src/RateLimit.php'            => true,
+            'src/Password.php'             => true,
+            'src/Import.php'               => true,
+            'src/Export.php'               => true,
+            'src/Meta.php'                 => true,
+            'src/Updater.php'              => true,
+            'src/GroupIcon.php'            => true,
+            'pages/login.php'              => true,
+            'pages/dashboard.php'          => true,
+            'pages/setup-2fa.php'          => true,
+            'pages/logout.php'             => true,
+            'pages/activate.php'           => true,
+            'pages/admin.php'              => true,
+            'pages/settings.php'           => true,
+            'pages/forgot-password.php'    => true,
+            'pages/reset-password.php'     => true,
+            'pages/confirm-email.php'      => true,
+            'pages/setup-account.php'      => true,
+            'api/dials.php'                => true,
+            'api/groups.php'               => true,
+            'api/thumbs.php'               => true,
+            'api/export.php'               => true,
+            'api/import.php'               => true,
+            'api/admin.php'                => true,
+            'api/settings.php'             => true,
+            'api/update.php'               => true,
+            'api/meta.php'                 => true,
+            'api/group_icons.php'          => true,
+            'assets/css/app.css'           => true,
             'assets/css/design-system.css' => true,
-            'assets/js/app.js'         => true,
-            'fix_permissions.sh'       => false,
+            'assets/js/app.js'             => true,
+            'fix_permissions.sh'           => false,
         ];
         foreach ($keyFiles as $rel => $required) {
             $exists = file_exists($appDir . '/' . $rel);

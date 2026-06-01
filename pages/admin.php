@@ -1,10 +1,10 @@
 <?php
 /**
- * LetaDial — Admin Panel (sesja 065 + 066 + 067)
+ * LetaDial — Admin Panel (sesja 065 + 066 + 067 + 068)
  *
  * Tabs:
  *   1. Blocked IPs    — rate_limits; unblock / export
- *   2. Users          — accounts; delete; force-reset password; invite (067)
+ *   2. Users          — accounts; delete; force-reset password; invite (067); registration toggle (068)
  *   3. Sessions       — all active sessions; delete single / all for user
  *   4. Login History  — recent auth attempts; filter by IP
  *   5. Update         — git check vs github.com/LetaLab/LetaDial + git pull
@@ -40,6 +40,10 @@ $pw_rules      = Password::jsRules();
 
 $login_rl_max = 10;
 $login_rl_win = 300;
+
+// sesja 068: registration toggle
+$registration_enabled = Admin::getRegistrationEnabled();
+$registration_json    = $registration_enabled ? 'true' : 'false';
 
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 ?>
@@ -278,6 +282,31 @@ body { min-height:100vh; background:var(--bg); }
 
     <!-- ═══ TAB 2: USERS ═══ -->
     <div class="tab-pane" id="tab-users">
+        <!-- Registration toggle card (sesja 068) -->
+        <div class="admin-card" style="margin-bottom:1rem">
+            <div class="admin-card-body" style="padding:.85rem 1.25rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap">
+                <div style="flex:1;min-width:200px">
+                    <div style="font-size:.9rem;font-weight:600;color:var(--text);margin-bottom:.2rem">
+                        👤 Self-Registration
+                    </div>
+                    <div style="font-size:.78rem;color:var(--text-muted)" id="reg-status-desc">
+                        <?= $registration_enabled
+                            ? 'Open — anyone can create an account from the login page.'
+                            : 'Disabled — only admin invites work (invite always works regardless).' ?>
+                    </div>
+                </div>
+                <div style="display:flex;align-items:center;gap:.75rem;flex-shrink:0">
+                    <span id="reg-status-badge" class="status-badge <?= $registration_enabled ? 'on' : 'off' ?>">
+                        <?= $registration_enabled ? '✓ Open' : '✗ Disabled' ?>
+                    </span>
+                    <button type="button" class="btn btn-ghost btn-sm" id="btn-toggle-registration"
+                            style="<?= $registration_enabled ? 'border-color:var(--error-bdr);color:var(--error)' : 'border-color:var(--success-bdr);color:var(--success)' ?>">
+                        <?= $registration_enabled ? '🔒 Disable registration' : '🔓 Enable registration' ?>
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <div class="panel-toolbar">
             <span style="font-size:.875rem;color:var(--text-muted)">
                 <strong id="users-count"><?= count($users_list) ?></strong> user(s)
@@ -502,6 +531,7 @@ const ME_ID      = <?= (int)$user['id'] ?>;
 const MY_SESSION = <?= json_encode($my_session_id) ?>;
 const PW_RULES   = <?= $pw_rules ?>;
 const SMTP_OK    = <?= $smtp_enabled ? 'true' : 'false' ?>;
+let REGISTRATION_ENABLED = <?= $registration_json ?>;
 
 let blocked  = <?= $blocked_json ?>;
 let users    = <?= $users_json ?>;
@@ -1000,6 +1030,53 @@ document.getElementById('btn-refresh-check').addEventListener('click',async()=>{
     const r=await api('GET','/api/admin/install-check');
     if(!r.ok){toast('Check failed.','error');return;}
     checks=r.checks;renderChecks(checks);toast('Checks re-run.','success');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Registration Toggle (sesja 068)
+// ═══════════════════════════════════════════════════════════════════════════════
+function updateRegUI(enabled) {
+    REGISTRATION_ENABLED = enabled;
+    const badge   = document.getElementById('reg-status-badge');
+    const desc    = document.getElementById('reg-status-desc');
+    const btn     = document.getElementById('btn-toggle-registration');
+    if (!badge || !btn) return;
+
+    if (enabled) {
+        badge.className   = 'status-badge on';
+        badge.textContent = '✓ Open';
+        desc.textContent  = 'Open — anyone can create an account from the login page.';
+        btn.textContent   = '🔒 Disable registration';
+        btn.style.borderColor = 'var(--error-bdr)';
+        btn.style.color       = 'var(--error)';
+    } else {
+        badge.className   = 'status-badge off';
+        badge.textContent = '✗ Disabled';
+        desc.textContent  = 'Disabled — only admin invites work (invite always works regardless).';
+        btn.textContent   = '🔓 Enable registration';
+        btn.style.borderColor = 'var(--success-bdr)';
+        btn.style.color       = 'var(--success)';
+    }
+}
+
+document.getElementById('btn-toggle-registration')?.addEventListener('click', async () => {
+    const newState = !REGISTRATION_ENABLED;
+    const label    = newState ? 'enable' : 'disable';
+    if (!await cfm(
+        (newState ? 'Enable' : 'Disable') + ' self-registration',
+        newState
+            ? 'Allow anyone to create an account from the login page?'
+            : 'Prevent new self-registrations? Existing accounts and admin invites are not affected.'
+    )) return;
+
+    const btn = document.getElementById('btn-toggle-registration');
+    btn.disabled = true;
+    const r = await api('POST', '/api/admin/registration', { enabled: newState });
+    btn.disabled = false;
+
+    if (!r.ok) { toast(r.error || 'Could not update setting.', 'error'); return; }
+    updateRegUI(r.enabled);
+    toast(r.enabled ? 'Registration enabled.' : 'Registration disabled.', 'success');
 });
 
 // ── INIT ──────────────────────────────────────────────────────────────────────

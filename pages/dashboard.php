@@ -106,7 +106,7 @@ $show_update_ui = $is_admin && defined('GITHUB_REPO') && GITHUB_REPO !== '';
         <div class="topbar-search">
             <svg class="search-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
             <input type="search" id="dial-search" class="search-input"
-                   placeholder="Search dials…" autocomplete="off" aria-label="Search speed dials">
+                   placeholder="Search dials &amp; notes…" autocomplete="off" aria-label="Search speed dials">
             <button type="button" class="search-clear" id="search-clear"
                     aria-label="Clear search" style="display:none">×</button>
         </div>

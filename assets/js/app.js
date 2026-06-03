@@ -304,6 +304,7 @@ const LetaDial = (() => {
                 if (e.key === 'Escape' && document.activeElement === input) input.blur();
             });
         },
+        // sesja 070: notes included in search automatically
         filter() {
             keyboard_nav.clear();
             const q    = this._query;
@@ -317,18 +318,26 @@ const LetaDial = (() => {
                 if (info) info.style.display = 'none'; return;
             }
             let shown = 0;
+            let notesMatches = 0;
             cards.forEach(card => {
-                const title = (card.querySelector('.dial-title')?.textContent || '').toLowerCase();
-                const url   = (card.dataset.url || '').toLowerCase();
-                const match = title.includes(q) || url.includes(q);
+                const title      = (card.querySelector('.dial-title')?.textContent || '').toLowerCase();
+                const url        = (card.dataset.url   || '').toLowerCase();
+                const notes      = (card.dataset.notes || '').toLowerCase();
+                const matchTitle = title.includes(q) || url.includes(q);
+                const matchNotes = notes.includes(q);
+                const match      = matchTitle || matchNotes;
                 card.classList.toggle('search-hidden', !match);
-                if (match) shown++;
+                if (match) {
+                    shown++;
+                    if (!matchTitle && matchNotes) notesMatches++;
+                }
             });
             if (info) {
                 info.style.display = '';
+                const notesPart = notesMatches > 0 ? ` (${notesMatches} in notes)` : '';
                 info.textContent = shown === 0
                     ? `No dials match "${q}"`
-                    : `${shown} dial${shown !== 1 ? 's' : ''} matching "${q}"`;
+                    : `${shown} dial${shown !== 1 ? 's' : ''} matching "${q}"${notesPart}`;
             }
         },
         reapply() { if (this._query) this.filter(); },
@@ -871,7 +880,7 @@ const LetaDial = (() => {
             const card = document.createElement('a');
             card.className = 'dial-card' + (dial.pinned && !isRecent ? ' pinned' : '');
             card.href = dial.url; card.target = '_blank'; card.rel = 'noopener noreferrer';
-            card.dataset.dialId = dial.id; card.dataset.url = dial.url || '';
+            card.dataset.dialId = dial.id; card.dataset.url = dial.url || ''; card.dataset.notes = dial.notes || '';
 
             if (bulk_module.active && bulk_module.selected.has(dial.id)) card.classList.add('selected');
 

@@ -1,6 +1,6 @@
 <?php
 /**
- * LetaDial — Admin API (sesja 065 + 066 + 067 + 068)
+ * LetaDial — Admin API (sesja 065 + 066 + 067 + 068 + 069)
  *
  * GET  /api/admin/blocked          — list blocked rate_limit entries
  * POST /api/admin/unblock          — unblock one entry  {key_hash, action}
@@ -23,6 +23,9 @@
  * sesja 068:
  * GET  /api/admin/registration          — get registration_enabled status
  * POST /api/admin/registration          — set registration_enabled {enabled: bool}
+ *
+ * sesja 069:
+ * POST /api/admin/create-user           — create user directly {login, email, password, role}
  *
  * All endpoints: admin role required.
  * All POST endpoints: CSRF required.
@@ -218,7 +221,6 @@ if ($method === 'POST' && $action === 'invite') {
 
 // ── sesja 068: Registration Toggle ───────────────────────────────────────────
 
-// GET /api/admin/registration — current status
 if ($method === 'GET' && $action === 'registration') {
     echo json_encode([
         'ok'      => true,
@@ -227,7 +229,6 @@ if ($method === 'GET' && $action === 'registration') {
     exit;
 }
 
-// POST /api/admin/registration — set {enabled: true|false}
 if ($method === 'POST' && $action === 'registration') {
     CSRF::require();
     $body    = json_decode(file_get_contents('php://input'), true) ?? [];
@@ -238,6 +239,34 @@ if ($method === 'POST' && $action === 'registration') {
     $enabled = (bool)$body['enabled'];
     $result  = Admin::setRegistrationEnabled($enabled);
     echo json_encode(['ok' => true, 'enabled' => $result]);
+    exit;
+}
+
+// ── sesja 069: Direct User Creation ──────────────────────────────────────────
+
+if ($method === 'POST' && $action === 'create-user') {
+    CSRF::require();
+
+    // Rate limit: 20 bezposrednich tworzen kont na admina na godzine
+    if (RateLimit::check('admin_create_user', (string)$user['id'], 20, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many user creation requests. Try again in an hour.']); exit;
+    }
+
+    $body     = json_decode(file_get_contents('php://input'), true) ?? [];
+    $login    = trim($body['login']    ?? '');
+    $email    = trim($body['email']    ?? '');
+    $password = $body['password']      ?? '';
+    $role     = trim($body['role']     ?? 'user');
+
+    if (!$login || !$email || !$password) {
+        http_response_code(422);
+        echo json_encode(['ok' => false, 'error' => 'Login, email and password are required.']); exit;
+    }
+
+    $result = Admin::createUser($login, $email, $password, $role, $user['id']);
+    http_response_code($result['ok'] ? 201 : 422);
+    echo json_encode($result);
     exit;
 }
 

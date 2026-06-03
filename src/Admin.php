@@ -1,12 +1,13 @@
 <?php
 /**
- * LetaDial — Admin Model (sesja 065 + 066 + 067 + 068)
+ * LetaDial — Admin Model (sesja 065 + 066 + 067 + 068 + 069)
  *
  * Static methods for the admin panel.
  * 065: Blocked IPs, Users, Login History, Install Check, Export
  * 066: Sessions management, Force Password Reset
  * 067: Invite User (send setup-account link to new user email)
  * 068: Registration toggle (registration_enabled setting)
+ * 069: Direct user creation (admin sets login + email + password + role immediately)
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -117,24 +118,95 @@ class Admin
         return ['ok' => true, 'login' => $user['login']];
     }
 
-    // ── Registration Toggle (sesja 068) ───────────────────────────────────────
+    // ── Direct User Creation (sesja 069) ──────────────────────────────────────
 
     /**
-     * Get current registration_enabled value.
-     * Returns true if registration is open, false if disabled.
+     * Create a user account immediately with a password set by the admin.
+     * No email required, no activation token, account is active right away.
+     * Admin may choose role (user or admin).
+     *
+     * This complements invite (067) for cases where SMTP is unavailable or
+     * the admin wants to hand credentials directly to the new user.
+     *
+     * Security:
+     *   - Login + email uniqueness enforced
+     *   - Password validated via Password::validate()
+     *   - Role restricted to 'user' or 'admin'
+     *   - Rate limit: 20 creations per admin per hour (prevents abuse if session hijacked)
+     *   - Cannot be used to create a second admin without intentional choice
+     *
+     * @return array{ok: bool, user_id?: int, login?: string, error?: string}
      */
+    public static function createUser(
+        string $login,
+        string $email,
+        string $password,
+        string $role,
+        int    $adminId
+    ): array {
+        $login = trim($login);
+        $email = strtolower(trim($email));
+        $role  = in_array($role, ['user', 'admin'], true) ? $role : 'user';
+
+        // ── Validate login ────────────────────────────────────────────────────
+        if (!$login) {
+            return ['ok' => false, 'error' => 'Login is required.'];
+        }
+        if (!preg_match('/^[a-zA-Z0-9_]{3,50}$/', $login)) {
+            return ['ok' => false, 'error' => 'Login must be 3–50 characters: letters, numbers, underscore only.'];
+        }
+
+        // ── Validate email ────────────────────────────────────────────────────
+        if (!$email || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            return ['ok' => false, 'error' => 'Please enter a valid email address.'];
+        }
+
+        // ── Validate password ─────────────────────────────────────────────────
+        $pwErrors = Password::validate($password);
+        if (!empty($pwErrors)) {
+            return ['ok' => false, 'error' => implode(' ', $pwErrors)];
+        }
+
+        // ── Uniqueness checks ─────────────────────────────────────────────────
+        $loginTaken = DB::val("SELECT id FROM users WHERE login = ?", [$login]);
+        if ($loginTaken) {
+            return ['ok' => false, 'error' => 'This login is already taken.'];
+        }
+
+        $emailTaken = DB::val("SELECT id FROM users WHERE email = ?", [$email]);
+        if ($emailTaken) {
+            return ['ok' => false, 'error' => 'This email address is already registered.'];
+        }
+
+        // ── Insert ────────────────────────────────────────────────────────────
+        $hash = Password::hash($password);
+
+        DB::run(
+            "INSERT INTO users
+                (login, email, password_hash, role, email_verified, activation_token,
+                 totp_required, created_at)
+             VALUES (?, ?, ?, ?, 1, NULL, ?, NOW())",
+            [$login, $email, $hash, $role, ($role === 'admin') ? 1 : 0]
+        );
+
+        $newUserId = (int)DB::lastId();
+
+        return [
+            'ok'      => true,
+            'user_id' => $newUserId,
+            'login'   => $login,
+            'role'    => $role,
+        ];
+    }
+
+    // ── Registration Toggle (sesja 068) ───────────────────────────────────────
+
     public static function getRegistrationEnabled(): bool
     {
         $val = DB::val("SELECT value FROM settings WHERE key_name = 'registration_enabled'");
         return ($val ?? '1') === '1';
     }
 
-    /**
-     * Toggle (or explicitly set) registration_enabled setting.
-     *
-     * @param bool|null $enabled Pass true/false to set explicitly, null to toggle.
-     * @return bool The new value after change.
-     */
     public static function setRegistrationEnabled(bool $enabled): bool
     {
         DB::run(
@@ -209,10 +281,6 @@ class Admin
 
     // ── Invite User (067) ─────────────────────────────────────────────────────
 
-    /**
-     * Invite a new user by email.
-     * Invite works regardless of registration_enabled setting.
-     */
     public static function inviteUser(string $email, string $login, int $adminId): array
     {
         $email = strtolower(trim($email));
@@ -236,7 +304,7 @@ class Admin
             return ['ok' => false, 'error' => 'This login is already taken.'];
         }
 
-        $admin = DB::row("SELECT login FROM users WHERE id = ?", [$adminId]);
+        $admin      = DB::row("SELECT login FROM users WHERE id = ?", [$adminId]);
         $adminLogin = $admin['login'] ?? 'Admin';
 
         $token = bin2hex(random_bytes(32));

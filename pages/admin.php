@@ -1,6 +1,6 @@
 <?php
 /**
- * LetaDial — Admin Panel (sesja 065 + 066 + 067 + 068)
+ * LetaDial — Admin Panel (sesja 065 + 066 + 067 + 068 + 069)
  *
  * Tabs:
  *   1. Blocked IPs    — rate_limits; unblock / export
@@ -314,6 +314,7 @@ body { min-height:100vh; background:var(--bg); }
             <div class="panel-toolbar-right">
                 <input type="text" id="users-filter" class="filter-input" placeholder="Filter by login / email…" style="min-width:200px">
                 <button class="btn btn-ghost btn-sm" id="btn-refresh-users">↻ Refresh</button>
+                <button class="btn btn-ghost btn-sm" id="btn-create-user">➕ Create user</button>
                 <button class="btn btn-primary btn-sm" id="btn-invite-user">✉ Invite user</button>
             </div>
         </div>
@@ -519,6 +520,50 @@ body { min-height:100vh; background:var(--bg); }
         <div class="confirm-actions">
             <button class="btn btn-ghost" id="invite-cancel">Close</button>
             <button class="btn btn-primary" id="invite-ok">Send invite →</button>
+        </div>
+    </div>
+</div>
+
+
+<!-- Create User Modal (sesja 069) -->
+<div class="confirm-overlay" id="create-user-overlay">
+    <div class="confirm-box" style="max-width:480px">
+        <h3>➕ Create User</h3>
+        <p style="margin-bottom:1rem">
+            Create an account immediately. The user can log in right away
+            with the credentials you set here. No email required.
+        </p>
+        <div style="margin-bottom:.75rem">
+            <label style="font-size:.78rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:.35rem">Login <span style="font-weight:400;text-transform:none">(letters, numbers, underscore, 3–50 chars)</span></label>
+            <input type="text" id="cu-login" class="form-input" placeholder="username" autocomplete="off" maxlength="50">
+        </div>
+        <div style="margin-bottom:.75rem">
+            <label style="font-size:.78rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:.35rem">Email address</label>
+            <input type="email" id="cu-email" class="form-input" placeholder="user@example.com" autocomplete="off">
+        </div>
+        <div style="margin-bottom:.75rem">
+            <label style="font-size:.78rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:.35rem">Password</label>
+            <input type="password" id="cu-password" class="form-input" placeholder="Min. 12 characters" autocomplete="new-password">
+            <div class="pw-strength-modal"><div class="pw-strength-modal-bar" id="cu-strength-bar"></div></div>
+            <div style="font-size:.75rem;margin-top:.25rem" id="cu-strength-label"></div>
+        </div>
+        <div style="margin-bottom:.75rem">
+            <label style="font-size:.78rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:.35rem">Role</label>
+            <div style="display:flex;gap:.75rem">
+                <label style="display:flex;align-items:center;gap:.4rem;font-size:.9rem;cursor:pointer">
+                    <input type="radio" name="cu-role" value="user" checked style="accent-color:var(--primary)"> User
+                </label>
+                <label style="display:flex;align-items:center;gap:.4rem;font-size:.9rem;cursor:pointer">
+                    <input type="radio" name="cu-role" value="admin" style="accent-color:var(--primary)"> Admin
+                </label>
+            </div>
+            <div style="font-size:.75rem;color:var(--text-faint);margin-top:.3rem">Admin accounts require 2FA setup on first login.</div>
+        </div>
+        <div id="cu-error" style="display:none;padding:.5rem .75rem;background:var(--error-bg);color:var(--error);border-radius:var(--radius-sm);font-size:.85rem;margin-bottom:.75rem"></div>
+        <div id="cu-success" style="display:none;padding:.5rem .75rem;background:var(--success-bg);color:var(--success);border-radius:var(--radius-sm);font-size:.85rem;margin-bottom:.75rem;border:1px solid var(--success-bdr)"></div>
+        <div class="confirm-actions">
+            <button class="btn btn-ghost" id="cu-cancel">Close</button>
+            <button class="btn btn-primary" id="cu-ok">Create account →</button>
         </div>
     </div>
 </div>
@@ -1077,6 +1122,97 @@ document.getElementById('btn-toggle-registration')?.addEventListener('click', as
     if (!r.ok) { toast(r.error || 'Could not update setting.', 'error'); return; }
     updateRegUI(r.enabled);
     toast(r.enabled ? 'Registration enabled.' : 'Registration disabled.', 'success');
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Create User Modal (sesja 069)
+// ═══════════════════════════════════════════════════════════════════════════════
+const cuOverlay   = document.getElementById('create-user-overlay');
+const cuLogin     = document.getElementById('cu-login');
+const cuEmail     = document.getElementById('cu-email');
+const cuPassword  = document.getElementById('cu-password');
+const cuStrBar    = document.getElementById('cu-strength-bar');
+const cuStrLabel  = document.getElementById('cu-strength-label');
+const cuError     = document.getElementById('cu-error');
+const cuSuccess   = document.getElementById('cu-success');
+
+cuPassword?.addEventListener('input', function() {
+    const pw = this.value;
+    if (!pw) { cuStrBar.style.width='0'; cuStrLabel.textContent=''; return; }
+    const lvl = calcStrength(pw);
+    cuStrBar.style.width   = levelPct[lvl];
+    cuStrBar.style.background = levelClrs[lvl];
+    cuStrLabel.textContent = levelNames[lvl];
+    cuStrLabel.style.color = levelClrs[lvl];
+});
+
+function cuReset(keepOpen) {
+    cuLogin.value = ''; cuEmail.value = ''; cuPassword.value = '';
+    cuStrBar.style.width = '0'; cuStrLabel.textContent = '';
+    cuError.style.display = 'none'; cuSuccess.style.display = 'none';
+    document.querySelector('input[name="cu-role"][value="user"]').checked = true;
+    document.getElementById('cu-ok').disabled = false;
+    document.getElementById('cu-ok').textContent = 'Create account →';
+}
+
+document.getElementById('btn-create-user')?.addEventListener('click', () => {
+    cuReset(false);
+    cuOverlay.classList.add('show');
+    setTimeout(() => cuLogin.focus(), 80);
+});
+
+document.getElementById('cu-cancel').addEventListener('click', () => {
+    cuOverlay.classList.remove('show');
+    api('GET', '/api/admin/users').then(r => { if (r.ok) { users = r.users; renderUsers(users); } });
+});
+cuOverlay.addEventListener('click', e => {
+    if (e.target === e.currentTarget) {
+        cuOverlay.classList.remove('show');
+        api('GET', '/api/admin/users').then(r => { if (r.ok) { users = r.users; renderUsers(users); } });
+    }
+});
+
+[cuLogin, cuEmail, cuPassword].forEach(el => el?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('cu-ok').click();
+}));
+
+document.getElementById('cu-ok').addEventListener('click', async () => {
+    cuError.style.display = 'none';
+    cuSuccess.style.display = 'none';
+
+    const login    = cuLogin.value.trim();
+    const email    = cuEmail.value.trim();
+    const password = cuPassword.value;
+    const role     = document.querySelector('input[name="cu-role"]:checked')?.value || 'user';
+
+    if (!login || !email || !password) {
+        cuError.textContent = 'Login, email and password are all required.';
+        cuError.style.display = '';
+        return;
+    }
+
+    const btn = document.getElementById('cu-ok');
+    btn.disabled = true; btn.textContent = 'Creating…';
+
+    const r = await api('POST', '/api/admin/create-user', { login, email, password, role });
+    btn.disabled = false; btn.textContent = 'Create another →';
+
+    if (!r.ok) {
+        cuError.textContent = r.error || 'Could not create account.';
+        cuError.style.display = '';
+        btn.textContent = 'Create account →';
+        return;
+    }
+
+    cuLogin.value = ''; cuEmail.value = ''; cuPassword.value = '';
+    cuStrBar.style.width = '0'; cuStrLabel.textContent = '';
+    document.querySelector('input[name="cu-role"][value="user"]').checked = true;
+
+    cuSuccess.textContent = `✓ Account "${r.login}" created (${r.role}). They can log in immediately.`;
+    cuSuccess.style.display = '';
+    btn.textContent = 'Create account →';
+    toast(`Account "${r.login}" created.`, 'success');
 });
 
 // ── INIT ──────────────────────────────────────────────────────────────────────

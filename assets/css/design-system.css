@@ -365,3 +365,45 @@ code {
 @media (min-width: 641px) {
     .show-mobile-only { display: none !important; }
 }
+
+/* ============================================================
+   MIDNIGHT THEME — cool dark navy/graphite (sesja 071a)
+   Czern, grafit, ciemny navy z wysokim kontrastem.
+   Primary contrast ratio on bg: ~7.7:1 (WCAG AA)
+   ============================================================ */
+[data-theme="midnight"] {
+    --bg:           #090B12;   /* Near-black z delikatnym navy tintem */
+    --surface:      #0E1120;   /* Ciemna navy — powierzchnia kart */
+    --surface-alt:  #131726;   /* Hover, alternatywne tło */
+    --border:       #1A1F3A;   /* Widoczna ramka na ciemnym tle */
+    --border-light: #141830;
+    --text:         #E2E8F8;   /* Chłodna biel — kontrast ~15:1 */
+    --text-muted:   #8892B4;   /* Muted blue-gray — kontrast ~5:1 */
+    --text-faint:   #404870;   /* Faint blue — dla dekoracyjnego tekstu */
+    --primary:      #FF6B8A;   /* Jaskrawy rose — wyraźny na ciemnym tle */
+    --primary-h:    #EE5B7A;
+    --primary-fg:   #FFFFFF;
+    --primary-bg:   #260610;   /* Bardzo ciemny rose tint */
+    --primary-bdr:  #58122A;
+    --accent:       #60A8F8;   /* Electric blue */
+    --accent-h:     #50A0F0;
+    --accent-fg:    #090B12;
+    --accent-bg:    #081428;
+    --success:      #44D490;   /* Jaskrawy zielony */
+    --success-bg:   #041A12;
+    --success-bdr:  #124430;
+    --warning:      #D8A828;   /* Amber */
+    --warning-bg:   #181000;
+    --warning-bdr:  #484000;
+    --error:        #FF7A8A;   /* Jaskrawy czerwony */
+    --error-bg:     #200810;
+    --error-bdr:    #541020;
+    --info:         #62B0FF;   /* Blue */
+    --info-bg:      #080E1E;
+    --info-bdr:     #182848;
+    --shadow-xs:    0 1px 2px rgba(0,0,0,.50);
+    --shadow-sm:    0 1px 3px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.45);
+    --shadow-md:    0 4px 12px rgba(0,0,0,.60);
+    --shadow-lg:    0 8px 24px rgba(0,0,0,.65);
+    --shadow-xl:    0 16px 40px rgba(0,0,0,.70);
+}

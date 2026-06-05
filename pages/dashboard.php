@@ -24,6 +24,10 @@ $groups_json    = json_encode($groups_data, JSON_HEX_TAG | JSON_HEX_QUOT);
 $csrf_token     = htmlspecialchars(CSRF::token(), ENT_QUOTES, 'UTF-8');
 $recent_disabled = (bool)($user['recent_disabled'] ?? false);
 
+// Validate theme from DB — defence against corrupt values
+$_valid_themes = ['light', 'dark', 'midnight'];
+$user_theme    = in_array($user['theme'] ?? '', $_valid_themes) ? $user['theme'] : 'light';
+
 // Update check — only for admin, only if GITHUB_REPO is configured, non-blocking
 // We pass update info to JS which shows the banner — no PHP blocking here
 $show_update_ui = $is_admin && defined('GITHUB_REPO') && GITHUB_REPO !== '';
@@ -204,6 +208,7 @@ window.LETADIAL_BOOT = {
     isAdmin:        <?= $is_admin ? 'true' : 'false' ?>,
     showUpdateUi:   <?= $show_update_ui ? 'true' : 'false' ?>,
     recentDisabled: <?= $recent_disabled ? 'true' : 'false' ?>,
+    userTheme:      '<?= $user_theme ?>',
 };
 </script>
 <script src="/assets/js/app.js"></script>

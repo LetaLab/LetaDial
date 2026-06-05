@@ -596,3 +596,35 @@ body:has(.bulk-toolbar) .toast-container { bottom:calc(var(--space-5) + 60px); }
     .dial-kb-hint        { display:none; }
     .dial-notes-tooltip  { display:none; }
 }
+
+/* ── Midnight theme — dashboard-specific variables (sesja 071a) ─────────── */
+[data-theme="midnight"] {
+    --bg:            #090B12;
+    --surface:       #0E1120;
+    --surface-alt:   #131726;
+    --surface-hover: #181E32;
+    --border:        #1A1F3A;
+    --border-focus:  #FF6B8A;
+    --text:          #E2E8F8;
+    --text-muted:    #8892B4;
+    --text-faint:    #404870;
+    --primary:       #FF6B8A;
+    --primary-hover: #EE5B7A;
+    --primary-fg:    #FFFFFF;
+    --primary-bg:    rgba(255,107,138,.12);
+    --primary-bdr:   rgba(255,107,138,.35);
+    --danger:        #FF7A8A;
+    --danger-hover:  #FF5570;
+    --danger-fg:     #090010;
+    --danger-bg:     #200810;
+    --success:       #44D490;
+    --error:         #FF7A8A;
+    --error-bg:      #200810;
+    --warning:       #D8A828;
+    --warning-bg:    #181000;
+    --info:          #62B0FF;
+    --shadow-sm:     0 1px 3px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.45);
+    --shadow-md:     0 4px 12px rgba(0,0,0,.60);
+    --shadow-lg:     0 8px 24px rgba(0,0,0,.65);
+    --shadow-xl:     0 16px 40px rgba(0,0,0,.70);
+}

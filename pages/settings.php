@@ -372,17 +372,35 @@ const CSRF_TOKEN      = <?= json_encode($csrf_token) ?>;
 const PW_RULES        = <?= $pw_rules ?>;
 const CURRENT_SESSION = <?= json_encode($current_session_id) ?>;
 
-function applyTheme(t, save) {
+// sesja 071a: 3-theme cycle Light → Dark → Midnight → Light
+const THEMES_ORDER  = ['light', 'dark', 'midnight'];
+const THEME_LABELS  = { light: '🌙 Dark', dark: '🌑 Midnight', midnight: '☀ Light' };
+function nextTheme(t) {
+    const idx = THEMES_ORDER.indexOf(t);
+    return THEMES_ORDER[(idx + 1) % THEMES_ORDER.length];
+}
+async function applyTheme(t, save) {
+    if (!THEMES_ORDER.includes(t)) t = 'light';
     document.documentElement.setAttribute('data-theme', t);
-    if (save) localStorage.setItem('dv-theme', t);
-    const label = t === 'dark' ? '☀ Light' : '🌙 Dark';
+    if (save) {
+        localStorage.setItem('dv-theme', t);
+        try {
+            await fetch('/api/settings/theme', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': CSRF_TOKEN },
+                credentials: 'same-origin',
+                body: JSON.stringify({ theme: t })
+            });
+        } catch {}
+    }
+    const label = THEME_LABELS[t] || '🌙 Dark';
     document.querySelectorAll('#theme-btn, #theme-btn-pref').forEach(b => b.textContent = label);
 }
 applyTheme(localStorage.getItem('dv-theme') || 'light', false);
 document.querySelectorAll('#theme-btn, #theme-btn-pref').forEach(btn =>
     btn.addEventListener('click', () => {
         const cur = document.documentElement.getAttribute('data-theme') || 'light';
-        applyTheme(cur === 'dark' ? 'light' : 'dark', true);
+        applyTheme(nextTheme(cur), true);
     })
 );
 

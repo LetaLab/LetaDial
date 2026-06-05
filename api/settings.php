@@ -308,5 +308,19 @@ if ($action === 'email' && $sub_action === 'cancel') {
     exit;
 }
 
+
+// ── POST /api/settings/theme — save chosen theme to DB (sesja 071a) ─────────
+if ($action === 'theme') {
+    $allowed = ['light', 'dark', 'midnight'];
+    $theme   = trim($body['theme'] ?? '');
+    if (!in_array($theme, $allowed, true)) {
+        http_response_code(422);
+        echo json_encode(['ok' => false, 'error' => 'Invalid theme. Use: light, dark, midnight.']); exit;
+    }
+    DB::run("UPDATE users SET theme = ? WHERE id = ?", [$theme, $user['id']]);
+    echo json_encode(['ok' => true, 'theme' => $theme]);
+    exit;
+}
+
 http_response_code(404);
 echo json_encode(['error' => 'Unknown settings action.']);

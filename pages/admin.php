@@ -585,17 +585,34 @@ let history  = <?= $history_json ?>;
 let checks   = <?= $checks_json ?>;
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
+// sesja 071a: 3-theme cycle Light → Dark → Midnight → Light
 (function(){
+    const THEMES_ORD  = ['light', 'dark', 'midnight'];
+    const NEXT_LABELS = { light: '🌙 Dark', dark: '🌑 Midnight', midnight: '☀ Light' };
+    function nextTh(t) {
+        const i = THEMES_ORD.indexOf(t);
+        return THEMES_ORD[(i + 1) % THEMES_ORD.length];
+    }
+    function applyTh(t, save) {
+        if (!THEMES_ORD.includes(t)) t = 'light';
+        document.documentElement.setAttribute('data-theme', t);
+        if (save) {
+            localStorage.setItem('dv-theme', t);
+            fetch('/api/settings/theme', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': CSRF },
+                credentials: 'same-origin',
+                body: JSON.stringify({ theme: t })
+            }).catch(() => {});
+        }
+        const btn = document.getElementById('theme-btn');
+        if (btn) btn.textContent = NEXT_LABELS[t] || '🌙 Dark';
+    }
     const t = localStorage.getItem('dv-theme') || 'light';
-    document.documentElement.setAttribute('data-theme', t);
-    const lbl = t => document.getElementById('theme-btn').textContent = t === 'dark' ? '☀ Light' : '🌙 Dark';
-    lbl(t);
-    document.getElementById('theme-btn').addEventListener('click', () => {
+    applyTh(t, false);
+    document.getElementById('theme-btn')?.addEventListener('click', () => {
         const c = document.documentElement.getAttribute('data-theme') || 'light';
-        const n = c === 'dark' ? 'light' : 'dark';
-        document.documentElement.setAttribute('data-theme', n);
-        localStorage.setItem('dv-theme', n);
-        lbl(n);
+        applyTh(nextTh(c), true);
     });
 })();
 

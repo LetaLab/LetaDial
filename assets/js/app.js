@@ -30,26 +30,54 @@ const LetaDial = (() => {
     }
 
     // ── Theme ─────────────────────────────────────────────────────────────────
+    // sesja 071a: 3-theme cycle Light → Dark → Midnight → Light, per-user in DB
     const theme = {
         current: 'light',
+        _order:  ['light', 'dark', 'midnight'],
+        _labels: { light: '🌙 Dark', dark: '🌑 Midnight', midnight: '☀ Light' },
+        _titles: { light: 'Switch to Dark mode', dark: 'Switch to Midnight mode', midnight: 'Switch to Light mode' },
+
+        _next(t) {
+            const idx = this._order.indexOf(t);
+            return this._order[(idx + 1) % this._order.length];
+        },
+
         init() {
-            const saved = localStorage.getItem('dv-theme') || 'light';
+            // DB theme (LETADIAL_BOOT.userTheme) takes precedence over localStorage
+            const boot    = window.LETADIAL_BOOT;
+            const dbTheme = boot?.userTheme;
+            const lsTheme = localStorage.getItem('dv-theme');
+            const saved   = (dbTheme && this._order.includes(dbTheme)) ? dbTheme
+                          : (lsTheme && this._order.includes(lsTheme)) ? lsTheme
+                          : 'light';
+            // Sync localStorage with DB value if they differ
+            if (dbTheme && dbTheme !== lsTheme) {
+                localStorage.setItem('dv-theme', dbTheme);
+            }
             this.apply(saved, false);
             document.querySelectorAll('[data-theme-toggle]').forEach(btn => {
                 btn.addEventListener('click', () => this.toggle());
                 this._update(btn, this.current);
             });
         },
-        toggle() { this.apply(this.current === 'light' ? 'dark' : 'light'); },
+
+        toggle() { this.apply(this._next(this.current)); },
+
         apply(t, save = true) {
+            if (!this._order.includes(t)) t = 'light';
             this.current = t;
             document.documentElement.setAttribute('data-theme', t);
-            if (save) localStorage.setItem('dv-theme', t);
+            if (save) {
+                localStorage.setItem('dv-theme', t);
+                // Save to DB — non-blocking, ignore errors
+                api.post('/api/settings/theme', { theme: t }).catch(() => {});
+            }
             document.querySelectorAll('[data-theme-toggle]').forEach(b => this._update(b, t));
         },
+
         _update(btn, t) {
-            btn.textContent = t === 'dark' ? '☀ Light' : '🌙 Dark';
-            btn.title = t === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
+            btn.textContent = this._labels[t] || '🌙 Dark';
+            btn.title       = this._titles[t] || 'Toggle theme';
         }
     };
 

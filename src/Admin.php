@@ -414,6 +414,7 @@ class Admin
             ['users',       'reset_token',           'VARCHAR — password reset'],
             ['users',       'reset_expires',         'DATETIME — password reset expiry'],
             ['users',       'recent_disabled',       'TINYINT — sesja 064'],
+            ['users',       'theme',                   'VARCHAR — sesja 071a midnight theme'],
             ['users',       'email_pending',         'VARCHAR — sesja 066 email change'],
             ['users',       'email_change_token',    'VARCHAR — sesja 066 email change'],
             ['users',       'email_change_expires',  'DATETIME — sesja 066 email change'],

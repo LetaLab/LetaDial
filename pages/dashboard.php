@@ -95,7 +95,7 @@ $_inline_css = [];
 foreach ($custom_colors as $_ctk => $_cth) {
     if ($_cth) {
         $_h   = $_cth;
-        $_inline_css[] = "[data-theme="{$_ctk}"]{" .
+        $_inline_css[] = "[data-theme=\"{$_ctk}\"]{"  .
             "--primary:{$_h};" .
             "--primary-h:" . _db_darkenHex($_h, 0.15) . ";" .
             "--primary-hover:" . _db_darkenHex($_h, 0.12) . ";" .

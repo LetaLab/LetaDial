@@ -1,6 +1,6 @@
 <?php
 /**
- * LetaDial — Admin Model (sesja 065 + 066 + 067 + 068 + 069)
+ * LetaDial — Admin Model (sesja 065 + 066 + 067 + 068 + 069 + 071b)
  *
  * Static methods for the admin panel.
  * 065: Blocked IPs, Users, Login History, Install Check, Export
@@ -8,6 +8,7 @@
  * 067: Invite User (send setup-account link to new user email)
  * 068: Registration toggle (registration_enabled setting)
  * 069: Direct user creation (admin sets login + email + password + role immediately)
+ * 071b: installCheck — 3 nowe kolumny theme_*_primary
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -120,23 +121,6 @@ class Admin
 
     // ── Direct User Creation (sesja 069) ──────────────────────────────────────
 
-    /**
-     * Create a user account immediately with a password set by the admin.
-     * No email required, no activation token, account is active right away.
-     * Admin may choose role (user or admin).
-     *
-     * This complements invite (067) for cases where SMTP is unavailable or
-     * the admin wants to hand credentials directly to the new user.
-     *
-     * Security:
-     *   - Login + email uniqueness enforced
-     *   - Password validated via Password::validate()
-     *   - Role restricted to 'user' or 'admin'
-     *   - Rate limit: 20 creations per admin per hour (prevents abuse if session hijacked)
-     *   - Cannot be used to create a second admin without intentional choice
-     *
-     * @return array{ok: bool, user_id?: int, login?: string, error?: string}
-     */
     public static function createUser(
         string $login,
         string $email,
@@ -148,7 +132,6 @@ class Admin
         $email = strtolower(trim($email));
         $role  = in_array($role, ['user', 'admin'], true) ? $role : 'user';
 
-        // ── Validate login ────────────────────────────────────────────────────
         if (!$login) {
             return ['ok' => false, 'error' => 'Login is required.'];
         }
@@ -156,18 +139,15 @@ class Admin
             return ['ok' => false, 'error' => 'Login must be 3–50 characters: letters, numbers, underscore only.'];
         }
 
-        // ── Validate email ────────────────────────────────────────────────────
         if (!$email || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
             return ['ok' => false, 'error' => 'Please enter a valid email address.'];
         }
 
-        // ── Validate password ─────────────────────────────────────────────────
         $pwErrors = Password::validate($password);
         if (!empty($pwErrors)) {
             return ['ok' => false, 'error' => implode(' ', $pwErrors)];
         }
 
-        // ── Uniqueness checks ─────────────────────────────────────────────────
         $loginTaken = DB::val("SELECT id FROM users WHERE login = ?", [$login]);
         if ($loginTaken) {
             return ['ok' => false, 'error' => 'This login is already taken.'];
@@ -178,7 +158,6 @@ class Admin
             return ['ok' => false, 'error' => 'This email address is already registered.'];
         }
 
-        // ── Insert ────────────────────────────────────────────────────────────
         $hash = Password::hash($password);
 
         DB::run(
@@ -408,26 +387,29 @@ class Admin
 
         // Key columns
         $colChecks = [
-            ['users',       'totp_secret',          'VARCHAR — 2FA support'],
-            ['users',       'totp_enabled',          'TINYINT — 2FA flag'],
-            ['users',       'avatar_path',           'VARCHAR — sesja 001 migrate'],
-            ['users',       'reset_token',           'VARCHAR — password reset'],
-            ['users',       'reset_expires',         'DATETIME — password reset expiry'],
-            ['users',       'recent_disabled',       'TINYINT — sesja 064'],
-            ['users',       'theme',                   'VARCHAR — sesja 071a midnight theme'],
-            ['users',       'email_pending',         'VARCHAR — sesja 066 email change'],
-            ['users',       'email_change_token',    'VARCHAR — sesja 066 email change'],
-            ['users',       'email_change_expires',  'DATETIME — sesja 066 email change'],
-            ['sessions',    'totp_verified',         'TINYINT — 2FA session flag'],
-            ['sessions',    'pending_totp',          'VARCHAR — 2FA setup token'],
-            ['dials',       'notes',                 'TEXT — sesja 054'],
-            ['dials',       'pinned',                'TINYINT — sesja 061'],
-            ['dials',       'click_count',           'INT — click tracking'],
-            ['dials',       'last_click',            'DATETIME — recent tab'],
-            ['groups_list', 'icon',                  'VARCHAR — emoji icon'],
-            ['groups_list', 'color',                 'VARCHAR — tab color'],
-            ['groups_list', 'icon_path',             'VARCHAR — custom icon image'],
-            ['rate_limits', 'key_plain',             'VARCHAR — admin blocked IPs display'],
+            ['users',       'totp_secret',             'VARCHAR — 2FA support'],
+            ['users',       'totp_enabled',             'TINYINT — 2FA flag'],
+            ['users',       'avatar_path',              'VARCHAR — sesja 001 migrate'],
+            ['users',       'reset_token',              'VARCHAR — password reset'],
+            ['users',       'reset_expires',            'DATETIME — password reset expiry'],
+            ['users',       'recent_disabled',          'TINYINT — sesja 064'],
+            ['users',       'theme',                    'VARCHAR — sesja 071a midnight theme'],
+            ['users',       'theme_light_primary',      'VARCHAR(7) — sesja 071b custom color'],
+            ['users',       'theme_dark_primary',       'VARCHAR(7) — sesja 071b custom color'],
+            ['users',       'theme_midnight_primary',   'VARCHAR(7) — sesja 071b custom color'],
+            ['users',       'email_pending',            'VARCHAR — sesja 066 email change'],
+            ['users',       'email_change_token',       'VARCHAR — sesja 066 email change'],
+            ['users',       'email_change_expires',     'DATETIME — sesja 066 email change'],
+            ['sessions',    'totp_verified',            'TINYINT — 2FA session flag'],
+            ['sessions',    'pending_totp',             'VARCHAR — 2FA setup token'],
+            ['dials',       'notes',                    'TEXT — sesja 054'],
+            ['dials',       'pinned',                   'TINYINT — sesja 061'],
+            ['dials',       'click_count',              'INT — click tracking'],
+            ['dials',       'last_click',               'DATETIME — recent tab'],
+            ['groups_list', 'icon',                     'VARCHAR — emoji icon'],
+            ['groups_list', 'color',                    'VARCHAR — tab color'],
+            ['groups_list', 'icon_path',                'VARCHAR — custom icon image'],
+            ['rate_limits', 'key_plain',                'VARCHAR — admin blocked IPs display'],
         ];
 
         foreach ($colChecks as [$table, $col, $desc]) {

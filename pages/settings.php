@@ -32,6 +32,15 @@ $smtp_enabled    = defined('SMTP_ENABLED') && SMTP_ENABLED;
 $current_session_id = Auth::getSessionId();
 $app_version     = defined('APP_VERSION') ? APP_VERSION : '—';
 
+// ── Custom Colors per-theme (sesja 071b) ──────────────────────────────────────
+$_valid_hex = '/^#[0-9A-Fa-f]{6}$/i';
+$custom_colors = [
+    'light'    => (preg_match($_valid_hex, $user['theme_light_primary']    ?? '') ? strtolower($user['theme_light_primary'])    : null),
+    'dark'     => (preg_match($_valid_hex, $user['theme_dark_primary']     ?? '') ? strtolower($user['theme_dark_primary'])     : null),
+    'midnight' => (preg_match($_valid_hex, $user['theme_midnight_primary'] ?? '') ? strtolower($user['theme_midnight_primary']) : null),
+];
+$custom_colors_json = json_encode($custom_colors, JSON_HEX_TAG);
+
 $backup_count = 0;
 if ($totp_enabled) {
     $backup_count = (int)(DB::val(
@@ -127,6 +136,70 @@ body { padding:0; min-height:100vh; background:var(--bg); }
 .about-link-btn { display:inline-flex; align-items:center; gap:.5rem; padding:.55rem 1rem; background:var(--surface-alt); border:1.5px solid var(--border); border-radius:var(--radius-md); font-size:.875rem; color:var(--text-muted); text-decoration:none; font-family:var(--font-sans); font-weight:500; transition:all var(--transition); cursor:pointer; }
 .about-link-btn:hover { border-color:var(--primary); color:var(--primary); background:var(--primary-bg); text-decoration:none; }
 .about-meta { font-size:.78rem; color:var(--text-faint); line-height:1.6; }
+/* ── Custom Colors (sesja 071b) ────────────────────────────────────────────── */
+.color-theme-tabs { display:flex; gap:4px; margin-bottom:1rem; border-bottom:1px solid var(--border); }
+.color-theme-tab {
+    padding:.45rem 1.1rem; font-size:.875rem; font-family:var(--font-sans); font-weight:500;
+    color:var(--text-muted); background:none; border:none; border-bottom:3px solid transparent;
+    margin-bottom:-1px; cursor:pointer; transition:color var(--transition),border-color var(--transition);
+    white-space:nowrap;
+}
+.color-theme-tab:hover { color:var(--text); }
+.color-theme-tab.active { color:var(--primary); border-bottom-color:var(--primary); font-weight:600; }
+.color-tab-pane { display:none; }
+.color-tab-pane.active { display:block; animation:colorTabIn .12s ease; }
+@keyframes colorTabIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
+.color-status {
+    display:flex; align-items:center; gap:.6rem; padding:.45rem .75rem;
+    background:var(--surface-alt); border:1px solid var(--border); border-radius:var(--radius-sm);
+    font-size:.82rem; color:var(--text-muted); margin-bottom:.75rem;
+}
+.color-status-dot {
+    width:16px; height:16px; border-radius:50%; flex-shrink:0;
+    border:2px solid rgba(0,0,0,.12); display:inline-block;
+}
+.color-suggestions { display:flex; flex-wrap:wrap; gap:8px; margin:.75rem 0; }
+.color-swatch {
+    width:34px; height:34px; border-radius:50%; cursor:pointer;
+    border:3px solid transparent; transition:transform .15s,border-color .15s,box-shadow .15s;
+    outline:none; flex-shrink:0;
+}
+.color-swatch:hover  { transform:scale(1.15); box-shadow:0 2px 8px rgba(0,0,0,.2); }
+.color-swatch.active { border-color:var(--text); box-shadow:0 0 0 2px var(--text); }
+.color-swatch[title]:hover::after {
+    content:attr(title); position:absolute; bottom:calc(100% + 6px); left:50%;
+    transform:translateX(-50%); background:var(--text); color:var(--bg);
+    font-size:.7rem; padding:3px 7px; border-radius:4px; white-space:nowrap;
+    pointer-events:none; z-index:10;
+}
+.color-swatch-wrap { position:relative; }
+.color-custom-row {
+    display:flex; align-items:center; gap:.65rem; flex-wrap:wrap; margin:.75rem 0;
+}
+.color-picker-input {
+    width:38px; height:36px; padding:2px; border-radius:var(--radius-sm);
+    border:1.5px solid var(--border); background:var(--surface-alt);
+    cursor:pointer; flex-shrink:0;
+}
+.color-picker-input::-webkit-color-swatch-wrapper { padding:0; }
+.color-picker-input::-webkit-color-swatch { border:none; border-radius:3px; }
+.color-hex-input { width:100px; font-family:var(--font-mono); font-size:.875rem; text-transform:uppercase; }
+.color-preview-row {
+    display:flex; align-items:center; gap:.75rem; padding:.6rem .85rem;
+    background:var(--surface-alt); border:1px solid var(--border);
+    border-radius:var(--radius-md); margin:.75rem 0;
+}
+.color-preview-label { font-size:.75rem; color:var(--text-faint); flex-shrink:0; }
+.color-preview-btn {
+    display:inline-flex; align-items:center; gap:.4rem; padding:.4rem .9rem;
+    font-size:.8rem; font-weight:600; border-radius:var(--radius-md); border:none;
+    cursor:default; transition:background .2s,color .2s;
+}
+.color-preview-tab {
+    display:inline-flex; align-items:center; gap:.4rem; padding:.3rem .75rem;
+    font-size:.8rem; font-weight:600; border-radius:var(--radius-sm);
+    border-bottom:3px solid currentColor;
+}
 @media (max-width:640px) {
     .settings-main { padding:1.25rem 1rem 3rem; }
     .settings-section-body { padding:1.1rem; }
@@ -336,7 +409,123 @@ body { padding:0; min-height:100vh; background:var(--bg); }
         </div>
     </div>
 
-    <!-- ══ 6: About (sesja 067) ══ -->
+    <!-- ══ 6: Custom Colors (sesja 071b) ══ -->
+    <div class="settings-section">
+        <div class="settings-section-header">
+            <span class="settings-section-icon">🎨</span>
+            <h2>Custom Colors</h2>
+        </div>
+        <div class="settings-section-body">
+            <p class="field-hint" style="margin-bottom:1rem">
+                Customize the primary accent color for each theme.
+                Changes apply immediately — save to make them permanent.
+            </p>
+
+            <!-- Zakładki motywów -->
+            <div class="color-theme-tabs">
+                <button class="color-theme-tab active" data-ctab="light">☀ Light</button>
+                <button class="color-theme-tab" data-ctab="dark">🌙 Dark</button>
+                <button class="color-theme-tab" data-ctab="midnight">🌑 Midnight</button>
+            </div>
+
+            <?php foreach (['light','dark','midnight'] as $_ct):
+                $_pal = [
+                    'light'    => [
+                        ['#690b22','Burgundy (default)'],['#1e40af','Royal Blue'],
+                        ['#047857','Emerald'],['#b45309','Amber'],
+                        ['#6d28d9','Violet'],['#be185d','Rose'],
+                    ],
+                    'dark'     => [
+                        ['#e05070','Rose (default)'],['#60a8f8','Sky Blue'],
+                        ['#34d399','Emerald'],['#fbbf24','Amber'],
+                        ['#a78bfa','Violet'],['#f472b6','Pink'],
+                    ],
+                    'midnight' => [
+                        ['#ff6b8a','Rose (default)'],['#62b0ff','Sky Blue'],
+                        ['#44d490','Emerald'],['#fbbf24','Amber'],
+                        ['#c4b5fd','Lavender'],['#fca5a5','Salmon'],
+                    ],
+                ];
+                $_cur = $custom_colors[$_ct];
+                $_has = !empty($_cur);
+            ?>
+            <div class="color-tab-pane<?= $_ct === 'light' ? ' active' : '' ?>"
+                 id="ctab-<?= $_ct ?>">
+
+                <!-- Status -->
+                <div class="color-status">
+                    <?php if ($_has): ?>
+                    <span class="color-status-dot" style="background:<?= h($_cur) ?>"></span>
+                    <span>Custom color: <strong><?= h($_cur) ?></strong></span>
+                    <?php else: ?>
+                    <span>Using default color for this theme</span>
+                    <?php endif; ?>
+                </div>
+
+                <!-- Palette sugestii -->
+                <div class="color-suggestions" id="suggestions-<?= $_ct ?>">
+                    <?php foreach ($_pal[$_ct] as [$_ph, $_pl]): ?>
+                    <div class="color-swatch-wrap">
+                        <button type="button"
+                            class="color-swatch<?= ($_has && strtolower($_ph) === $_cur) ? ' active' : '' ?>"
+                            data-cswatch="<?= $_ct ?>"
+                            data-hex="<?= h($_ph) ?>"
+                            title="<?= h($_pl) ?>"
+                            style="background:<?= h($_ph) ?>"
+                            aria-label="<?= h($_pl) ?>"></button>
+                    </div>
+                    <?php endforeach; ?>
+                </div>
+
+                <!-- Custom color row -->
+                <div class="color-custom-row">
+                    <input type="color" id="color-picker-<?= $_ct ?>"
+                           class="color-picker-input"
+                           value="<?= h($_has ? $_cur : '#690b22') ?>"
+                           title="Open color picker">
+                    <input type="text" id="color-hex-<?= $_ct ?>"
+                           class="form-input color-hex-input"
+                           maxlength="7"
+                           placeholder="#rrggbb"
+                           value="<?= h($_has ? strtoupper($_cur) : '') ?>"
+                           autocomplete="off"
+                           spellcheck="false">
+                    <button type="button" class="btn btn-ghost btn-sm"
+                            id="color-reset-<?= $_ct ?>"
+                            title="Reset to theme default">↺ Reset</button>
+                </div>
+
+                <!-- Mini preview -->
+                <div class="color-preview-row">
+                    <span class="color-preview-label">Preview:</span>
+                    <button type="button" class="color-preview-btn"
+                            id="preview-btn-<?= $_ct ?>"
+                            style="background:<?= h($_has ? $_cur : 'var(--primary)') ?>;color:<?php
+                                if ($_has) {
+                                    $r=hexdec(substr($_cur,1,2));$g=hexdec(substr($_cur,3,2));$b=hexdec(substr($_cur,5,2));
+                                    echo ((0.299*$r+0.587*$g+0.114*$b)/255)>0.55?'#000000':'#ffffff';
+                                } else { echo 'var(--primary-fg)'; }
+                            ?>">Button</button>
+                    <span class="color-preview-tab"
+                          id="preview-tab-<?= $_ct ?>"
+                          style="color:<?= h($_has ? $_cur : 'var(--primary)') ?>;border-bottom-color:<?= h($_has ? $_cur : 'var(--primary)') ?>">
+                        Active Tab
+                    </span>
+                </div>
+
+            </div>
+            <?php endforeach; ?>
+
+            <div class="inline-alert" id="color-alert" style="margin-top:.75rem">
+                <span id="color-alert-msg"></span>
+            </div>
+            <button type="button" class="btn btn-primary" id="btn-save-color">
+                Save for Light theme
+            </button>
+        </div>
+    </div>
+
+    <!-- ══ 7: About (sesja 067) ══ -->
     <div class="settings-section">
         <div class="settings-section-header">
             <span class="settings-section-icon">ℹ️</span>
@@ -372,6 +561,47 @@ const CSRF_TOKEN      = <?= json_encode($csrf_token) ?>;
 const PW_RULES        = <?= $pw_rules ?>;
 const CURRENT_SESSION = <?= json_encode($current_session_id) ?>;
 
+// ── Custom Colors (sesja 071b) ────────────────────────────────────────────────
+let customColors = <?= $custom_colors_json ?>;  // {light: '#hex'|null, dark: ..., midnight: ...}
+
+// Color manipulation helpers (identyczne jak w app.js theme module)
+function _hexToRgb(hex) {
+    return [parseInt(hex.slice(1,3),16), parseInt(hex.slice(3,5),16), parseInt(hex.slice(5,7),16)];
+}
+function _darken(hex, amt) {
+    const [r,g,b] = _hexToRgb(hex);
+    return '#' + [r,g,b].map(v => Math.max(0,Math.min(255,Math.round(v*(1-amt)))).toString(16).padStart(2,'0')).join('');
+}
+function _contrastFg(hex) {
+    const [r,g,b] = _hexToRgb(hex);
+    return (0.299*r + 0.587*g + 0.114*b)/255 > 0.55 ? '#000000' : '#ffffff';
+}
+function _toRgba(hex, a) {
+    const [r,g,b] = _hexToRgb(hex);
+    return `rgba(${r},${g},${b},${a})`;
+}
+function _setCssVars(hex) {
+    const root = document.documentElement;
+    root.style.setProperty('--primary',       hex);
+    root.style.setProperty('--primary-h',     _darken(hex, 0.15));
+    root.style.setProperty('--primary-hover', _darken(hex, 0.12));
+    root.style.setProperty('--primary-fg',    _contrastFg(hex));
+    root.style.setProperty('--primary-bg',    _toRgba(hex, 0.10));
+    root.style.setProperty('--primary-bdr',   _toRgba(hex, 0.30));
+    root.style.setProperty('--border-focus',  hex);
+    root.style.setProperty('--info',          hex);
+}
+function _clearCssVars() {
+    ['--primary','--primary-h','--primary-hover','--primary-fg',
+     '--primary-bg','--primary-bdr','--border-focus','--info']
+    .forEach(v => document.documentElement.style.removeProperty(v));
+}
+function _applyCustomColorForTheme(t) {
+    const hex = customColors[t];
+    if (hex && /^#[0-9A-Fa-f]{6}$/.test(hex)) { _setCssVars(hex); }
+    else { _clearCssVars(); }
+}
+
 // sesja 071a: 3-theme cycle Light → Dark → Midnight → Light
 const THEMES_ORDER  = ['light', 'dark', 'midnight'];
 const THEME_LABELS  = { light: '🌙 Dark', dark: '🌑 Midnight', midnight: '☀ Light' };
@@ -382,6 +612,7 @@ function nextTheme(t) {
 async function applyTheme(t, save) {
     if (!THEMES_ORDER.includes(t)) t = 'light';
     document.documentElement.setAttribute('data-theme', t);
+    _applyCustomColorForTheme(t);  // sesja 071b
     if (save) {
         localStorage.setItem('dv-theme', t);
         try {
@@ -613,6 +844,182 @@ document.getElementById('btn-signout-all-others')?.addEventListener('click',asyn
 });
 
 loadSessions();
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COLOR PICKER (sesja 071b)
+// ═══════════════════════════════════════════════════════════════════════════════
+(function() {
+    const TABS = ['light', 'dark', 'midnight'];
+    const TAB_LABELS = { light: 'Light', dark: 'Dark', midnight: 'Midnight' };
+
+    let activeTab = 'light';
+    // pendingColors: live values per tab (not yet saved)
+    let pendingColors = { ...customColors };
+
+    // ── Tab switching ────────────────────────────────────────────────────────
+    document.querySelectorAll('.color-theme-tab').forEach(btn => {
+        btn.addEventListener('click', () => {
+            activeTab = btn.dataset.ctab;
+            document.querySelectorAll('.color-theme-tab').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            document.querySelectorAll('.color-tab-pane').forEach(p => p.classList.remove('active'));
+            document.getElementById('ctab-' + activeTab)?.classList.add('active');
+            updateSaveBtn();
+        });
+    });
+
+    // ── Per-tab events ────────────────────────────────────────────────────────
+    TABS.forEach(tab => {
+        // Palette swatches
+        document.querySelectorAll(`[data-cswatch="${tab}"]`).forEach(btn => {
+            btn.addEventListener('click', () => {
+                const hex = btn.dataset.hex;
+                setPendingColor(tab, hex);
+            });
+        });
+
+        // Color picker input
+        const picker = document.getElementById('color-picker-' + tab);
+        picker?.addEventListener('input', function() {
+            setPendingColor(tab, this.value);
+        });
+
+        // Hex text input
+        const hexInput = document.getElementById('color-hex-' + tab);
+        hexInput?.addEventListener('input', function() {
+            let val = this.value.trim();
+            if (!val.startsWith('#')) val = '#' + val;
+            if (/^#[0-9A-Fa-f]{6}$/.test(val)) {
+                setPendingColor(tab, val.toLowerCase(), false); // don't update hex input again
+                picker && (picker.value = val.toLowerCase());
+                updateSwatchSelection(tab, val.toLowerCase());
+                applyPreview(tab, val.toLowerCase());
+            }
+        });
+        hexInput?.addEventListener('blur', function() {
+            // Normalise display on blur
+            const hex = pendingColors[tab];
+            this.value = hex ? hex.toUpperCase() : '';
+        });
+
+        // Reset button
+        document.getElementById('color-reset-' + tab)?.addEventListener('click', () => {
+            setPendingColor(tab, null);
+        });
+    });
+
+    // ── Set pending color (live preview) ─────────────────────────────────────
+    function setPendingColor(tab, hex, updateHexInput = true) {
+        pendingColors[tab] = hex;
+
+        // Update hex input display
+        if (updateHexInput) {
+            const hexEl = document.getElementById('color-hex-' + tab);
+            if (hexEl) hexEl.value = hex ? hex.toUpperCase() : '';
+        }
+
+        // Update color picker value
+        if (hex) {
+            const picker = document.getElementById('color-picker-' + tab);
+            if (picker) picker.value = hex;
+        }
+
+        // Update swatch selection
+        updateSwatchSelection(tab, hex);
+
+        // Apply preview
+        applyPreview(tab, hex);
+
+        // If this is the currently active theme — apply CSS vars live
+        const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+        if (tab === currentTheme) {
+            customColors[tab] = hex;  // temporary — will revert if not saved
+            _applyCustomColorForTheme(tab);
+        }
+    }
+
+    function updateSwatchSelection(tab, hex) {
+        document.querySelectorAll(`[data-cswatch="${tab}"]`).forEach(btn => {
+            btn.classList.toggle('active', hex && btn.dataset.hex.toLowerCase() === hex.toLowerCase());
+        });
+    }
+
+    function applyPreview(tab, hex) {
+        const previewBtn = document.getElementById('preview-btn-' + tab);
+        const previewTab = document.getElementById('preview-tab-' + tab);
+        if (!previewBtn && !previewTab) return;
+
+        const resolvedHex = hex || getDefaultPrimary(tab);
+        const fg = _contrastFg(resolvedHex);
+
+        if (previewBtn) {
+            previewBtn.style.background = resolvedHex;
+            previewBtn.style.color = fg;
+        }
+        if (previewTab) {
+            previewTab.style.color = resolvedHex;
+            previewTab.style.borderBottomColor = resolvedHex;
+        }
+    }
+
+    function getDefaultPrimary(tab) {
+        // Fallback defaults per theme (nie pobieramy z CSS bo zależy od motywu)
+        return { light: '#690b22', dark: '#e05070', midnight: '#ff6b8a' }[tab] || '#690b22';
+    }
+
+    // ── Save button ───────────────────────────────────────────────────────────
+    function updateSaveBtn() {
+        const btn = document.getElementById('btn-save-color');
+        if (btn) btn.textContent = 'Save for ' + TAB_LABELS[activeTab] + ' theme';
+    }
+
+    document.getElementById('btn-save-color')?.addEventListener('click', async () => {
+        const tab   = activeTab;
+        const color = pendingColors[tab] || null;  // null = reset
+
+        const btn = document.getElementById('btn-save-color');
+        btn.disabled = true; btn.textContent = '…';
+
+        const r = await apiPost('/api/settings/primary-color', { theme: tab, color });
+        btn.disabled = false; updateSaveBtn();
+
+        if (!r.ok) {
+            showAlert('color-alert', 'color-alert-msg', 'error', r.error || 'Could not save color.');
+            // Revert live preview to saved state
+            customColors[tab] = null;  // will be fixed on reload
+            const ct = document.documentElement.getAttribute('data-theme') || 'light';
+            if (tab === ct) _applyCustomColorForTheme(tab);
+            return;
+        }
+
+        // Persist to local state
+        customColors[tab] = r.color;
+        pendingColors[tab] = r.color;
+
+        const msg = r.color
+            ? `Custom color saved for ${TAB_LABELS[tab]} theme.`
+            : `${TAB_LABELS[tab]} theme reset to default color.`;
+        showAlert('color-alert', 'color-alert-msg', 'success', msg);
+
+        // Update status row in the active tab
+        const statusEl = document.querySelector(`#ctab-${tab} .color-status`);
+        if (statusEl) {
+            if (r.color) {
+                statusEl.innerHTML = `<span class="color-status-dot" style="background:${r.color}"></span><span>Custom color: <strong>${r.color.toUpperCase()}</strong></span>`;
+            } else {
+                statusEl.innerHTML = `<span>Using default color for this theme</span>`;
+            }
+        }
+    });
+
+    // ── Initialize previews ───────────────────────────────────────────────────
+    TABS.forEach(tab => applyPreview(tab, pendingColors[tab]));
+    updateSaveBtn();
+    // Apply current theme's custom color (CSS vars)
+    const ct = document.documentElement.getAttribute('data-theme') || 'light';
+    _applyCustomColorForTheme(ct);
+
+})();
 </script>
 </body>
 </html>

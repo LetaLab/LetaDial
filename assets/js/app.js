@@ -67,6 +67,7 @@ const LetaDial = (() => {
             if (!this._order.includes(t)) t = 'light';
             this.current = t;
             document.documentElement.setAttribute('data-theme', t);
+            this._applyCustomColor(t);   // sesja 071b — custom primary color
             if (save) {
                 localStorage.setItem('dv-theme', t);
                 // Save to DB — non-blocking, ignore errors
@@ -78,7 +79,57 @@ const LetaDial = (() => {
         _update(btn, t) {
             btn.textContent = this._labels[t] || '🌙 Dark';
             btn.title       = this._titles[t] || 'Toggle theme';
-        }
+        },
+
+        // ── Custom color helpers (sesja 071b) ─────────────────────────────
+        _hexToRgb(hex) {
+            return [parseInt(hex.slice(1,3),16), parseInt(hex.slice(3,5),16), parseInt(hex.slice(5,7),16)];
+        },
+        _darken(hex, amt) {
+            const [r,g,b] = this._hexToRgb(hex);
+            return '#' + [r,g,b]
+                .map(v => Math.max(0,Math.min(255,Math.round(v*(1-amt)))).toString(16).padStart(2,'0'))
+                .join('');
+        },
+        _contrastFg(hex) {
+            const [r,g,b] = this._hexToRgb(hex);
+            return (0.299*r + 0.587*g + 0.114*b)/255 > 0.55 ? '#000000' : '#ffffff';
+        },
+        _toRgba(hex, a) {
+            const [r,g,b] = this._hexToRgb(hex);
+            return `rgba(${r},${g},${b},${a})`;
+        },
+
+        /**
+         * Czyta customColors z LETADIAL_BOOT i nadpisuje CSS vars.
+         * PHP inline <style> zapewnia zero flash przy zaladowaniu.
+         * JS element.style ma najwyzszy priorytet — wygrywa z kazdym selektorem.
+         */
+        _applyCustomColor(t) {
+            const colors = window.LETADIAL_BOOT?.customColors || {};
+            const hex = colors[t];
+            if (hex && /^#[0-9A-Fa-f]{6}$/i.test(hex)) {
+                this._setCssVars(hex);
+            } else {
+                this._clearCssVars();
+            }
+        },
+        _setCssVars(hex) {
+            const root = document.documentElement;
+            root.style.setProperty('--primary',       hex);
+            root.style.setProperty('--primary-h',     this._darken(hex, 0.15));
+            root.style.setProperty('--primary-hover', this._darken(hex, 0.12));
+            root.style.setProperty('--primary-fg',    this._contrastFg(hex));
+            root.style.setProperty('--primary-bg',    this._toRgba(hex, 0.10));
+            root.style.setProperty('--primary-bdr',   this._toRgba(hex, 0.30));
+            root.style.setProperty('--border-focus',  hex);
+            root.style.setProperty('--info',          hex);
+        },
+        _clearCssVars() {
+            ['--primary','--primary-h','--primary-hover','--primary-fg',
+             '--primary-bg','--primary-bdr','--border-focus','--info']
+                .forEach(v => document.documentElement.style.removeProperty(v));
+        },
     };
 
     // ── API ───────────────────────────────────────────────────────────────────

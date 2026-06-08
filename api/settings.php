@@ -1,11 +1,13 @@
 <?php
 /**
- * LetaDial — Settings API (sesja 058 + 066)
+ * LetaDial — Settings API (sesja 058 + 066 + 071a + 071b)
  *
  * POST /api/settings/password      — change password
  * POST /api/settings/backup-codes  — regenerate 2FA backup codes
  * GET  /api/settings/backup-count  — unused backup codes count
  * POST /api/settings/recent        — toggle Recent tab {disabled}
+ * POST /api/settings/theme         — save theme to DB (sesja 071a)
+ * POST /api/settings/primary-color — save custom primary color per theme (sesja 071b)
  *
  * sesja 066:
  * GET  /api/settings/sessions           — list current user's active sessions
@@ -57,7 +59,6 @@ if ($method === 'GET' && $action === 'sessions') {
          ORDER BY last_activity DESC",
         [$user['id']]
     );
-    // Mark the current session
     foreach ($sessions as &$s) {
         $s['is_current'] = ($s['id'] === $currentSessionId);
     }
@@ -198,14 +199,12 @@ if ($action === 'recent') {
 
 // ── sesja 066: Sessions ───────────────────────────────────────────────────────
 
-// POST /api/settings/sessions/delete — {session_id}
 if ($action === 'sessions' && $sub_action === 'delete') {
     $sessionId = trim($body['session_id'] ?? '');
     if (!$sessionId) {
         http_response_code(422);
         echo json_encode(['ok' => false, 'error' => 'session_id required.']); exit;
     }
-    // Verify the session belongs to this user
     $sess = DB::row(
         "SELECT id FROM sessions WHERE id = ? AND user_id = ?",
         [$sessionId, $user['id']]
@@ -214,7 +213,6 @@ if ($action === 'sessions' && $sub_action === 'delete') {
         http_response_code(404);
         echo json_encode(['ok' => false, 'error' => 'Session not found.']); exit;
     }
-    // Cannot delete current session from here — use Sign out
     if ($sessionId === Auth::getSessionId()) {
         http_response_code(422);
         echo json_encode(['ok' => false, 'error' => 'Cannot delete the current session. Use Sign out instead.']); exit;
@@ -224,7 +222,6 @@ if ($action === 'sessions' && $sub_action === 'delete') {
     exit;
 }
 
-// POST /api/settings/sessions/delete-all — delete all OTHER sessions (keep current)
 if ($action === 'sessions' && $sub_action === 'delete-all') {
     $currentId = Auth::getSessionId();
     $count = DB::run(
@@ -237,10 +234,8 @@ if ($action === 'sessions' && $sub_action === 'delete-all') {
 
 // ── sesja 066: Email Change ───────────────────────────────────────────────────
 
-// POST /api/settings/email — initiate change {new_email}
 if ($action === 'email' && $sub_action === null) {
 
-    // Rate limit: 3 email change requests per hour
     if (RateLimit::check('settings_email', (string)$user['id'], 3, 3600, 3600)) {
         http_response_code(429);
         echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again in an hour.']); exit;
@@ -258,13 +253,11 @@ if ($action === 'email' && $sub_action === null) {
         echo json_encode(['ok' => false, 'error' => 'Invalid email address format.']); exit;
     }
 
-    // Same as current email?
     if ($newEmail === strtolower($user['email'])) {
         http_response_code(422);
         echo json_encode(['ok' => false, 'error' => 'This is already your current email address.']); exit;
     }
 
-    // Email already taken?
     $taken = DB::val(
         "SELECT id FROM users WHERE (email = ? OR email_pending = ?) AND id != ?",
         [$newEmail, $newEmail, $user['id']]
@@ -274,30 +267,27 @@ if ($action === 'email' && $sub_action === null) {
         echo json_encode(['ok' => false, 'error' => 'This email address is already in use.']); exit;
     }
 
-    // Generate token
-    $token   = bin2hex(random_bytes(32)); // 64-char hex
-    $expires = date('Y-m-d H:i:s', time() + 3600); // 1 hour
+    $token   = bin2hex(random_bytes(32));
+    $expires = date('Y-m-d H:i:s', time() + 3600);
 
     DB::run(
         "UPDATE users SET email_pending = ?, email_change_token = ?, email_change_expires = ? WHERE id = ?",
         [$newEmail, $token, $expires, $user['id']]
     );
 
-    // Send confirmation email to the NEW address
     $sent = false;
     if (defined('SMTP_ENABLED') && SMTP_ENABLED) {
         $sent = Mailer::sendEmailChange($newEmail, $token);
     }
 
     echo json_encode([
-        'ok'          => true,
-        'email_sent'  => $sent,
+        'ok'           => true,
+        'email_sent'   => $sent,
         'smtp_enabled' => defined('SMTP_ENABLED') && SMTP_ENABLED,
     ]);
     exit;
 }
 
-// POST /api/settings/email/cancel — cancel pending change
 if ($action === 'email' && $sub_action === 'cancel') {
     DB::run(
         "UPDATE users SET email_pending = NULL, email_change_token = NULL, email_change_expires = NULL WHERE id = ?",
@@ -308,8 +298,7 @@ if ($action === 'email' && $sub_action === 'cancel') {
     exit;
 }
 
-
-// ── POST /api/settings/theme — save chosen theme to DB (sesja 071a) ─────────
+// ── POST /api/settings/theme — save chosen theme to DB (sesja 071a) ──────────
 if ($action === 'theme') {
     $allowed = ['light', 'dark', 'midnight'];
     $theme   = trim($body['theme'] ?? '');
@@ -319,6 +308,45 @@ if ($action === 'theme') {
     }
     DB::run("UPDATE users SET theme = ? WHERE id = ?", [$theme, $user['id']]);
     echo json_encode(['ok' => true, 'theme' => $theme]);
+    exit;
+}
+
+// ── POST /api/settings/primary-color — custom accent color (sesja 071b) ──────
+//
+// Body: {"theme": "light"|"dark"|"midnight", "color": "#rrggbb"|null}
+// color = null lub "" → reset do domyślnego (NULL w DB)
+// Kolor musi pasować do #[0-9A-Fa-f]{6} (7 znaków, zaczynający się od #)
+if ($action === 'primary-color') {
+    $allowedThemes = ['light', 'dark', 'midnight'];
+    $theme = trim($body['theme'] ?? '');
+
+    if (!in_array($theme, $allowedThemes, true)) {
+        http_response_code(422);
+        echo json_encode(['ok' => false, 'error' => 'Invalid theme. Use: light, dark, midnight.']); exit;
+    }
+
+    // Obsługa resetu (null, "", "null")
+    $rawColor = $body['color'] ?? null;
+    if ($rawColor === null || $rawColor === '' || $rawColor === 'null') {
+        $color = null;
+    } else {
+        $color = trim((string)$rawColor);
+        // Jeśli user wpisał bez # — dodaj
+        if (strlen($color) === 6 && ctype_xdigit($color)) {
+            $color = '#' . $color;
+        }
+        if (!preg_match('/^#[0-9A-Fa-f]{6}$/', $color)) {
+            http_response_code(422);
+            echo json_encode(['ok' => false, 'error' => 'Invalid color format. Use #RRGGBB (7 characters).']); exit;
+        }
+        $color = strtolower($color);
+    }
+
+    // Nazwa kolumny: theme_light_primary / theme_dark_primary / theme_midnight_primary
+    $col = 'theme_' . $theme . '_primary';
+    DB::run("UPDATE users SET {$col} = ? WHERE id = ?", [$color, $user['id']]);
+
+    echo json_encode(['ok' => true, 'theme' => $theme, 'color' => $color]);
     exit;
 }
 

@@ -31,6 +31,36 @@ $user_theme    = in_array($user['theme'] ?? '', $_valid_themes) ? $user['theme']
 // Update check — only for admin, only if GITHUB_REPO is configured, non-blocking
 // We pass update info to JS which shows the banner — no PHP blocking here
 $show_update_ui = $is_admin && defined('GITHUB_REPO') && GITHUB_REPO !== '';
+
+// ── Custom Colors per-theme (sesja 071b) ──────────────────────────────────────
+// Helper functions — obliczają pochodne CSS zmienne z hex primary
+function _db_hexToRgb(string $hex): array {
+    return [hexdec(substr($hex,1,2)), hexdec(substr($hex,3,2)), hexdec(substr($hex,5,2))];
+}
+function _db_darkenHex(string $hex, float $amt): string {
+    [$r,$g,$b] = _db_hexToRgb($hex);
+    return sprintf('#%02x%02x%02x',
+        max(0,min(255,(int)round($r*(1-$amt)))),
+        max(0,min(255,(int)round($g*(1-$amt)))),
+        max(0,min(255,(int)round($b*(1-$amt))))
+    );
+}
+function _db_contrastFg(string $hex): string {
+    [$r,$g,$b] = _db_hexToRgb($hex);
+    return ((0.299*$r + 0.587*$g + 0.114*$b) / 255) > 0.55 ? '#000000' : '#ffffff';
+}
+function _db_toRgba(string $hex, float $a): string {
+    [$r,$g,$b] = _db_hexToRgb($hex);
+    return "rgba({$r},{$g},{$b},{$a})";
+}
+
+// Pobierz custom colors dla wszystkich 3 motywów (NULL = brak = użyj domyślnego)
+$_valid_hex = '/^#[0-9A-Fa-f]{6}$/i';
+$custom_colors = [
+    'light'    => (preg_match($_valid_hex, $user['theme_light_primary']    ?? '') ? strtolower($user['theme_light_primary'])    : null),
+    'dark'     => (preg_match($_valid_hex, $user['theme_dark_primary']     ?? '') ? strtolower($user['theme_dark_primary'])     : null),
+    'midnight' => (preg_match($_valid_hex, $user['theme_midnight_primary'] ?? '') ? strtolower($user['theme_midnight_primary']) : null),
+];
 ?>
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
@@ -57,6 +87,29 @@ $show_update_ui = $is_admin && defined('GITHUB_REPO') && GITHUB_REPO !== '';
 <link rel="manifest" href="/assets/manifest.json">
 <link rel="stylesheet" href="/assets/css/design-system.css">
 <link rel="stylesheet" href="/assets/css/app.css">
+<?php
+// ── Inline CSS: custom primary colors (sesja 071b) ────────────────────────────
+// Scoped per [data-theme="X"] — nie wpływa na inne motywy
+// Działa natychmiast (zero flash), JS potem nadpisuje via element.style
+$_inline_css = [];
+foreach ($custom_colors as $_ctk => $_cth) {
+    if ($_cth) {
+        $_h   = $_cth;
+        $_inline_css[] = "[data-theme="{$_ctk}"]{" .
+            "--primary:{$_h};" .
+            "--primary-h:" . _db_darkenHex($_h, 0.15) . ";" .
+            "--primary-hover:" . _db_darkenHex($_h, 0.12) . ";" .
+            "--primary-fg:" . _db_contrastFg($_h) . ";" .
+            "--primary-bg:" . _db_toRgba($_h, 0.10) . ";" .
+            "--primary-bdr:" . _db_toRgba($_h, 0.30) . ";" .
+            "--border-focus:{$_h};" .
+            "--info:{$_h};" .
+            "}";
+    }
+}
+if ($_inline_css): ?>
+<style><?= implode('', $_inline_css) ?></style>
+<?php endif; ?>
 <style>
 /* ── Update banner (sesja 059) ───────────────────────────────────────────── */
 .update-banner {
@@ -209,6 +262,7 @@ window.LETADIAL_BOOT = {
     showUpdateUi:   <?= $show_update_ui ? 'true' : 'false' ?>,
     recentDisabled: <?= $recent_disabled ? 'true' : 'false' ?>,
     userTheme:      '<?= $user_theme ?>',
+    customColors:   <?= json_encode($custom_colors) ?>,
 };
 </script>
 <script src="/assets/js/app.js"></script>

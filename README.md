@@ -70,23 +70,134 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
 
 ## Features
 
-- Speed dial grid with custom thumbnails (auto-generated or uploaded)
-- Groups with emoji icons, custom colors, custom image icons
-- Full-text search, sort options (manual drag & drop, A→Z, popular, newest)
-- Two-factor authentication (TOTP - Google Authenticator, Bitwarden, Authy)
-- Import / export JSON
-- Dark mode (auto + manual toggle)
-- Keyboard navigation (Arrow keys, Enter, E, Delete)
-- Dial notes with hover tooltip
-- Bulk select, move, duplicate, delete
-- Pin dials to top of group
-- Recently used virtual tab (last 20 clicked)
-- Auto-fetch page title and description when adding a dial
-- Settings page: password change, backup codes management, UI preferences
-- Forgot password / reset password via email
-- Admin panel: blocked IPs, users, login history, update, install check
-- Auto-update notifications from GitHub Releases (git pull from admin panel)
-- Mobile-responsive, PWA-ready
+### Speed Dial Dashboard
+- Speed dial grid with custom thumbnails (auto-generated via OG image / GD gradient fallback)
+- Custom thumbnail upload (JPG/PNG/WebP → Imagick → WebP 163×100 px, EXIF stripped)
+- Favicon overlay on gradient thumbnails (fetched directly by browser — no server-side SSRF)
+- Bulk refresh thumbnails
+- Dial notes (up to 500 chars, hover tooltip, preserved on duplicate/export)
+- Pin dials to top of group (persists across all sort modes)
+- Duplicate dial — to same or different group (single + bulk)
+- Middle-click opens in background tab (native `<a>` element, no JS window.open)
+- Left-click records click count and opens in new tab
+- Open all dials in new tabs (synchronous — bypasses popup blockers)
+- Drag & drop reorder within group (disabled for pinned dials and non-manual sort)
+- Full-text search across title, URL and notes (debounced 150 ms, `/` shortcut, `×` clear)
+- Sort options per group: Manual / A→Z / Z→A / 🔥 Popular / Newest / Oldest (persisted in localStorage)
+- Keyboard navigation: Arrow keys, Enter (open), E (edit), Delete (confirm delete), Escape
+- "All groups" virtual tab — shows all dials across every group simultaneously
+- Recently used virtual tab — last 20 clicked dials, sorted by last_click DESC
+- OG meta auto-fetch — title and description auto-filled when adding a dial (debounced + blur)
+
+### Groups
+- Groups with emoji icons, custom color per group, custom image icon upload (32×32 WebP, GD decode)
+- Reorder groups left/right from context menu
+- Context menu: rename, delete, move left/right, style (emoji + color + image)
+- Group count badge updates live
+
+### Bulk Actions
+- Multi-select mode (checkbox overlay on cards)
+- Bulk move, duplicate, delete, refresh thumbnails
+- Group picker modal for move/duplicate targets
+- `☑ Select multiple` from single-dial context menu enters bulk mode pre-selecting that dial
+
+### Themes & Customization
+- Three themes: Light / Dark / Midnight (cool navy/graphite)
+- Theme cycle button (Light → Dark → Midnight → Light)
+- Theme saved per-user in database (no flash on page load — PHP inline `<style>` scoped per `[data-theme]`)
+- Custom primary color per-user per-theme (color picker + HEX input + 6 curated suggestions)
+- Automatic contrast FG (#000/#fff) based on luminance
+- Recently used tab can be hidden per-user (Settings → UI Preferences → Hide Recent)
+
+### Authentication & Security
+- Login with rate limiting (IP-based, `REMOTE_ADDR` only — X-Forwarded-For spoofing blocked)
+- TOTP two-factor authentication (Google Authenticator, Bitwarden, Authy)
+- Custom pure-PHP QR code generator (no external libraries) — PNG via GD, inline CSS stripped
+- Admin 2FA enforced — redirect to `/setup-2fa` until configured
+- TOTP time drift tolerance ±60 seconds (wider window for clock-skewed mobile devices)
+- Backup codes (10 × bcrypt, single-use, downloadable as `.txt`)
+- Backup codes regeneration (requires TOTP verification)
+- Remember me (90-day cookie, `HttpOnly`, `Secure`, `SameSite=Strict`)
+- CSRF protection — dual-mode: HMAC-SHA256 (authenticated) + double-submit cookie (pre-auth)
+- AES-256-GCM encrypted TOTP secrets in database
+- Bcrypt passwords (`cost=12`, auto-salted)
+- POST-only logout (GET `/logout` redirects without action)
+- Rate limiting on: login, 2FA, forgot password, thumbnail refresh, import, invite, registration
+- SSRF protection on thumbnail fetch: DNS resolve + private/reserved range block
+- URL scheme whitelist (`http`/`https` only — blocks `ftp://`, `file://`, `javascript:`, etc.)
+- EXIF/metadata stripping on all uploaded images (GD re-encode)
+- `storage/` served by PHP only — direct web access blocked via `.htaccess` deny-all
+- Cookie consent banner on login page (EU ePrivacy Directive 2002/58/EC + GDPR 2016/679)
+- Email activation flow for new accounts (256-bit token, single-use, via `/activate`)
+
+### Sessions
+- All sessions stored in database (not filesystem)
+- View and terminate own active sessions (Settings → Active Sessions)
+- Admin: view and terminate any user's sessions
+- Password change invalidates all sessions
+- Email change invalidates all sessions
+- Force password reset (admin) invalidates all sessions
+
+### Account Management
+- Forgot password / reset via email (256-bit token, 1-hour expiry, single-use)
+- Email change with confirmation link sent to new address (1-hour expiry)
+- Self-registration (toggleable by admin, rate-limited 5/IP/h)
+- Admin: invite user via email (24-hour setup link, user sets own password)
+- Admin: direct user creation (admin sets password, account active immediately, no SMTP required)
+- Admin: force password reset for any user
+
+### Import / Export
+- Export to LetaDial JSON (version 1.1, includes notes, group names, positions)
+- Import LetaDial JSON
+- Import legacy speed dial browser export format (`{"db":{"groups":[],"dials":[]}}`)
+- Import sanitises URLs (`filter_var` + scheme whitelist) and titles (`strip_tags` + truncate)
+- Duplicate URL per group skipped on import
+- Respects `max_dials_per_user` and `max_groups_per_user` limits
+
+### Admin Panel
+- Blocked IPs: list, unblock single / all for IP / unblock all; export CSV/JSON
+- Users: list with stats, delete account (cascades thumbnails + group_icons + avatar), force logout
+- Login history: last N entries, filter by IP or status
+- Sessions: all active sessions across all users, terminate any
+- Auto-update: check GitHub Releases API (cached 6h in `settings` table), update notification banner for admin
+- Update via git pull + `fix_permissions.sh` from admin panel with live output
+- Install Check: PHP extensions, GD WebP, Imagick, DB schema, config constants, security (no `install.php`, HTTPS, `.git` block), filesystem permissions, file integrity via `git status`
+- Registration toggle: enable/disable self-registration with one click
+
+### Installer (`install.php`)
+- 5-step web wizard — no CLI required
+- Detects missing PHP extensions (PDO, GD, WebP support, Imagick, OpenSSL, mbstring)
+- Tests database connection before proceeding
+- Auto-generates `config.php` with cryptographically random `HMAC_KEY` and `ENCRYPTION_KEY`
+- Auto-sets file permissions (`chmod 600` config, `755` dirs, `644` files)
+- Creates `storage/` directory structure with correct ownership
+- Creates all database tables and default settings in one transaction
+- Validates SMTP by sending a test activation email during setup
+- Self-deletes after successful installation
+- `fix_permissions.sh` removes `install.php` on every run (safety net)
+
+### Architecture & Quality
+- Zero external PHP dependencies — no Composer, no CDN, no npm
+- Zero JavaScript frameworks — vanilla ES6+ modules
+- Zero CSS frameworks — custom design system with CSS custom properties
+- System font stack only (`system-ui, -apple-system, 'Segoe UI'`)
+- All thumbnails served as WebP (163×100 px, quality 72) with ETag/304 caching
+- PWA-ready: `manifest.json`, icons (48/192/512 px PNG + SVG), Apple Touch Icon
+- Mobile-responsive layout: hamburger menu, fluid grid (`auto-fill minmax`)
+- OG meta tags on dashboard (pinguin mascot image, title, description)
+- Shared design system CSS between all LetaLab projects
+- Git-based deployment — self-hosted Forgejo or GitHub
+
+---
+
+## Planned / Upcoming
+
+- Avatar upload per user (Imagick → WebP 128×128)
+- Dial size slider (CSS custom properties, saved in DB, live preview)
+- Trusted device — skip 2FA for 30 days on confirmed devices
+- GDPR: full data export (own dials, groups, settings as JSON)
+- GDPR: account self-deletion with cascade
+- i18n — English / Polish (array-based `lang/en.php` + `lang/pl.php`)
 
 ---
 
@@ -369,30 +480,6 @@ Always back up `config.php` and your database before upgrading.
 
 ## Troubleshooting
 
-### Missing database columns after install
-
-If you installed from an older version of `install.php`, some columns may be missing.
-The Admin → Install Check tab will report exactly which columns are absent with migration commands.
-
-Common issues:
-
-```sql
--- Missing rate_limits.key_plain (needed for Blocked IPs panel)
-ALTER TABLE letadial_db.rate_limits ADD COLUMN key_plain varchar(255) NULL AFTER window_start;
-
--- Missing dials.notes
-ALTER TABLE letadial_db.dials ADD COLUMN notes text NULL AFTER url;
-
--- Missing groups_list icon/color columns
-ALTER TABLE letadial_db.groups_list
-  ADD COLUMN icon varchar(10) NULL AFTER created_at,
-  ADD COLUMN color varchar(7) NULL AFTER icon,
-  ADD COLUMN icon_path varchar(255) NULL AFTER color;
-
--- Missing users.recent_disabled
-ALTER TABLE letadial_db.users ADD COLUMN recent_disabled tinyint(1) NOT NULL DEFAULT 0;
-```
-
 ### Thumbnails not showing
 
 ```bash
@@ -400,10 +487,6 @@ sudo bash /var/www/html/LetaDial/fix_permissions.sh
 ```
 
 Check that `storage/thumbnails/` is writable by `www-data`.
-
-### 500 error on login
-
-Check PHP error log and nginx error log. Most common cause: missing DB column (see above) or wrong `config.php` credentials.
 
 ---
 

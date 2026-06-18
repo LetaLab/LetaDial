@@ -107,12 +107,13 @@ const LetaDial = (() => {
          */
         _applyCustomColor(t) {
             const colors = window.LETADIAL_BOOT?.customColors || {};
+            const extras = window.LETADIAL_BOOT?.customExtras || {};
             const hex = colors[t];
-            if (hex && /^#[0-9A-Fa-f]{6}$/i.test(hex)) {
-                this._setCssVars(hex);
-            } else {
-                this._clearCssVars();
-            }
+            if (hex && /^#[0-9A-Fa-f]{6}$/i.test(hex)) { this._setCssVars(hex); }
+            else { this._clearCssVars(); }
+            const extra = extras[t];
+            if (extra) { this._setExtraCssVars(extra.bg || null, extra.text || null); }
+            else { this._clearExtraCssVars(); }
         },
         _setCssVars(hex) {
             const root = document.documentElement;
@@ -128,6 +129,46 @@ const LetaDial = (() => {
         _clearCssVars() {
             ['--primary','--primary-h','--primary-hover','--primary-fg',
              '--primary-bg','--primary-bdr','--border-focus','--info']
+                .forEach(v => document.documentElement.style.removeProperty(v));
+        },
+        // sesja 072
+        _lighten(hex, amt) {
+            const [r,g,b] = this._hexToRgb(hex);
+            return '#' + [r,g,b].map(v => Math.min(255,Math.round(v+(255-v)*amt)).toString(16).padStart(2,'0')).join('');
+        },
+        _luminance(hex) {
+            const [r,g,b] = this._hexToRgb(hex);
+            return (0.299*r + 0.587*g + 0.114*b) / 255;
+        },
+        _setExtraCssVars(bg, text) {
+            const root = document.documentElement;
+            if (bg && /^#[0-9A-Fa-f]{6}$/i.test(bg)) {
+                const lum = this._luminance(bg);
+                root.style.setProperty('--bg', bg);
+                if (lum > 0.5) {
+                    root.style.setProperty('--surface',       this._lighten(bg, 0.55));
+                    root.style.setProperty('--surface-alt',   this._darken(bg, 0.04));
+                    root.style.setProperty('--surface-hover', this._darken(bg, 0.07));
+                    root.style.setProperty('--border',        this._darken(bg, 0.14));
+                    root.style.setProperty('--border-light',  this._darken(bg, 0.08));
+                } else {
+                    root.style.setProperty('--surface',       this._lighten(bg, 0.08));
+                    root.style.setProperty('--surface-alt',   this._lighten(bg, 0.15));
+                    root.style.setProperty('--surface-hover', this._lighten(bg, 0.11));
+                    root.style.setProperty('--border',        this._lighten(bg, 0.24));
+                    root.style.setProperty('--border-light',  this._lighten(bg, 0.17));
+                }
+            }
+            if (text && /^#[0-9A-Fa-f]{6}$/i.test(text)) {
+                const [r,g,b] = this._hexToRgb(text);
+                root.style.setProperty('--text', text);
+                root.style.setProperty('--text-muted', `rgba(${r},${g},${b},0.65)`);
+                root.style.setProperty('--text-faint', `rgba(${r},${g},${b},0.40)`);
+            }
+        },
+        _clearExtraCssVars() {
+            ['--bg','--surface','--surface-alt','--surface-hover','--border','--border-light',
+             '--text','--text-muted','--text-faint']
                 .forEach(v => document.documentElement.style.removeProperty(v));
         },
     };

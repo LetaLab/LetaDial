@@ -513,6 +513,32 @@ body { padding:0; min-height:100vh; background:var(--bg); }
                     </span>
                 </div>
 
+                <!-- sesja 072: BG + Text colors -->
+                <div style="margin:.85rem 0 0;display:grid;grid-template-columns:1fr 1fr;gap:.75rem">
+                    <div>
+                        <div style="font-size:.72rem;font-weight:700;color:var(--text-faint);text-transform:uppercase;letter-spacing:.06em;margin-bottom:.4rem">Background</div>
+                        <div style="display:flex;align-items:center;gap:.4rem;flex-wrap:wrap">
+                            <input type="color" id="color-bg-picker-<?= $_ct ?>" class="color-picker-input"
+                                   value="<?= h($custom_extras[$_ct]['bg'] ?? '#F7F0E8') ?>">
+                            <input type="text" id="color-bg-hex-<?= $_ct ?>" class="form-input"
+                                   style="width:88px;font-family:var(--font-mono);font-size:.82rem" maxlength="7"
+                                   placeholder="#rrggbb" value="<?= h($custom_extras[$_ct]['bg'] ? strtoupper($custom_extras[$_ct]['bg']) : '') ?>">
+                            <button type="button" id="color-bg-reset-<?= $_ct ?>" class="btn btn-ghost btn-sm">↺</button>
+                        </div>
+                    </div>
+                    <div>
+                        <div style="font-size:.72rem;font-weight:700;color:var(--text-faint);text-transform:uppercase;letter-spacing:.06em;margin-bottom:.4rem">Text</div>
+                        <div style="display:flex;align-items:center;gap:.4rem;flex-wrap:wrap">
+                            <input type="color" id="color-text-picker-<?= $_ct ?>" class="color-picker-input"
+                                   value="<?= h($custom_extras[$_ct]['text'] ?? '#1a202c') ?>">
+                            <input type="text" id="color-text-hex-<?= $_ct ?>" class="form-input"
+                                   style="width:88px;font-family:var(--font-mono);font-size:.82rem" maxlength="7"
+                                   placeholder="#rrggbb" value="<?= h($custom_extras[$_ct]['text'] ? strtoupper($custom_extras[$_ct]['text']) : '') ?>">
+                            <button type="button" id="color-text-reset-<?= $_ct ?>" class="btn btn-ghost btn-sm">↺</button>
+                        </div>
+                    </div>
+                </div>
+
             </div>
             <?php endforeach; ?>
 
@@ -980,28 +1006,22 @@ loadSessions();
         const btn = document.getElementById('btn-save-color');
         btn.disabled = true; btn.textContent = '…';
 
-        const r = await apiPost('/api/settings/primary-color', { theme: tab, color });
+        const r  = await apiPost('/api/settings/primary-color', { theme: tab, color });
+        const r2 = await apiPost('/api/settings/theme-extras', { theme: tab, bg: pendingBg[tab]||null, text: pendingText[tab]||null });
         btn.disabled = false; updateSaveBtn();
 
-        if (!r.ok) {
-            showAlert('color-alert', 'color-alert-msg', 'error', r.error || 'Could not save color.');
-            // Revert live preview to saved state
-            customColors[tab] = null;  // will be fixed on reload
-            const ct = document.documentElement.getAttribute('data-theme') || 'light';
-            if (tab === ct) _applyCustomColorForTheme(tab);
+        if (!r.ok || !r2.ok) {
+            showAlert('color-alert', 'color-alert-msg', 'error', r.error || r2.error || 'Could not save colors.');
             return;
         }
 
-        // Persist to local state
-        customColors[tab] = r.color;
-        pendingColors[tab] = r.color;
+        customColors[tab] = r.color; pendingColors[tab] = r.color;
+        customExtras[tab] = { bg: r2.bg, text: r2.text };
+        pendingBg[tab] = r2.bg; pendingText[tab] = r2.text;
+        const ct3 = document.documentElement.getAttribute('data-theme') || 'light';
+        if (tab === ct3) _applyCustomColorForTheme(tab);
+        showAlert('color-alert', 'color-alert-msg', 'success', `Colors saved for ${TAB_LABELS[tab]} theme.`);
 
-        const msg = r.color
-            ? `Custom color saved for ${TAB_LABELS[tab]} theme.`
-            : `${TAB_LABELS[tab]} theme reset to default color.`;
-        showAlert('color-alert', 'color-alert-msg', 'success', msg);
-
-        // Update status row in the active tab
         const statusEl = document.querySelector(`#ctab-${tab} .color-status`);
         if (statusEl) {
             if (r.color) {

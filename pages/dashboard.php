@@ -1,6 +1,9 @@
 <?php
 /**
- * LetaDial — Dashboard (sesja 059: update notification banner for admin)
+ * LetaDial — Dashboard (sesja 059 + 071b + 072)
+ * sesja 059: update notification banner for admin
+ * sesja 071b: custom primary color per theme
+ * sesja 072: custom bg + text colors per theme
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die();
@@ -24,16 +27,12 @@ $groups_json    = json_encode($groups_data, JSON_HEX_TAG | JSON_HEX_QUOT);
 $csrf_token     = htmlspecialchars(CSRF::token(), ENT_QUOTES, 'UTF-8');
 $recent_disabled = (bool)($user['recent_disabled'] ?? false);
 
-// Validate theme from DB — defence against corrupt values
 $_valid_themes = ['light', 'dark', 'midnight'];
 $user_theme    = in_array($user['theme'] ?? '', $_valid_themes) ? $user['theme'] : 'light';
 
-// Update check — only for admin, only if GITHUB_REPO is configured, non-blocking
-// We pass update info to JS which shows the banner — no PHP blocking here
 $show_update_ui = $is_admin && defined('GITHUB_REPO') && GITHUB_REPO !== '';
 
-// ── Custom Colors per-theme (sesja 071b) ──────────────────────────────────────
-// Helper functions — obliczają pochodne CSS zmienne z hex primary
+// ── PHP color helpers (sesja 071b + 072) ──────────────────────────────────────
 function _db_hexToRgb(string $hex): array {
     return [hexdec(substr($hex,1,2)), hexdec(substr($hex,3,2)), hexdec(substr($hex,5,2))];
 }
@@ -45,6 +44,20 @@ function _db_darkenHex(string $hex, float $amt): string {
         max(0,min(255,(int)round($b*(1-$amt))))
     );
 }
+// sesja 072: lighten by mixing with white
+function _db_lightenHex(string $hex, float $amt): string {
+    [$r,$g,$b] = _db_hexToRgb($hex);
+    return sprintf('#%02x%02x%02x',
+        min(255,(int)round($r + (255-$r)*$amt)),
+        min(255,(int)round($g + (255-$g)*$amt)),
+        min(255,(int)round($b + (255-$b)*$amt))
+    );
+}
+// sesja 072: relative luminance (0=black, 1=white)
+function _db_luminance(string $hex): float {
+    [$r,$g,$b] = _db_hexToRgb($hex);
+    return (0.299*$r + 0.587*$g + 0.114*$b) / 255;
+}
 function _db_contrastFg(string $hex): string {
     [$r,$g,$b] = _db_hexToRgb($hex);
     return ((0.299*$r + 0.587*$g + 0.114*$b) / 255) > 0.55 ? '#000000' : '#ffffff';
@@ -54,13 +67,80 @@ function _db_toRgba(string $hex, float $a): string {
     return "rgba({$r},{$g},{$b},{$a})";
 }
 
-// Pobierz custom colors dla wszystkich 3 motywów (NULL = brak = użyj domyślnego)
 $_valid_hex = '/^#[0-9A-Fa-f]{6}$/i';
+
+// ── Custom primary colors (sesja 071b) ────────────────────────────────────────
 $custom_colors = [
     'light'    => (preg_match($_valid_hex, $user['theme_light_primary']    ?? '') ? strtolower($user['theme_light_primary'])    : null),
     'dark'     => (preg_match($_valid_hex, $user['theme_dark_primary']     ?? '') ? strtolower($user['theme_dark_primary'])     : null),
     'midnight' => (preg_match($_valid_hex, $user['theme_midnight_primary'] ?? '') ? strtolower($user['theme_midnight_primary']) : null),
 ];
+
+// ── Custom bg + text colors (sesja 072) ───────────────────────────────────────
+$custom_extras = [];
+foreach (['light', 'dark', 'midnight'] as $_ctk) {
+    $raw = $user['theme_' . $_ctk . '_extra'] ?? null;
+    $custom_extras[$_ctk] = ($raw && is_string($raw)) ? json_decode($raw, true) : null;
+}
+
+// ── Build inline CSS ──────────────────────────────────────────────────────────
+$_inline_css = [];
+
+// Primary colors (071b)
+foreach ($custom_colors as $_ctk => $_cth) {
+    if ($_cth) {
+        $_inline_css[] = "[data-theme=\"{$_ctk}\"]{"
+            . "--primary:{$_cth};"
+            . "--primary-h:"     . _db_darkenHex($_cth, 0.15) . ";"
+            . "--primary-hover:" . _db_darkenHex($_cth, 0.12) . ";"
+            . "--primary-fg:"    . _db_contrastFg($_cth) . ";"
+            . "--primary-bg:"    . _db_toRgba($_cth, 0.10) . ";"
+            . "--primary-bdr:"   . _db_toRgba($_cth, 0.30) . ";"
+            . "--border-focus:{$_cth};"
+            . "--info:{$_cth};"
+            . "}";
+    }
+}
+
+// Background + text colors (072)
+foreach ($custom_extras as $_ctk => $_extra) {
+    if (!is_array($_extra)) continue;
+    $_css = '';
+
+    $_bg = $_extra['bg'] ?? null;
+    $_tx = $_extra['text'] ?? null;
+
+    if ($_bg && preg_match($_valid_hex, $_bg)) {
+        $_lum = _db_luminance($_bg);
+        $_css .= "--bg:{$_bg};";
+        if ($_lum > 0.5) {
+            // Light bg: surface = lighten, surface-alt = slightly darker than bg
+            $_css .= "--surface:"       . _db_lightenHex($_bg, 0.55) . ";";
+            $_css .= "--surface-alt:"   . _db_darkenHex($_bg, 0.04)  . ";";
+            $_css .= "--surface-hover:" . _db_darkenHex($_bg, 0.07)  . ";";
+            $_css .= "--border:"        . _db_darkenHex($_bg, 0.14)  . ";";
+            $_css .= "--border-light:"  . _db_darkenHex($_bg, 0.08)  . ";";
+        } else {
+            // Dark bg: surface = slightly lighter
+            $_css .= "--surface:"       . _db_lightenHex($_bg, 0.08)  . ";";
+            $_css .= "--surface-alt:"   . _db_lightenHex($_bg, 0.15)  . ";";
+            $_css .= "--surface-hover:" . _db_lightenHex($_bg, 0.11)  . ";";
+            $_css .= "--border:"        . _db_lightenHex($_bg, 0.24)  . ";";
+            $_css .= "--border-light:"  . _db_lightenHex($_bg, 0.17)  . ";";
+        }
+    }
+
+    if ($_tx && preg_match($_valid_hex, $_tx)) {
+        [$_r,$_g,$_b] = _db_hexToRgb($_tx);
+        $_css .= "--text:{$_tx};";
+        $_css .= "--text-muted:rgba({$_r},{$_g},{$_b},0.65);";
+        $_css .= "--text-faint:rgba({$_r},{$_g},{$_b},0.40);";
+    }
+
+    if ($_css) {
+        $_inline_css[] = "[data-theme=\"{$_ctk}\"]{" . $_css . "}";
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
@@ -69,7 +149,6 @@ $custom_colors = [
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title><?= $app_name ?></title>
 
-<!-- Open Graph / Social Media Preview -->
 <meta property="og:type"         content="website">
 <meta property="og:url"          content="<?= htmlspecialchars(APP_URL, ENT_QUOTES, 'UTF-8') ?>">
 <meta property="og:title"        content="<?= $app_name ?> — Personal Speed Dial">
@@ -87,33 +166,12 @@ $custom_colors = [
 <link rel="manifest" href="/assets/manifest.json">
 <link rel="stylesheet" href="/assets/css/design-system.css">
 <link rel="stylesheet" href="/assets/css/app.css">
-<?php
-// ── Inline CSS: custom primary colors (sesja 071b) ────────────────────────────
-// Scoped per [data-theme="X"] — nie wpływa na inne motywy
-// Działa natychmiast (zero flash), JS potem nadpisuje via element.style
-$_inline_css = [];
-foreach ($custom_colors as $_ctk => $_cth) {
-    if ($_cth) {
-        $_h   = $_cth;
-        $_inline_css[] = "[data-theme=\"{$_ctk}\"]{"  .
-            "--primary:{$_h};" .
-            "--primary-h:" . _db_darkenHex($_h, 0.15) . ";" .
-            "--primary-hover:" . _db_darkenHex($_h, 0.12) . ";" .
-            "--primary-fg:" . _db_contrastFg($_h) . ";" .
-            "--primary-bg:" . _db_toRgba($_h, 0.10) . ";" .
-            "--primary-bdr:" . _db_toRgba($_h, 0.30) . ";" .
-            "--border-focus:{$_h};" .
-            "--info:{$_h};" .
-            "}";
-    }
-}
-if ($_inline_css): ?>
+<?php if ($_inline_css): ?>
 <style><?= implode('', $_inline_css) ?></style>
 <?php endif; ?>
 <style>
-/* ── Update banner (sesja 059) ───────────────────────────────────────────── */
 .update-banner {
-    display: none; /* shown by JS after async check */
+    display: none;
     background: var(--info-bg);
     border-bottom: 1px solid var(--info-bdr);
     padding: .6rem var(--space-5);
@@ -141,24 +199,19 @@ if ($_inline_css): ?>
 </head>
 <body>
 
-<!-- UPDATE BANNER (admin only, filled by JS) -->
 <?php if ($show_update_ui): ?>
 <div class="update-banner" id="update-banner" role="alert">
     <span>🆕</span>
     <span id="update-banner-text"></span>
-    <button type="button" class="update-banner-dismiss" id="update-banner-dismiss"
-            aria-label="Dismiss">×</button>
+    <button type="button" class="update-banner-dismiss" id="update-banner-dismiss" aria-label="Dismiss">×</button>
 </div>
 <?php endif; ?>
 
-<!-- TOPBAR -->
 <header class="topbar">
     <a href="/" class="topbar-brand">
         <img src="<?= $icon_url ?>" alt="<?= $app_name ?>">
         <span class="topbar-hide-mobile"><?= $app_name ?></span>
     </a>
-
-    <!-- Search bar — centered in topbar -->
     <div class="topbar-search-wrap">
         <div class="topbar-search">
             <svg class="search-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
@@ -168,10 +221,8 @@ if ($_inline_css): ?>
                     aria-label="Clear search" style="display:none">×</button>
         </div>
     </div>
-
-    <!-- Desktop user menu -->
     <div class="topbar-user topbar-hide-mobile">
-        <button class="theme-toggle" data-theme-toggle title="Toggle dark/light mode">🌙 Dark</button>
+        <button class="theme-toggle" data-theme-toggle title="Toggle theme">🌙 Dark</button>
         <div class="topbar-sep"></div>
         <button type="button" id="btn-bulk-select" class="topbar-btn-io" title="Select multiple dials">☑ Select</button>
         <button type="button" id="btn-import" class="topbar-btn-io" title="Import dials from JSON file">↑ Import</button>
@@ -187,14 +238,11 @@ if ($_inline_css): ?>
             <button type="submit" class="btn-signout">Sign out</button>
         </form>
     </div>
-
-    <!-- Mobile hamburger -->
     <button type="button" id="btn-hamburger" class="hamburger topbar-show-mobile" aria-label="Menu" aria-expanded="false">
         <span></span><span></span><span></span>
     </button>
 </header>
 
-<!-- Mobile menu drawer -->
 <div id="mobile-menu" class="mobile-menu topbar-show-mobile" aria-hidden="true">
     <div class="mobile-menu-inner">
         <div class="mobile-menu-user">👤 <?= $user_login ?></div>
@@ -213,7 +261,6 @@ if ($_inline_css): ?>
     </div>
 </div>
 
-<!-- GROUP TABS BAR -->
 <nav class="groups-bar" id="groups-bar" aria-label="Dial groups">
     <button class="group-tab active" data-group-id="all" type="button">
         <span class="tab-name">All</span>
@@ -225,7 +272,6 @@ if ($_inline_css): ?>
     </button>
 </nav>
 
-<!-- MAIN CONTENT -->
 <main class="page-main">
     <?php if ($backup_warning): ?>
     <div class="alert alert-warning" style="margin-bottom:var(--space-5)">
@@ -235,7 +281,6 @@ if ($_inline_css): ?>
     </div>
     <?php endif; ?>
 
-    <!-- Search status bar -->
     <div id="search-info" style="display:none;font-size:.85rem;color:var(--text-muted);margin-bottom:var(--space-3)"></div>
 
     <div class="dial-grid" id="dial-grid">
@@ -263,70 +308,44 @@ window.LETADIAL_BOOT = {
     recentDisabled: <?= $recent_disabled ? 'true' : 'false' ?>,
     userTheme:      '<?= $user_theme ?>',
     customColors:   <?= json_encode($custom_colors) ?>,
+    customExtras:   <?= json_encode($custom_extras) ?>,
 };
 </script>
 <script src="/assets/js/app.js"></script>
 
 <?php if ($show_update_ui): ?>
 <script>
-// ── Update check (sesja 059) ──────────────────────────────────────────────────
-// Runs after page load, async, non-blocking.
-// Uses cached result from DB — no GitHub hit on every pageload.
-// Dismissed state stored in localStorage per version.
 (function() {
     const DISMISS_KEY = 'dv-update-dismissed';
     const banner      = document.getElementById('update-banner');
     const bannerText  = document.getElementById('update-banner-text');
     const dismissBtn  = document.getElementById('update-banner-dismiss');
     const csrf        = window.LETADIAL_BOOT?.csrfToken || '';
-
     if (!banner) return;
-
     async function checkUpdate() {
         try {
-            const res  = await fetch('/api/update', {
-                headers: { 'X-CSRF-Token': csrf },
-                credentials: 'same-origin',
-            });
+            const res  = await fetch('/api/update', { headers: { 'X-CSRF-Token': csrf }, credentials: 'same-origin' });
             if (!res.ok) return;
             const data = await res.json();
-
             if (!data.ok || !data.update_available) return;
-
-            // Check if user already dismissed this version
             const dismissed = localStorage.getItem(DISMISS_KEY);
             if (dismissed === data.latest) return;
-
-            // Show banner
             const notes = data.notes ? ` — ${data.notes}` : '';
             bannerText.innerHTML =
                 `<strong>LetaDial ${data.latest} is available</strong>${escHtml(notes)} &nbsp;` +
-                `<a href="${escHtml(data.url)}" target="_blank" rel="noopener noreferrer">` +
-                `View release →</a>` +
-                `<span style="color:var(--text-faint);font-size:.8em;margin-left:.5rem">` +
-                `(current: ${escHtml(data.current)})</span>`;
+                `<a href="${escHtml(data.url)}" target="_blank" rel="noopener noreferrer">View release →</a>` +
+                `<span style="color:var(--text-faint);font-size:.8em;margin-left:.5rem">(current: ${escHtml(data.current)})</span>`;
             banner.classList.add('show');
-        } catch (e) {
-            // Silently ignore — update check is non-critical
-        }
+        } catch (e) {}
     }
-
     function escHtml(s) {
         return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
-
     dismissBtn?.addEventListener('click', () => {
-        // Read latest version from banner text data attribute or re-fetch
-        // Simple approach: just hide and set dismissed flag to current banner content
-        // We fetch the version from the API result cached in DOM
         fetch('/api/update', { headers: { 'X-CSRF-Token': csrf }, credentials: 'same-origin' })
-            .then(r => r.json())
-            .then(d => { if (d.latest) localStorage.setItem(DISMISS_KEY, d.latest); })
-            .catch(() => {});
+            .then(r => r.json()).then(d => { if (d.latest) localStorage.setItem(DISMISS_KEY, d.latest); }).catch(() => {});
         banner.classList.remove('show');
     });
-
-    // Delay check by 3s after page load — don't compete with initial render
     setTimeout(checkUpdate, 3000);
 })();
 </script>

@@ -1,6 +1,6 @@
 <?php
 /**
- * LetaDial — Admin Panel (sesja 065 + 066 + 067 + 068 + 069)
+ * LetaDial — Admin Panel (sesja 065 + 066 + 067 + 068 + 069 + 074)
  *
  * Tabs:
  *   1. Blocked IPs    — rate_limits; unblock / export
@@ -45,6 +45,103 @@ $login_rl_win = 300;
 $registration_enabled = Admin::getRegistrationEnabled();
 $registration_json    = $registration_enabled ? 'true' : 'false';
 
+// ── sesja 074: Custom Colors per-theme (mirror of dashboard.php) ─────────────
+$_valid_hex = '/^#[0-9A-Fa-f]{6}$/i';
+$custom_colors = [
+    'light'    => (preg_match($_valid_hex, $user['theme_light_primary']    ?? '') ? strtolower($user['theme_light_primary'])    : null),
+    'dark'     => (preg_match($_valid_hex, $user['theme_dark_primary']     ?? '') ? strtolower($user['theme_dark_primary'])     : null),
+    'midnight' => (preg_match($_valid_hex, $user['theme_midnight_primary'] ?? '') ? strtolower($user['theme_midnight_primary']) : null),
+];
+$custom_extras = [];
+foreach (['light', 'dark', 'midnight'] as $_ctk) {
+    $raw = $user['theme_' . $_ctk . '_extra'] ?? null;
+    $custom_extras[$_ctk] = ($raw && is_string($raw)) ? json_decode($raw, true) : null;
+}
+
+// PHP color helpers — _adm_ prefix avoids conflicts with dashboard.php helpers
+function _adm_hexToRgb(string $hex): array {
+    return [hexdec(substr($hex,1,2)), hexdec(substr($hex,3,2)), hexdec(substr($hex,5,2))];
+}
+function _adm_darkenHex(string $hex, float $amt): string {
+    [$r,$g,$b] = _adm_hexToRgb($hex);
+    return sprintf('#%02x%02x%02x',
+        max(0,min(255,(int)round($r*(1-$amt)))),
+        max(0,min(255,(int)round($g*(1-$amt)))),
+        max(0,min(255,(int)round($b*(1-$amt))))
+    );
+}
+function _adm_lightenHex(string $hex, float $amt): string {
+    [$r,$g,$b] = _adm_hexToRgb($hex);
+    return sprintf('#%02x%02x%02x',
+        min(255,(int)round($r + (255-$r)*$amt)),
+        min(255,(int)round($g + (255-$g)*$amt)),
+        min(255,(int)round($b + (255-$b)*$amt))
+    );
+}
+function _adm_luminance(string $hex): float {
+    [$r,$g,$b] = _adm_hexToRgb($hex);
+    return (0.299*$r + 0.587*$g + 0.114*$b) / 255;
+}
+function _adm_contrastFg(string $hex): string {
+    [$r,$g,$b] = _adm_hexToRgb($hex);
+    return ((0.299*$r + 0.587*$g + 0.114*$b) / 255) > 0.55 ? '#000000' : '#ffffff';
+}
+function _adm_toRgba(string $hex, float $a): string {
+    [$r,$g,$b] = _adm_hexToRgb($hex);
+    return "rgba({$r},{$g},{$b},{$a})";
+}
+
+$_inline_css = [];
+foreach ($custom_colors as $_ctk => $_cth) {
+    if ($_cth) {
+        $_inline_css[] = "[data-theme=\"{$_ctk}\"]{"
+            . "--primary:{$_cth};"
+            . "--primary-h:"     . _adm_darkenHex($_cth, 0.15) . ";"
+            . "--primary-hover:" . _adm_darkenHex($_cth, 0.12) . ";"
+            . "--primary-fg:"    . _adm_contrastFg($_cth) . ";"
+            . "--primary-bg:"    . _adm_toRgba($_cth, 0.10) . ";"
+            . "--primary-bdr:"   . _adm_toRgba($_cth, 0.30) . ";"
+            . "--border-focus:{$_cth};"
+            . "--info:{$_cth};"
+            . "}";
+    }
+}
+foreach ($custom_extras as $_ctk => $_extra) {
+    if (!is_array($_extra)) continue;
+    $_css = '';
+    $_bg  = $_extra['bg']   ?? null;
+    $_tx  = $_extra['text'] ?? null;
+    if ($_bg && preg_match($_valid_hex, $_bg)) {
+        $_lum  = _adm_luminance($_bg);
+        $_css .= "--bg:{$_bg};";
+        if ($_lum > 0.5) {
+            $_css .= "--surface:"       . _adm_lightenHex($_bg, 0.55) . ";";
+            $_css .= "--surface-alt:"   . _adm_darkenHex($_bg, 0.04)  . ";";
+            $_css .= "--surface-hover:" . _adm_darkenHex($_bg, 0.07)  . ";";
+            $_css .= "--border:"        . _adm_darkenHex($_bg, 0.14)  . ";";
+            $_css .= "--border-light:"  . _adm_darkenHex($_bg, 0.08)  . ";";
+        } else {
+            $_css .= "--surface:"       . _adm_lightenHex($_bg, 0.08) . ";";
+            $_css .= "--surface-alt:"   . _adm_lightenHex($_bg, 0.15) . ";";
+            $_css .= "--surface-hover:" . _adm_lightenHex($_bg, 0.11) . ";";
+            $_css .= "--border:"        . _adm_lightenHex($_bg, 0.24) . ";";
+            $_css .= "--border-light:"  . _adm_lightenHex($_bg, 0.17) . ";";
+        }
+    }
+    if ($_tx && preg_match($_valid_hex, $_tx)) {
+        [$_r,$_g,$_b] = _adm_hexToRgb($_tx);
+        $_css .= "--text:{$_tx};";
+        $_css .= "--text-muted:rgba({$_r},{$_g},{$_b},0.65);";
+        $_css .= "--text-faint:rgba({$_r},{$_g},{$_b},0.40);";
+    }
+    if ($_css) {
+        $_inline_css[] = "[data-theme=\"{$_ctk}\"]{{$_css}}";
+    }
+}
+$custom_colors_json = json_encode($custom_colors, JSON_HEX_TAG);
+$custom_extras_json = json_encode($custom_extras, JSON_HEX_TAG);
+// ─────────────────────────────────────────────────────────────────────────────
+
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 ?>
 <!DOCTYPE html>
@@ -59,6 +156,9 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8')
 <link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png">
 <link rel="manifest" href="/assets/manifest.json">
 <link rel="stylesheet" href="/assets/css/design-system.css">
+<?php if ($_inline_css): ?>
+<style><?= implode('', $_inline_css) ?></style>
+<?php endif; ?>
 <script>(function(){const t=localStorage.getItem('dv-theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 <style>
 body { min-height:100vh; background:var(--bg); }
@@ -584,9 +684,94 @@ let sessions = <?= $sessions_json ?>;
 let history  = <?= $history_json ?>;
 let checks   = <?= $checks_json ?>;
 
+// sesja 074: custom colors
+const ADMIN_COLORS = <?= $custom_colors_json ?>;
+const ADMIN_EXTRAS = <?= $custom_extras_json ?>;
+
 // ── Theme ─────────────────────────────────────────────────────────────────────
-// sesja 071a: 3-theme cycle Light → Dark → Midnight → Light
+// sesja 071a+074: 3-theme cycle + custom primary/bg/text colors
 (function(){
+    // ── Color helpers ──────────────────────────────────────────────────────────
+    function _hexToRgb(hex) {
+        return [parseInt(hex.slice(1,3),16), parseInt(hex.slice(3,5),16), parseInt(hex.slice(5,7),16)];
+    }
+    function _darken(hex, amt) {
+        const [r,g,b] = _hexToRgb(hex);
+        return '#' + [r,g,b].map(v => Math.max(0,Math.min(255,Math.round(v*(1-amt)))).toString(16).padStart(2,'0')).join('');
+    }
+    function _lighten(hex, amt) {
+        const [r,g,b] = _hexToRgb(hex);
+        return '#' + [r,g,b].map(v => Math.min(255,Math.round(v+(255-v)*amt)).toString(16).padStart(2,'0')).join('');
+    }
+    function _luminance(hex) {
+        const [r,g,b] = _hexToRgb(hex);
+        return (0.299*r + 0.587*g + 0.114*b) / 255;
+    }
+    function _contrastFg(hex) {
+        const [r,g,b] = _hexToRgb(hex);
+        return (0.299*r + 0.587*g + 0.114*b)/255 > 0.55 ? '#000000' : '#ffffff';
+    }
+    function _toRgba(hex, a) {
+        const [r,g,b] = _hexToRgb(hex);
+        return `rgba(${r},${g},${b},${a})`;
+    }
+    function _setCssVars(hex) {
+        const root = document.documentElement;
+        root.style.setProperty('--primary',       hex);
+        root.style.setProperty('--primary-h',     _darken(hex, 0.15));
+        root.style.setProperty('--primary-hover', _darken(hex, 0.12));
+        root.style.setProperty('--primary-fg',    _contrastFg(hex));
+        root.style.setProperty('--primary-bg',    _toRgba(hex, 0.10));
+        root.style.setProperty('--primary-bdr',   _toRgba(hex, 0.30));
+        root.style.setProperty('--border-focus',  hex);
+        root.style.setProperty('--info',          hex);
+    }
+    function _clearCssVars() {
+        ['--primary','--primary-h','--primary-hover','--primary-fg',
+         '--primary-bg','--primary-bdr','--border-focus','--info']
+        .forEach(v => document.documentElement.style.removeProperty(v));
+    }
+    function _setExtraCssVars(bg, text) {
+        const root = document.documentElement;
+        if (bg && /^#[0-9A-Fa-f]{6}$/i.test(bg)) {
+            const lum = _luminance(bg);
+            root.style.setProperty('--bg', bg);
+            if (lum > 0.5) {
+                root.style.setProperty('--surface',       _lighten(bg, 0.55));
+                root.style.setProperty('--surface-alt',   _darken(bg, 0.04));
+                root.style.setProperty('--surface-hover', _darken(bg, 0.07));
+                root.style.setProperty('--border',        _darken(bg, 0.14));
+                root.style.setProperty('--border-light',  _darken(bg, 0.08));
+            } else {
+                root.style.setProperty('--surface',       _lighten(bg, 0.08));
+                root.style.setProperty('--surface-alt',   _lighten(bg, 0.15));
+                root.style.setProperty('--surface-hover', _lighten(bg, 0.11));
+                root.style.setProperty('--border',        _lighten(bg, 0.24));
+                root.style.setProperty('--border-light',  _lighten(bg, 0.17));
+            }
+        }
+        if (text && /^#[0-9A-Fa-f]{6}$/i.test(text)) {
+            const [r,g,b] = _hexToRgb(text);
+            root.style.setProperty('--text',       text);
+            root.style.setProperty('--text-muted', `rgba(${r},${g},${b},0.65)`);
+            root.style.setProperty('--text-faint', `rgba(${r},${g},${b},0.40)`);
+        }
+    }
+    function _clearExtraCssVars() {
+        ['--bg','--surface','--surface-alt','--surface-hover','--border','--border-light',
+         '--text','--text-muted','--text-faint']
+        .forEach(v => document.documentElement.style.removeProperty(v));
+    }
+    function _applyCustomColor(t) {
+        const hex   = ADMIN_COLORS[t];
+        const extra = ADMIN_EXTRAS[t];
+        if (hex && /^#[0-9A-Fa-f]{6}$/i.test(hex)) { _setCssVars(hex); }
+        else { _clearCssVars(); }
+        if (extra && (extra.bg || extra.text)) { _setExtraCssVars(extra.bg || null, extra.text || null); }
+        else { _clearExtraCssVars(); }
+    }
+
+    // ── Theme cycle ───────────────────────────────────────────────────────────
     const THEMES_ORD  = ['light', 'dark', 'midnight'];
     const NEXT_LABELS = { light: '🌙 Dark', dark: '🌑 Midnight', midnight: '☀ Light' };
     function nextTh(t) {
@@ -596,6 +781,7 @@ let checks   = <?= $checks_json ?>;
     function applyTh(t, save) {
         if (!THEMES_ORD.includes(t)) t = 'light';
         document.documentElement.setAttribute('data-theme', t);
+        _applyCustomColor(t);
         if (save) {
             localStorage.setItem('dv-theme', t);
             fetch('/api/settings/theme', {

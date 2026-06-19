@@ -1,6 +1,6 @@
 <?php
 /**
- * LetaDial — Settings Page (sesja 058 + 066 + 067)
+ * LetaDial — Settings Page (sesja 058 + 066 + 067 + 071b + 072)
  *
  * Sections:
  *   1. Change Password
@@ -8,7 +8,8 @@
  *   3. Two-Factor Auth
  *   4. My Sessions       (sesja 066)
  *   5. UI Preferences
- *   6. About             (sesja 067) — Report a bug + LetaLab homepage
+ *   6. Custom Colors     (sesja 071b + 072)
+ *   7. About             (sesja 067)
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die();
@@ -40,6 +41,19 @@ $custom_colors = [
     'midnight' => (preg_match($_valid_hex, $user['theme_midnight_primary'] ?? '') ? strtolower($user['theme_midnight_primary']) : null),
 ];
 $custom_colors_json = json_encode($custom_colors, JSON_HEX_TAG);
+
+// ── Custom Extras per-theme (sesja 072) — bg + text colors ───────────────────
+$_theme_defaults = [
+    'light'    => ['bg' => '#F7F0E8', 'text' => '#2A1210'],
+    'dark'     => ['bg' => '#3A2C22', 'text' => '#EEE4DC'],
+    'midnight' => ['bg' => '#090B12', 'text' => '#E2E8F8'],
+];
+$custom_extras = [];
+foreach (['light', 'dark', 'midnight'] as $_ctk) {
+    $raw = $user['theme_' . $_ctk . '_extra'] ?? null;
+    $custom_extras[$_ctk] = ($raw && is_string($raw)) ? json_decode($raw, true) : null;
+}
+$custom_extras_json = json_encode($custom_extras, JSON_HEX_TAG);
 
 $backup_count = 0;
 if ($totp_enabled) {
@@ -136,7 +150,7 @@ body { padding:0; min-height:100vh; background:var(--bg); }
 .about-link-btn { display:inline-flex; align-items:center; gap:.5rem; padding:.55rem 1rem; background:var(--surface-alt); border:1.5px solid var(--border); border-radius:var(--radius-md); font-size:.875rem; color:var(--text-muted); text-decoration:none; font-family:var(--font-sans); font-weight:500; transition:all var(--transition); cursor:pointer; }
 .about-link-btn:hover { border-color:var(--primary); color:var(--primary); background:var(--primary-bg); text-decoration:none; }
 .about-meta { font-size:.78rem; color:var(--text-faint); line-height:1.6; }
-/* ── Custom Colors (sesja 071b) ────────────────────────────────────────────── */
+/* ── Custom Colors (sesja 071b + 072) ──────────────────────────────────────── */
 .color-theme-tabs { display:flex; gap:4px; margin-bottom:1rem; border-bottom:1px solid var(--border); }
 .color-theme-tab {
     padding:.45rem 1.1rem; font-size:.875rem; font-family:var(--font-sans); font-weight:500;
@@ -166,12 +180,6 @@ body { padding:0; min-height:100vh; background:var(--bg); }
 }
 .color-swatch:hover  { transform:scale(1.15); box-shadow:0 2px 8px rgba(0,0,0,.2); }
 .color-swatch.active { border-color:var(--text); box-shadow:0 0 0 2px var(--text); }
-.color-swatch[title]:hover::after {
-    content:attr(title); position:absolute; bottom:calc(100% + 6px); left:50%;
-    transform:translateX(-50%); background:var(--text); color:var(--bg);
-    font-size:.7rem; padding:3px 7px; border-radius:4px; white-space:nowrap;
-    pointer-events:none; z-index:10;
-}
 .color-swatch-wrap { position:relative; }
 .color-custom-row {
     display:flex; align-items:center; gap:.65rem; flex-wrap:wrap; margin:.75rem 0;
@@ -200,11 +208,32 @@ body { padding:0; min-height:100vh; background:var(--bg); }
     font-size:.8rem; font-weight:600; border-radius:var(--radius-sm);
     border-bottom:3px solid currentColor;
 }
+/* Page colors (bg + text) rows — sesja 072 */
+.page-colors-section {
+    margin-top:1rem; padding-top:.85rem; border-top:1px solid var(--border);
+}
+.page-colors-label {
+    font-size:.72rem; font-weight:700; color:var(--text-faint);
+    text-transform:uppercase; letter-spacing:.06em; margin-bottom:.55rem;
+}
+.page-color-row {
+    display:flex; align-items:center; gap:.6rem; margin-bottom:.4rem;
+}
+.page-color-row:last-child { margin-bottom:0; }
+.page-color-name {
+    font-size:.82rem; color:var(--text-muted); min-width:78px; flex-shrink:0;
+}
+.page-color-hex {
+    width:90px; font-family:var(--font-mono); font-size:.84rem;
+    text-transform:uppercase;
+}
 @media (max-width:640px) {
     .settings-main { padding:1.25rem 1rem 3rem; }
     .settings-section-body { padding:1.1rem; }
     .session-item { flex-wrap:wrap; }
     .about-links { flex-direction:column; }
+    .page-color-row { flex-wrap:wrap; }
+    .page-color-name { min-width:60px; }
 }
 </style>
 </head>
@@ -409,7 +438,7 @@ body { padding:0; min-height:100vh; background:var(--bg); }
         </div>
     </div>
 
-    <!-- ══ 6: Custom Colors (sesja 071b) ══ -->
+    <!-- ══ 6: Custom Colors (sesja 071b + 072) ══ -->
     <div class="settings-section">
         <div class="settings-section-header">
             <span class="settings-section-icon">🎨</span>
@@ -417,11 +446,11 @@ body { padding:0; min-height:100vh; background:var(--bg); }
         </div>
         <div class="settings-section-body">
             <p class="field-hint" style="margin-bottom:1rem">
-                Customize the primary accent color for each theme.
+                Customize accent, background, and text colors per theme.
                 Changes apply immediately — save to make them permanent.
             </p>
 
-            <!-- Zakładki motywów -->
+            <!-- Theme tabs -->
             <div class="color-theme-tabs">
                 <button class="color-theme-tab active" data-ctab="light">☀ Light</button>
                 <button class="color-theme-tab" data-ctab="dark">🌙 Dark</button>
@@ -446,23 +475,31 @@ body { padding:0; min-height:100vh; background:var(--bg); }
                         ['#c4b5fd','Lavender'],['#fca5a5','Salmon'],
                     ],
                 ];
-                $_cur = $custom_colors[$_ct];
-                $_has = !empty($_cur);
+                $_cur    = $custom_colors[$_ct];
+                $_has    = !empty($_cur);
+                $_ext    = $custom_extras[$_ct];
+                $_ext_bg = $_ext['bg']   ?? null;
+                $_ext_tx = $_ext['text'] ?? null;
+                $_def_bg = $_theme_defaults[$_ct]['bg'];
+                $_def_tx = $_theme_defaults[$_ct]['text'];
             ?>
             <div class="color-tab-pane<?= $_ct === 'light' ? ' active' : '' ?>"
                  id="ctab-<?= $_ct ?>">
 
-                <!-- Status -->
+                <!-- Primary color status -->
                 <div class="color-status">
                     <?php if ($_has): ?>
                     <span class="color-status-dot" style="background:<?= h($_cur) ?>"></span>
-                    <span>Custom color: <strong><?= h($_cur) ?></strong></span>
+                    <span>Custom accent: <strong><?= h(strtoupper($_cur)) ?></strong></span>
                     <?php else: ?>
-                    <span>Using default color for this theme</span>
+                    <span>Using default accent color for this theme</span>
                     <?php endif; ?>
                 </div>
 
-                <!-- Palette sugestii -->
+                <!-- Accent color label -->
+                <div style="font-size:.72rem;font-weight:700;color:var(--text-faint);text-transform:uppercase;letter-spacing:.06em;margin-bottom:.5rem">Accent Color</div>
+
+                <!-- Palette suggestions -->
                 <div class="color-suggestions" id="suggestions-<?= $_ct ?>">
                     <?php foreach ($_pal[$_ct] as [$_ph, $_pl]): ?>
                     <div class="color-swatch-wrap">
@@ -513,29 +550,38 @@ body { padding:0; min-height:100vh; background:var(--bg); }
                     </span>
                 </div>
 
-                <!-- sesja 072: BG + Text colors -->
-                <div style="margin:.85rem 0 0;display:grid;grid-template-columns:1fr 1fr;gap:.75rem">
-                    <div>
-                        <div style="font-size:.72rem;font-weight:700;color:var(--text-faint);text-transform:uppercase;letter-spacing:.06em;margin-bottom:.4rem">Background</div>
-                        <div style="display:flex;align-items:center;gap:.4rem;flex-wrap:wrap">
-                            <input type="color" id="color-bg-picker-<?= $_ct ?>" class="color-picker-input"
-                                   value="<?= h($custom_extras[$_ct]['bg'] ?? '#F7F0E8') ?>">
-                            <input type="text" id="color-bg-hex-<?= $_ct ?>" class="form-input"
-                                   style="width:88px;font-family:var(--font-mono);font-size:.82rem" maxlength="7"
-                                   placeholder="#rrggbb" value="<?= h($custom_extras[$_ct]['bg'] ? strtoupper($custom_extras[$_ct]['bg']) : '') ?>">
-                            <button type="button" id="color-bg-reset-<?= $_ct ?>" class="btn btn-ghost btn-sm">↺</button>
-                        </div>
+                <!-- Page Colors: BG + Text (sesja 072) — two clean rows -->
+                <div class="page-colors-section">
+                    <div class="page-colors-label">Page Colors</div>
+
+                    <div class="page-color-row">
+                        <span class="page-color-name">Background</span>
+                        <input type="color" id="color-bg-picker-<?= $_ct ?>"
+                               class="color-picker-input"
+                               value="<?= h($_ext_bg ?? $_def_bg) ?>"
+                               title="Background color">
+                        <input type="text" id="color-bg-hex-<?= $_ct ?>"
+                               class="form-input page-color-hex"
+                               maxlength="7" placeholder="Default"
+                               value="<?= h($_ext_bg ? strtoupper($_ext_bg) : '') ?>"
+                               autocomplete="off" spellcheck="false">
+                        <button type="button" id="color-bg-reset-<?= $_ct ?>"
+                                class="btn btn-ghost btn-sm" title="Reset to default">Default</button>
                     </div>
-                    <div>
-                        <div style="font-size:.72rem;font-weight:700;color:var(--text-faint);text-transform:uppercase;letter-spacing:.06em;margin-bottom:.4rem">Text</div>
-                        <div style="display:flex;align-items:center;gap:.4rem;flex-wrap:wrap">
-                            <input type="color" id="color-text-picker-<?= $_ct ?>" class="color-picker-input"
-                                   value="<?= h($custom_extras[$_ct]['text'] ?? '#1a202c') ?>">
-                            <input type="text" id="color-text-hex-<?= $_ct ?>" class="form-input"
-                                   style="width:88px;font-family:var(--font-mono);font-size:.82rem" maxlength="7"
-                                   placeholder="#rrggbb" value="<?= h($custom_extras[$_ct]['text'] ? strtoupper($custom_extras[$_ct]['text']) : '') ?>">
-                            <button type="button" id="color-text-reset-<?= $_ct ?>" class="btn btn-ghost btn-sm">↺</button>
-                        </div>
+
+                    <div class="page-color-row">
+                        <span class="page-color-name">Text</span>
+                        <input type="color" id="color-text-picker-<?= $_ct ?>"
+                               class="color-picker-input"
+                               value="<?= h($_ext_tx ?? $_def_tx) ?>"
+                               title="Text color">
+                        <input type="text" id="color-text-hex-<?= $_ct ?>"
+                               class="form-input page-color-hex"
+                               maxlength="7" placeholder="Default"
+                               value="<?= h($_ext_tx ? strtoupper($_ext_tx) : '') ?>"
+                               autocomplete="off" spellcheck="false">
+                        <button type="button" id="color-text-reset-<?= $_ct ?>"
+                                class="btn btn-ghost btn-sm" title="Reset to default">Default</button>
                     </div>
                 </div>
 
@@ -545,13 +591,13 @@ body { padding:0; min-height:100vh; background:var(--bg); }
             <div class="inline-alert" id="color-alert" style="margin-top:.75rem">
                 <span id="color-alert-msg"></span>
             </div>
-            <button type="button" class="btn btn-primary" id="btn-save-color">
+            <button type="button" class="btn btn-primary" id="btn-save-color" style="margin-top:.25rem">
                 Save for Light theme
             </button>
         </div>
     </div>
 
-    <!-- ══ 7: About (sesja 067) ══ -->
+    <!-- ══ 7: About ══ -->
     <div class="settings-section">
         <div class="settings-section-header">
             <span class="settings-section-icon">ℹ️</span>
@@ -581,22 +627,31 @@ body { padding:0; min-height:100vh; background:var(--bg); }
 </main>
 
 <script>
-(function(){ const t=localStorage.getItem('dv-theme'); if(t) document.documentElement.setAttribute('data-theme',t); })();
+(function(){const t=localStorage.getItem('dv-theme');if(t)document.documentElement.setAttribute('data-theme',t)})();
 
 const CSRF_TOKEN      = <?= json_encode($csrf_token) ?>;
 const PW_RULES        = <?= $pw_rules ?>;
 const CURRENT_SESSION = <?= json_encode($current_session_id) ?>;
 
-// ── Custom Colors (sesja 071b) ────────────────────────────────────────────────
-let customColors = <?= $custom_colors_json ?>;  // {light: '#hex'|null, dark: ..., midnight: ...}
+// ── Color state — outer scope (shared by theme switcher + color picker IIFE) ──
+let customColors = <?= $custom_colors_json ?>;
+let customExtras = <?= $custom_extras_json ?>;
 
-// Color manipulation helpers (identyczne jak w app.js theme module)
+// ── Color manipulation helpers ────────────────────────────────────────────────
 function _hexToRgb(hex) {
     return [parseInt(hex.slice(1,3),16), parseInt(hex.slice(3,5),16), parseInt(hex.slice(5,7),16)];
 }
 function _darken(hex, amt) {
     const [r,g,b] = _hexToRgb(hex);
     return '#' + [r,g,b].map(v => Math.max(0,Math.min(255,Math.round(v*(1-amt)))).toString(16).padStart(2,'0')).join('');
+}
+function _lighten(hex, amt) {
+    const [r,g,b] = _hexToRgb(hex);
+    return '#' + [r,g,b].map(v => Math.min(255,Math.round(v+(255-v)*amt)).toString(16).padStart(2,'0')).join('');
+}
+function _luminance(hex) {
+    const [r,g,b] = _hexToRgb(hex);
+    return (0.299*r + 0.587*g + 0.114*b) / 255;
 }
 function _contrastFg(hex) {
     const [r,g,b] = _hexToRgb(hex);
@@ -606,6 +661,7 @@ function _toRgba(hex, a) {
     const [r,g,b] = _hexToRgb(hex);
     return `rgba(${r},${g},${b},${a})`;
 }
+
 function _setCssVars(hex) {
     const root = document.documentElement;
     root.style.setProperty('--primary',       hex);
@@ -622,13 +678,47 @@ function _clearCssVars() {
      '--primary-bg','--primary-bdr','--border-focus','--info']
     .forEach(v => document.documentElement.style.removeProperty(v));
 }
+function _setExtraCssVars(bg, text) {
+    const root = document.documentElement;
+    if (bg && /^#[0-9A-Fa-f]{6}$/i.test(bg)) {
+        const lum = _luminance(bg);
+        root.style.setProperty('--bg', bg);
+        if (lum > 0.5) {
+            root.style.setProperty('--surface',       _lighten(bg, 0.55));
+            root.style.setProperty('--surface-alt',   _darken(bg, 0.04));
+            root.style.setProperty('--surface-hover', _darken(bg, 0.07));
+            root.style.setProperty('--border',        _darken(bg, 0.14));
+            root.style.setProperty('--border-light',  _darken(bg, 0.08));
+        } else {
+            root.style.setProperty('--surface',       _lighten(bg, 0.08));
+            root.style.setProperty('--surface-alt',   _lighten(bg, 0.15));
+            root.style.setProperty('--surface-hover', _lighten(bg, 0.11));
+            root.style.setProperty('--border',        _lighten(bg, 0.24));
+            root.style.setProperty('--border-light',  _lighten(bg, 0.17));
+        }
+    }
+    if (text && /^#[0-9A-Fa-f]{6}$/i.test(text)) {
+        const [r,g,b] = _hexToRgb(text);
+        root.style.setProperty('--text',       text);
+        root.style.setProperty('--text-muted', `rgba(${r},${g},${b},0.65)`);
+        root.style.setProperty('--text-faint', `rgba(${r},${g},${b},0.40)`);
+    }
+}
+function _clearExtraCssVars() {
+    ['--bg','--surface','--surface-alt','--surface-hover','--border','--border-light',
+     '--text','--text-muted','--text-faint']
+    .forEach(v => document.documentElement.style.removeProperty(v));
+}
 function _applyCustomColorForTheme(t) {
     const hex = customColors[t];
     if (hex && /^#[0-9A-Fa-f]{6}$/.test(hex)) { _setCssVars(hex); }
     else { _clearCssVars(); }
+    const extra = customExtras[t];
+    if (extra && (extra.bg || extra.text)) { _setExtraCssVars(extra.bg || null, extra.text || null); }
+    else { _clearExtraCssVars(); }
 }
 
-// sesja 071a: 3-theme cycle Light → Dark → Midnight → Light
+// ── sesja 071a: 3-theme cycle Light → Dark → Midnight → Light ────────────────
 const THEMES_ORDER  = ['light', 'dark', 'midnight'];
 const THEME_LABELS  = { light: '🌙 Dark', dark: '🌑 Midnight', midnight: '☀ Light' };
 function nextTheme(t) {
@@ -638,7 +728,7 @@ function nextTheme(t) {
 async function applyTheme(t, save) {
     if (!THEMES_ORDER.includes(t)) t = 'light';
     document.documentElement.setAttribute('data-theme', t);
-    _applyCustomColorForTheme(t);  // sesja 071b
+    _applyCustomColorForTheme(t);
     if (save) {
         localStorage.setItem('dv-theme', t);
         try {
@@ -661,6 +751,7 @@ document.querySelectorAll('#theme-btn, #theme-btn-pref').forEach(btn =>
     })
 );
 
+// ── Shared utilities ──────────────────────────────────────────────────────────
 function togglePw(id, btn) {
     const i = document.getElementById(id);
     const showing = i.type === 'text';
@@ -693,13 +784,21 @@ pwInput?.addEventListener('input', function() {
 
 async function apiPost(path, body) {
     try {
-        const res = await fetch(path, { method:'POST', headers:{'Content-Type':'application/json','X-CSRF-Token':CSRF_TOKEN}, credentials:'same-origin', body:JSON.stringify(body) });
+        const res = await fetch(path, {
+            method:'POST',
+            headers:{'Content-Type':'application/json','X-CSRF-Token':CSRF_TOKEN},
+            credentials:'same-origin',
+            body:JSON.stringify(body)
+        });
         return await res.json();
     } catch(e) { return {ok:false,error:'Network error.'}; }
 }
 async function apiGet(path) {
     try {
-        const res = await fetch(path, { headers:{'X-CSRF-Token':CSRF_TOKEN}, credentials:'same-origin' });
+        const res = await fetch(path, {
+            headers:{'X-CSRF-Token':CSRF_TOKEN},
+            credentials:'same-origin'
+        });
         return await res.json();
     } catch(e) { return {ok:false,error:'Network error.'}; }
 }
@@ -872,17 +971,28 @@ document.getElementById('btn-signout-all-others')?.addEventListener('click',asyn
 loadSessions();
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// COLOR PICKER (sesja 071b)
+// COLOR PICKER (sesja 071b + 072)
 // ═══════════════════════════════════════════════════════════════════════════════
 (function() {
     const TABS = ['light', 'dark', 'midnight'];
     const TAB_LABELS = { light: 'Light', dark: 'Dark', midnight: 'Midnight' };
 
     let activeTab = 'light';
-    // pendingColors: live values per tab (not yet saved)
-    let pendingColors = { ...customColors };
 
-    // ── Tab switching ────────────────────────────────────────────────────────
+    // Pending state — changes visible immediately, persisted only on Save
+    let pendingColors = { ...customColors };
+    let pendingBg   = {
+        light:    customExtras?.light?.bg     ?? null,
+        dark:     customExtras?.dark?.bg      ?? null,
+        midnight: customExtras?.midnight?.bg  ?? null,
+    };
+    let pendingText = {
+        light:    customExtras?.light?.text    ?? null,
+        dark:     customExtras?.dark?.text     ?? null,
+        midnight: customExtras?.midnight?.text ?? null,
+    };
+
+    // ── Tab switching ─────────────────────────────────────────────────────────
     document.querySelectorAll('.color-theme-tab').forEach(btn => {
         btn.addEventListener('click', () => {
             activeTab = btn.dataset.ctab;
@@ -894,79 +1004,145 @@ loadSessions();
         });
     });
 
-    // ── Per-tab events ────────────────────────────────────────────────────────
+    // ── Per-tab event listeners ───────────────────────────────────────────────
     TABS.forEach(tab => {
-        // Palette swatches
+
+        // Accent: palette swatches
         document.querySelectorAll(`[data-cswatch="${tab}"]`).forEach(btn => {
-            btn.addEventListener('click', () => {
-                const hex = btn.dataset.hex;
-                setPendingColor(tab, hex);
-            });
+            btn.addEventListener('click', () => setPendingColor(tab, btn.dataset.hex));
         });
 
-        // Color picker input
+        // Accent: color picker
         const picker = document.getElementById('color-picker-' + tab);
-        picker?.addEventListener('input', function() {
-            setPendingColor(tab, this.value);
-        });
+        picker?.addEventListener('input', function() { setPendingColor(tab, this.value.toLowerCase()); });
 
-        // Hex text input
+        // Accent: hex input
         const hexInput = document.getElementById('color-hex-' + tab);
         hexInput?.addEventListener('input', function() {
             let val = this.value.trim();
             if (!val.startsWith('#')) val = '#' + val;
             if (/^#[0-9A-Fa-f]{6}$/.test(val)) {
-                setPendingColor(tab, val.toLowerCase(), false); // don't update hex input again
-                picker && (picker.value = val.toLowerCase());
+                setPendingColor(tab, val.toLowerCase(), false);
+                if (picker) picker.value = val.toLowerCase();
                 updateSwatchSelection(tab, val.toLowerCase());
                 applyPreview(tab, val.toLowerCase());
             }
         });
         hexInput?.addEventListener('blur', function() {
-            // Normalise display on blur
-            const hex = pendingColors[tab];
-            this.value = hex ? hex.toUpperCase() : '';
+            this.value = pendingColors[tab] ? pendingColors[tab].toUpperCase() : '';
         });
 
-        // Reset button
-        document.getElementById('color-reset-' + tab)?.addEventListener('click', () => {
-            setPendingColor(tab, null);
+        // Accent: reset
+        document.getElementById('color-reset-' + tab)?.addEventListener('click', () => setPendingColor(tab, null));
+
+        // BG: color picker
+        const bgPicker = document.getElementById('color-bg-picker-' + tab);
+        bgPicker?.addEventListener('input', function() { setPendingBg(tab, this.value.toLowerCase()); });
+
+        // BG: hex input
+        const bgHex = document.getElementById('color-bg-hex-' + tab);
+        bgHex?.addEventListener('input', function() {
+            let val = this.value.trim();
+            if (val && !val.startsWith('#')) val = '#' + val;
+            if (/^#[0-9A-Fa-f]{6}$/.test(val)) {
+                if (bgPicker) bgPicker.value = val.toLowerCase();
+                setPendingBg(tab, val.toLowerCase(), false);
+            } else if (!val) {
+                setPendingBg(tab, null, false);
+            }
         });
+        bgHex?.addEventListener('blur', function() {
+            this.value = pendingBg[tab] ? pendingBg[tab].toUpperCase() : '';
+        });
+
+        // BG: reset
+        document.getElementById('color-bg-reset-' + tab)?.addEventListener('click', () => setPendingBg(tab, null));
+
+        // Text: color picker
+        const textPicker = document.getElementById('color-text-picker-' + tab);
+        textPicker?.addEventListener('input', function() { setPendingText(tab, this.value.toLowerCase()); });
+
+        // Text: hex input
+        const textHex = document.getElementById('color-text-hex-' + tab);
+        textHex?.addEventListener('input', function() {
+            let val = this.value.trim();
+            if (val && !val.startsWith('#')) val = '#' + val;
+            if (/^#[0-9A-Fa-f]{6}$/.test(val)) {
+                if (textPicker) textPicker.value = val.toLowerCase();
+                setPendingText(tab, val.toLowerCase(), false);
+            } else if (!val) {
+                setPendingText(tab, null, false);
+            }
+        });
+        textHex?.addEventListener('blur', function() {
+            this.value = pendingText[tab] ? pendingText[tab].toUpperCase() : '';
+        });
+
+        // Text: reset
+        document.getElementById('color-text-reset-' + tab)?.addEventListener('click', () => setPendingText(tab, null));
     });
 
-    // ── Set pending color (live preview) ─────────────────────────────────────
+    // ── Pending color setters ─────────────────────────────────────────────────
     function setPendingColor(tab, hex, updateHexInput = true) {
         pendingColors[tab] = hex;
-
-        // Update hex input display
         if (updateHexInput) {
-            const hexEl = document.getElementById('color-hex-' + tab);
-            if (hexEl) hexEl.value = hex ? hex.toUpperCase() : '';
+            const el = document.getElementById('color-hex-' + tab);
+            if (el) el.value = hex ? hex.toUpperCase() : '';
         }
-
-        // Update color picker value
         if (hex) {
-            const picker = document.getElementById('color-picker-' + tab);
-            if (picker) picker.value = hex;
+            const p = document.getElementById('color-picker-' + tab);
+            if (p) p.value = hex;
         }
-
-        // Update swatch selection
         updateSwatchSelection(tab, hex);
-
-        // Apply preview
         applyPreview(tab, hex);
-
-        // If this is the currently active theme — apply CSS vars live
-        const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
-        if (tab === currentTheme) {
-            customColors[tab] = hex;  // temporary — will revert if not saved
-            _applyCustomColorForTheme(tab);
+        const cur = document.documentElement.getAttribute('data-theme') || 'light';
+        if (tab === cur) {
+            customColors[tab] = hex;
+            _setCssVars(hex || getDefaultPrimary(tab));
+            if (!hex) _clearCssVars();
         }
     }
 
+    function setPendingBg(tab, hex, updateInput = true) {
+        pendingBg[tab] = hex || null;
+        if (updateInput) {
+            const el = document.getElementById('color-bg-hex-' + tab);
+            if (el) el.value = hex ? hex.toUpperCase() : '';
+        }
+        if (hex) {
+            const p = document.getElementById('color-bg-picker-' + tab);
+            if (p) p.value = hex;
+        }
+        _applyExtrasLive(tab);
+    }
+
+    function setPendingText(tab, hex, updateInput = true) {
+        pendingText[tab] = hex || null;
+        if (updateInput) {
+            const el = document.getElementById('color-text-hex-' + tab);
+            if (el) el.value = hex ? hex.toUpperCase() : '';
+        }
+        if (hex) {
+            const p = document.getElementById('color-text-picker-' + tab);
+            if (p) p.value = hex;
+        }
+        _applyExtrasLive(tab);
+    }
+
+    // Apply pending bg/text to CSS vars — only if this tab is the current theme
+    function _applyExtrasLive(tab) {
+        const cur = document.documentElement.getAttribute('data-theme') || 'light';
+        if (tab !== cur) return;
+        const bg   = pendingBg[tab];
+        const text = pendingText[tab];
+        if (bg || text) { _setExtraCssVars(bg, text); }
+        else            { _clearExtraCssVars(); }
+    }
+
+    // ── Preview helpers ───────────────────────────────────────────────────────
     function updateSwatchSelection(tab, hex) {
         document.querySelectorAll(`[data-cswatch="${tab}"]`).forEach(btn => {
-            btn.classList.toggle('active', hex && btn.dataset.hex.toLowerCase() === hex.toLowerCase());
+            btn.classList.toggle('active', !!(hex && btn.dataset.hex.toLowerCase() === hex.toLowerCase()));
         });
     }
 
@@ -974,40 +1150,34 @@ loadSessions();
         const previewBtn = document.getElementById('preview-btn-' + tab);
         const previewTab = document.getElementById('preview-tab-' + tab);
         if (!previewBtn && !previewTab) return;
-
         const resolvedHex = hex || getDefaultPrimary(tab);
         const fg = _contrastFg(resolvedHex);
-
-        if (previewBtn) {
-            previewBtn.style.background = resolvedHex;
-            previewBtn.style.color = fg;
-        }
-        if (previewTab) {
-            previewTab.style.color = resolvedHex;
-            previewTab.style.borderBottomColor = resolvedHex;
-        }
+        if (previewBtn) { previewBtn.style.background = resolvedHex; previewBtn.style.color = fg; }
+        if (previewTab) { previewTab.style.color = resolvedHex; previewTab.style.borderBottomColor = resolvedHex; }
     }
 
     function getDefaultPrimary(tab) {
-        // Fallback defaults per theme (nie pobieramy z CSS bo zależy od motywu)
         return { light: '#690b22', dark: '#e05070', midnight: '#ff6b8a' }[tab] || '#690b22';
     }
 
-    // ── Save button ───────────────────────────────────────────────────────────
     function updateSaveBtn() {
         const btn = document.getElementById('btn-save-color');
         if (btn) btn.textContent = 'Save for ' + TAB_LABELS[activeTab] + ' theme';
     }
 
+    // ── Save ──────────────────────────────────────────────────────────────────
     document.getElementById('btn-save-color')?.addEventListener('click', async () => {
         const tab   = activeTab;
-        const color = pendingColors[tab] || null;  // null = reset
+        const color = pendingColors[tab] || null;
+        const bg    = pendingBg[tab]    || null;
+        const text  = pendingText[tab]  || null;
 
         const btn = document.getElementById('btn-save-color');
         btn.disabled = true; btn.textContent = '…';
 
         const r  = await apiPost('/api/settings/primary-color', { theme: tab, color });
-        const r2 = await apiPost('/api/settings/theme-extras', { theme: tab, bg: pendingBg[tab]||null, text: pendingText[tab]||null });
+        const r2 = await apiPost('/api/settings/theme-extras',  { theme: tab, bg, text });
+
         btn.disabled = false; updateSaveBtn();
 
         if (!r.ok || !r2.ok) {
@@ -1015,27 +1185,32 @@ loadSessions();
             return;
         }
 
-        customColors[tab] = r.color; pendingColors[tab] = r.color;
-        customExtras[tab] = { bg: r2.bg, text: r2.text };
-        pendingBg[tab] = r2.bg; pendingText[tab] = r2.text;
-        const ct3 = document.documentElement.getAttribute('data-theme') || 'light';
-        if (tab === ct3) _applyCustomColorForTheme(tab);
+        // Commit saved values to state
+        customColors[tab]  = r.color;
+        pendingColors[tab] = r.color;
+        customExtras[tab]  = { bg: r2.bg, text: r2.text };
+        pendingBg[tab]     = r2.bg;
+        pendingText[tab]   = r2.text;
+
+        const cur = document.documentElement.getAttribute('data-theme') || 'light';
+        if (tab === cur) _applyCustomColorForTheme(tab);
+
         showAlert('color-alert', 'color-alert-msg', 'success', `Colors saved for ${TAB_LABELS[tab]} theme.`);
 
+        // Update status bar
         const statusEl = document.querySelector(`#ctab-${tab} .color-status`);
         if (statusEl) {
             if (r.color) {
-                statusEl.innerHTML = `<span class="color-status-dot" style="background:${r.color}"></span><span>Custom color: <strong>${r.color.toUpperCase()}</strong></span>`;
+                statusEl.innerHTML = `<span class="color-status-dot" style="background:${r.color}"></span><span>Custom accent: <strong>${r.color.toUpperCase()}</strong></span>`;
             } else {
-                statusEl.innerHTML = `<span>Using default color for this theme</span>`;
+                statusEl.innerHTML = `<span>Using default accent color for this theme</span>`;
             }
         }
     });
 
-    // ── Initialize previews ───────────────────────────────────────────────────
+    // ── Init ──────────────────────────────────────────────────────────────────
     TABS.forEach(tab => applyPreview(tab, pendingColors[tab]));
     updateSaveBtn();
-    // Apply current theme's custom color (CSS vars)
     const ct = document.documentElement.getAttribute('data-theme') || 'light';
     _applyCustomColorForTheme(ct);
 

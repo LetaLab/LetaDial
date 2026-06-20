@@ -292,5 +292,17 @@ if ($action === 'theme-extras') {
     exit;
 }
 
+
+// ── POST /api/settings/dial-width — dial card width (sesja 074) ───────────────
+//
+// Body: {"width": 200}
+// Clamps to valid range 120–280 server-side.
+if ($action === 'dial-width') {
+    $width = max(120, min(280, (int)($body['width'] ?? 175)));
+    DB::run("UPDATE users SET dial_width = ? WHERE id = ?", [$width, $user['id']]);
+    echo json_encode(['ok' => true, 'width' => $width]);
+    exit;
+}
+
 http_response_code(404);
 echo json_encode(['error' => 'Unknown settings action.']);

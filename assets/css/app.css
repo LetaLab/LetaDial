@@ -50,7 +50,7 @@ html { font-size: 16px; -webkit-text-size-adjust: 100%; }
     --font-sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
     --font-mono:'SF Mono','Fira Code',Consolas,monospace;
     --topbar-h:56px; --groups-bar-h:48px;
-    --dial-w:163px;  --dial-h:120px;    --dial-gap:16px;
+    --dial-w:175px;  --dial-h:120px;    --dial-gap:16px;
     --z-sticky:100;  --z-dropdown:100;  --z-modal:200; --z-toast:300;
     --transition:.15s ease;
 }
@@ -181,14 +181,14 @@ body { font-family:var(--font-sans); background:var(--bg); color:var(--text); mi
 /* ============================================================
    DIAL GRID
    ============================================================ */
-.dial-grid { display:grid; grid-template-columns:repeat(auto-fill,175px); gap:var(--space-4); padding:var(--space-2) 0 var(--space-6) 0; justify-content:start; }
+.dial-grid { display:grid; grid-template-columns:repeat(auto-fill,var(--dial-w)); gap:var(--space-4); padding:var(--space-2) 0 var(--space-6) 0; justify-content:start; }
 .dials-loading { grid-column:1 / -1; height:120px; }
 
 /* ============================================================
    DIAL CARD
    ============================================================ */
 .dial-card {
-    width:175px; background:var(--surface); border:1px solid var(--border);
+    width:var(--dial-w); background:var(--surface); border:1px solid var(--border);
     border-radius:var(--radius-md); box-shadow:0 1px 4px rgba(0,0,0,.06);
     padding:5px; cursor:pointer; display:flex; flex-direction:column; gap:5px;
     user-select:none; position:relative;
@@ -282,7 +282,7 @@ body { font-family:var(--font-sans); background:var(--bg); color:var(--text); mi
     padding: 0 2px;
     -webkit-mask-image: linear-gradient(to right, black 75%, transparent 100%);
     mask-image: linear-gradient(to right, black 75%, transparent 100%);
-    max-width: 163px;
+    max-width: calc(var(--dial-w) - 12px);
     cursor: default;
 }
 
@@ -379,7 +379,7 @@ body { font-family:var(--font-sans); background:var(--bg); color:var(--text); mi
 .dial-header { display:flex; align-items:center; gap:5px; height:18px; overflow:hidden; }
 .dial-favicon { width:14px; height:14px; flex-shrink:0; border-radius:2px; object-fit:contain; }
 .dial-title { font-size:12px; font-family:Arial,'Helvetica Neue',sans-serif; color:var(--text-muted); white-space:nowrap; overflow:hidden; -webkit-mask-image:linear-gradient(to right,black 60%,transparent 100%); mask-image:linear-gradient(to right,black 60%,transparent 100%); flex:1; line-height:1.4; }
-.dial-thumb-wrap { width:163px; height:100px; border-radius:calc(var(--radius-md) - 2px); border:1px solid var(--border); overflow:hidden; background:var(--surface-alt); flex-shrink:0; box-shadow:inset 0 1px 2px rgba(0,0,0,.05); align-self:center; }
+.dial-thumb-wrap { width:calc(var(--dial-w) - 12px); height:calc((var(--dial-w) - 12px) * 0.6135); border-radius:calc(var(--radius-md) - 2px); border:1px solid var(--border); overflow:hidden; background:var(--surface-alt); flex-shrink:0; box-shadow:inset 0 1px 2px rgba(0,0,0,.05); align-self:center; }
 .dial-thumb-wrap img { width:100%; height:100%; object-fit:cover; display:block; }
 
 /* ── Bulk select checkbox overlay ── */
@@ -397,7 +397,7 @@ body:has(.bulk-toolbar) .toast-container { bottom:calc(var(--space-5) + 60px); }
 /* ============================================================
    ADD DIAL CARD
    ============================================================ */
-.dial-add-card { width:175px; height:133px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:var(--space-2); cursor:pointer; border-radius:var(--radius-md); border:2px dashed var(--border); background:transparent; color:var(--text-faint); font-size:var(--text-sm); font-family:var(--font-sans); transition:all var(--transition); }
+.dial-add-card { width:var(--dial-w); height:calc(var(--dial-w) * 0.76); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:var(--space-2); cursor:pointer; border-radius:var(--radius-md); border:2px dashed var(--border); background:transparent; color:var(--text-faint); font-size:var(--text-sm); font-family:var(--font-sans); transition:all var(--transition); }
 .dial-add-card:hover { border-color:var(--primary); color:var(--primary); background:var(--primary-bg); }
 .dial-add-icon { width:32px; height:32px; border:2px dashed currentColor; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:1.1rem; line-height:1; }
 
@@ -577,7 +577,7 @@ body:has(.bulk-toolbar) .toast-container { bottom:calc(var(--space-5) + 60px); }
 .topbar-show-mobile { display:none !important; }
 
 @media (max-width: 640px) {
-    :root { --dial-w:140px; --dial-h:104px; --dial-gap:10px; }
+    :root { --dial-h:104px; --dial-gap:10px; }  /* sesja 074: --dial-w removed — user value applies on mobile too */
     .topbar-hide-mobile  { display:none !important; }
     .topbar-show-mobile  { display:flex !important; }
     .hamburger           { display:flex !important; }

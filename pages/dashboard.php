@@ -83,6 +83,9 @@ foreach (['light', 'dark', 'midnight'] as $_ctk) {
     $custom_extras[$_ctk] = ($raw && is_string($raw)) ? json_decode($raw, true) : null;
 }
 
+// ── Dial width (sesja 074) ────────────────────────────────────────────────────
+$dial_width = max(120, min(280, (int)($user['dial_width'] ?? 175)));
+
 // ── Build inline CSS ──────────────────────────────────────────────────────────
 $_inline_css = [];
 
@@ -166,6 +169,10 @@ foreach ($custom_extras as $_ctk => $_extra) {
 <link rel="manifest" href="/assets/manifest.json">
 <link rel="stylesheet" href="/assets/css/design-system.css">
 <link rel="stylesheet" href="/assets/css/app.css">
+<?php
+// Dial width — add to inline CSS (zero-flash)
+$_inline_css[] = ":root{--dial-w:{$dial_width}px;}";
+?>
 <?php if ($_inline_css): ?>
 <style><?= implode('', $_inline_css) ?></style>
 <?php endif; ?>
@@ -309,6 +316,7 @@ window.LETADIAL_BOOT = {
     userTheme:      '<?= $user_theme ?>',
     customColors:   <?= json_encode($custom_colors) ?>,
     customExtras:   <?= json_encode($custom_extras) ?>,
+    dialWidth:      <?= $dial_width ?>,       // sesja 074
 };
 </script>
 <script src="/assets/js/app.js"></script>

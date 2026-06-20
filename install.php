@@ -319,6 +319,7 @@ function db_create_tables(PDO $pdo): void {
     theme_light_extra      TEXT             DEFAULT NULL COMMENT 'JSON {bg,text} custom bg+text for light — sesja 072',
     theme_dark_extra       TEXT             DEFAULT NULL COMMENT 'JSON {bg,text} custom bg+text for dark — sesja 072',
     theme_midnight_extra   TEXT             DEFAULT NULL COMMENT 'JSON {bg,text} custom bg+text for midnight — sesja 072',
+    dial_width         SMALLINT UNSIGNED NOT NULL DEFAULT 175 COMMENT 'Dial card width in pixels (120-280) — sesja 074',
             created_at       DATETIME         NOT NULL DEFAULT CURRENT_TIMESTAMP,
             last_login       DATETIME         DEFAULT NULL,
             UNIQUE KEY uq_login (login),

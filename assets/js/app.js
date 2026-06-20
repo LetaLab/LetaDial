@@ -19,6 +19,10 @@ const LetaDial = (() => {
 
     function init() {
         theme.init();
+        // sesja 074: apply saved dial width from DB (zero-flash — PHP already wrote
+        // :root{--dial-w:Xpx} in inline <style>, this JS sync keeps SPA state correct
+        // when user changes size in Settings and comes back without a full reload)
+        _applyDialWidth(window.LETADIAL_BOOT?.dialWidth ?? 175);
         sort_module.init();
         groups_module.init();
         import_export_module.init();
@@ -1775,7 +1779,13 @@ const LetaDial = (() => {
         },
     };
 
-    return { init, theme, toast, modal, api, escHtml, groups_module, dials_module, search_module, import_export_module, mobile_menu, bulk_module, keyboard_nav, sort_module, meta_module };
+    // ── Dial Width (sesja 074) ────────────────────────────────────────────────────
+    function _applyDialWidth(w) {
+        w = Math.max(120, Math.min(280, parseInt(w) || 175));
+        document.documentElement.style.setProperty('--dial-w', w + 'px');
+    }
+
+    return { init, theme, toast, modal, api, escHtml, groups_module, dials_module, search_module, import_export_module, mobile_menu, bulk_module, keyboard_nav, sort_module, meta_module, _applyDialWidth };
 
 })();
 

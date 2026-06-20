@@ -400,6 +400,7 @@ class Admin
             ['users',       'theme_light_extra',        'TEXT — sesja 072 bg+text extras'],
             ['users',       'theme_dark_extra',         'TEXT — sesja 072 bg+text extras'],
             ['users',       'theme_midnight_extra',     'TEXT — sesja 072 bg+text extras'],
+            ['users',       'dial_width',               'SMALLINT — sesja 074 dial size slider'],
             ['users',       'email_pending',            'VARCHAR — sesja 066 email change'],
             ['users',       'email_change_token',       'VARCHAR — sesja 066 email change'],
             ['users',       'email_change_expires',     'DATETIME — sesja 066 email change'],

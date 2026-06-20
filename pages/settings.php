@@ -32,6 +32,7 @@ $has_pending     = !empty($email_pending);
 $smtp_enabled    = defined('SMTP_ENABLED') && SMTP_ENABLED;
 $current_session_id = Auth::getSessionId();
 $app_version     = defined('APP_VERSION') ? APP_VERSION : '—';
+$dial_width      = max(120, min(280, (int)($user['dial_width'] ?? 175)));
 
 // ── Custom Colors per-theme (sesja 071b) ──────────────────────────────────────
 $_valid_hex = '/^#[0-9A-Fa-f]{6}$/i';
@@ -594,6 +595,101 @@ body { padding:0; min-height:100vh; background:var(--bg); }
             <button type="button" class="btn btn-primary" id="btn-save-color" style="margin-top:.25rem">
                 Save for Light theme
             </button>
+        </div>
+    </div>
+
+
+    <!-- ══ 6b: Dial Card Size (sesja 074) ══ -->
+    <div class="settings-section" id="dial-size">
+        <div class="settings-section-header">
+            <span class="settings-section-icon">⊞</span>
+            <h2>Dial Card Size</h2>
+        </div>
+        <div class="settings-section-body">
+            <div class="inline-alert" id="dialsize-alert"><span id="dialsize-alert-msg"></span></div>
+
+            <div class="field-row">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.6rem">
+                    <label class="form-label" style="margin:0">Card width</label>
+                    <span id="dialsize-val-display"
+                          style="font-size:1.05rem;font-weight:700;color:var(--primary)">
+                        <?= $dial_width ?>&thinsp;px
+                    </span>
+                </div>
+                <input type="range" id="dialsize-slider"
+                       min="120" max="280" step="5"
+                       value="<?= $dial_width ?>"
+                       style="width:100%;accent-color:var(--primary);cursor:pointer;
+                              height:6px;border-radius:3px">
+                <div style="display:flex;justify-content:space-between;
+                            margin-top:.3rem;font-size:.72rem;color:var(--text-faint)">
+                    <span>120 px</span>
+                    <span>175 px (default)</span>
+                    <span>280 px</span>
+                </div>
+            </div>
+
+            <!-- Preset buttons -->
+            <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin:.9rem 0 1rem">
+                <button type="button" class="btn btn-sm dialsize-preset" data-w="120">Small</button>
+                <button type="button" class="btn btn-sm dialsize-preset" data-w="150">Compact</button>
+                <button type="button" class="btn btn-sm dialsize-preset" data-w="175">Default</button>
+                <button type="button" class="btn btn-sm dialsize-preset" data-w="220">Large</button>
+                <button type="button" class="btn btn-sm dialsize-preset" data-w="280">Extra Large</button>
+            </div>
+
+            <!-- Live preview -->
+            <div style="background:var(--surface-alt);border:1px solid var(--border);
+                        border-radius:var(--radius-md);padding:1rem;margin-bottom:1rem">
+                <div style="font-size:.72rem;font-weight:700;color:var(--text-faint);
+                            text-transform:uppercase;letter-spacing:.06em;margin-bottom:.75rem">
+                    Preview
+                </div>
+                <div style="display:flex;gap:12px;align-items:flex-start;
+                            overflow-x:auto;padding-bottom:4px">
+                    <!-- Mock dial card -->
+                    <div id="dialsize-mock-card"
+                         style="flex-shrink:0;background:var(--surface);
+                                border:1px solid var(--border);border-radius:8px;
+                                padding:5px;display:flex;flex-direction:column;gap:5px;
+                                transition:width .15s ease">
+                        <div style="display:flex;align-items:center;gap:5px;height:18px">
+                            <div style="width:14px;height:14px;border-radius:2px;
+                                        background:var(--primary-bg);
+                                        border:1px solid var(--primary-bdr);flex-shrink:0"></div>
+                            <div style="height:9px;background:var(--border);
+                                        border-radius:3px;flex:1;opacity:.7"></div>
+                        </div>
+                        <div id="dialsize-mock-thumb"
+                             style="border-radius:6px;border:1px solid var(--border);
+                                    background:linear-gradient(135deg,var(--primary-bg) 0%,var(--surface-alt) 100%);
+                                    display:flex;align-items:center;justify-content:center;
+                                    font-size:1.5rem;transition:width .15s ease,height .15s ease">
+                            🔗
+                        </div>
+                    </div>
+                    <!-- Mock add card -->
+                    <div id="dialsize-mock-add"
+                         style="flex-shrink:0;background:var(--surface);
+                                border:2px dashed var(--border);border-radius:8px;
+                                display:flex;flex-direction:column;align-items:center;
+                                justify-content:center;gap:5px;color:var(--text-faint);
+                                font-size:.8rem;transition:width .15s ease,height .15s ease">
+                        <div style="width:28px;height:28px;border:2px dashed currentColor;
+                                    border-radius:50%;display:flex;align-items:center;
+                                    justify-content:center;font-size:.9rem">＋</div>
+                        <span>Add dial</span>
+                    </div>
+                </div>
+            </div>
+
+            <button type="button" class="btn btn-primary" id="btn-save-dialsize">
+                Save size
+            </button>
+            <p class="field-hint" style="margin-top:.5rem">
+                Thumbnails are not regenerated when changing size. Reload the dashboard
+                to apply the new width.
+            </p>
         </div>
     </div>
 
@@ -1215,6 +1311,88 @@ loadSessions();
     _applyCustomColorForTheme(ct);
 
 })();
+// ═══════════════════════════════════════════════════════════════════════════════
+// DIAL SIZE SLIDER (sesja 074)
+// ═══════════════════════════════════════════════════════════════════════════════
+(function() {
+    const CARD_MIN  = 120;
+    const CARD_MAX  = 280;
+    const THUMB_PAD = 12;    // 5px padding * 2 + 2px border * 1
+    const THUMB_RATIO = 0.6135; // 100/163
+
+    const slider   = document.getElementById('dialsize-slider');
+    const valDisp  = document.getElementById('dialsize-val-display');
+    const mockCard = document.getElementById('dialsize-mock-card');
+    const mockThumb= document.getElementById('dialsize-mock-thumb');
+    const mockAdd  = document.getElementById('dialsize-mock-add');
+
+    function updateMockSize(w) {
+        if (!mockCard) return;
+        const tw = w - THUMB_PAD;
+        const th = Math.round(tw * THUMB_RATIO);
+        mockCard.style.width  = w + 'px';
+        mockThumb.style.width = tw + 'px';
+        mockThumb.style.height= th + 'px';
+        mockAdd.style.width   = w + 'px';
+        mockAdd.style.height  = Math.round(w * 0.76) + 'px';
+        if (valDisp) valDisp.textContent = w + ' px';
+    }
+
+    // Highlight active preset
+    function syncPresets(w) {
+        document.querySelectorAll('.dialsize-preset').forEach(btn => {
+            const bw = parseInt(btn.dataset.w);
+            btn.classList.toggle('btn-primary', bw === w);
+            btn.classList.toggle('btn-ghost',   bw !== w);
+        });
+    }
+
+    // Init
+    const initW = slider ? parseInt(slider.value) : 175;
+    updateMockSize(initW);
+    syncPresets(initW);
+
+    // Slider input (live preview only — no API call)
+    slider?.addEventListener('input', function() {
+        const w = parseInt(this.value);
+        updateMockSize(w);
+        syncPresets(w);
+    });
+
+    // Preset buttons
+    document.querySelectorAll('.dialsize-preset').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const w = parseInt(this.dataset.w);
+            if (slider) slider.value = w;
+            updateMockSize(w);
+            syncPresets(w);
+        });
+    });
+
+    // Save — updates DB and patches CSS var immediately (no reload needed for preview,
+    // full reload recommended for dashboard but not forced)
+    document.getElementById('btn-save-dialsize')?.addEventListener('click', async function() {
+        const w = slider ? parseInt(slider.value) : 175;
+        const btn = this;
+        btn.disabled = true; btn.textContent = '…';
+
+        const r = await apiPost('/api/settings/dial-width', { width: w });
+        btn.disabled = false; btn.textContent = 'Save size';
+
+        if (!r.ok) {
+            showAlert('dialsize-alert', 'dialsize-alert-msg', 'error',
+                r.error || 'Could not save dial size.');
+            return;
+        }
+
+        // Patch CSS var so live preview of the setting is immediate
+        document.documentElement.style.setProperty('--dial-w', w + 'px');
+        showAlert('dialsize-alert', 'dialsize-alert-msg', 'success',
+            'Dial size saved (' + w + ' px). Reload the dashboard to apply.');
+        syncPresets(w);
+    });
+})();
+
 </script>
 </body>
 </html>

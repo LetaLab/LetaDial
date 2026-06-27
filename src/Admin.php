@@ -1,6 +1,6 @@
 <?php
 /**
- * LetaDial — Admin Model (sesja 065 + 066 + 067 + 068 + 069 + 071b)
+ * LetaDial — Admin Model (sesja 065 + 066 + 067 + 068 + 069 + 071b + 077)
  *
  * Static methods for the admin panel.
  * 065: Blocked IPs, Users, Login History, Install Check, Export
@@ -9,6 +9,7 @@
  * 068: Registration toggle (registration_enabled setting)
  * 069: Direct user creation (admin sets login + email + password + role immediately)
  * 071b: installCheck — 3 nowe kolumny theme_*_primary
+ * 077: installCheck — dodano pages/bookmarklet.php do listy integralności plików
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -389,7 +390,7 @@ class Admin
         $colChecks = [
             ['users',       'totp_secret',             'VARCHAR — 2FA support'],
             ['users',       'totp_enabled',             'TINYINT — 2FA flag'],
-            ['users',       'avatar_path',              'VARCHAR — sesja 001 migrate'],
+            ['users',       'avatar_path',              'VARCHAR — avatar'],
             ['users',       'reset_token',              'VARCHAR — password reset'],
             ['users',       'reset_expires',            'DATETIME — password reset expiry'],
             ['users',       'recent_disabled',          'TINYINT — sesja 064'],
@@ -448,11 +449,6 @@ class Admin
         $checks[] = self::chk('SMTP configured', $smtpConfigured, false,
             $smtpConfigured ? 'yes' : 'disabled — email features unavailable', 'Configuration',
             'Required for password reset, activation emails, and user invites.');
-
-        $githubRepo = defined('GITHUB_REPO') && GITHUB_REPO !== '';
-        $checks[] = self::chk('GITHUB_REPO configured', $githubRepo, false,
-            $githubRepo ? (defined('GITHUB_REPO') ? GITHUB_REPO : '') : 'not set — auto-update banner disabled', 'Configuration',
-            "Add define('GITHUB_REPO', 'LetaLab/LetaDial'); to config.php to enable update notifications.");
 
         // ── Security ──────────────────────────────────────────────────────────
         $cfgPath   = $appDir . '/config.php';
@@ -525,6 +521,7 @@ class Admin
             'pages/reset-password.php'     => true,
             'pages/confirm-email.php'      => true,
             'pages/setup-account.php'      => true,
+            'pages/bookmarklet.php'        => true,   // sesja 077
             'api/dials.php'                => true,
             'api/groups.php'               => true,
             'api/thumbs.php'               => true,

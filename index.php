@@ -60,6 +60,7 @@ $routes = [
     '/reset-password'  => 'pages/reset-password.php',
     '/confirm-email'   => 'pages/confirm-email.php',   // sesja 066
     '/setup-account'   => 'pages/setup-account.php',   // sesja 067 — invite flow
+    '/bookmarklet'     => 'pages/bookmarklet.php',      // sesja 077 — LetaLink
 ];
 
 $page = $routes[$uri] ?? null;

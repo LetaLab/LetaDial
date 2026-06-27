@@ -64,6 +64,19 @@ if ($totp_enabled) {
     ) ?? 0);
 }
 
+
+// ── LetaLink bookmarklet (sesja 077) ────────────────────────────────────────────
+$_bm_js  = "javascript:(function(){"
+         . "var u=encodeURIComponent(location.href),"
+         . "t=encodeURIComponent(document.title),"
+         . "m=document.querySelector('meta[property=\\\"og:description\\\"]')"
+         . "||document.querySelector('meta[name=\\\"description\\\"]'),"
+         . "d=m?encodeURIComponent(m.getAttribute('content')||''):'';"
+         . "window.open('" . rtrim(APP_URL, '/') . "/bookmarklet?url='+u+'&title='+t+'&desc='+d,"
+         . "'letalink','width=430,height=540,resizable=yes,scrollbars=yes');"
+         . "})();";
+$bookmarklet_href = htmlspecialchars($_bm_js, ENT_QUOTES, 'UTF-8');
+
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 function eyeSvg(bool $show): string {
     return $show
@@ -236,6 +249,12 @@ body { padding:0; min-height:100vh; background:var(--bg); }
     .page-color-row { flex-wrap:wrap; }
     .page-color-name { min-width:60px; }
 }
+/* ── LetaLink (sesja 077) ────────────────────────────────────────────── */
+.bookmarklet-wrap { background:var(--surface-alt); border:1.5px dashed var(--border); border-radius:var(--radius-md); padding:1.25rem 1rem; text-align:center; margin:.5rem 0 .85rem; }
+.bookmarklet-link { display:inline-flex; align-items:center; gap:.5rem; padding:.65rem 1.25rem; background:var(--primary); color:var(--primary-fg); border-radius:var(--radius-md); font-size:.9rem; font-weight:600; text-decoration:none; cursor:grab; transition:background .15s,transform .1s; user-select:none; border:none; }
+.bookmarklet-link:hover { background:var(--primary-h,#520818); text-decoration:none; color:var(--primary-fg); }
+.bookmarklet-link:active { cursor:grabbing; transform:scale(.97); }
+.bookmarklet-hint { font-size:.75rem; color:var(--text-faint); margin-top:.5rem; }
 </style>
 </head>
 <body>
@@ -690,6 +709,48 @@ body { padding:0; min-height:100vh; background:var(--bg); }
                 Thumbnails are not regenerated when changing size. Reload the dashboard
                 to apply the new width.
             </p>
+        </div>
+    </div>
+
+
+    <!-- ══ 6c: LetaLink Bookmarklet (sesja 077) ══ -->
+    <div class="settings-section">
+        <div class="settings-section-header">
+            <span class="settings-section-icon">🔖</span>
+            <h2>LetaLink Bookmarklet</h2>
+        </div>
+        <div class="settings-section-body">
+            <p style="font-size:.875rem;color:var(--text-muted);margin-bottom:1rem;line-height:1.6">
+                Add any webpage to <?= $app_name ?> with a single click.
+                Drag the button below to your bookmarks bar &mdash; then click it on any website.
+            </p>
+
+            <div class="bookmarklet-wrap">
+                <a href="<?= $bookmarklet_href ?>"
+                   class="bookmarklet-link"
+                   onclick="event.preventDefault();alert('Drag this button to your bookmarks/favorites bar, then click it while visiting any webpage.')">
+                    🔖 LetaLink &mdash; Add to <?= $app_name ?>
+                </a>
+                <div class="bookmarklet-hint">&uarr; Drag to your bookmarks/favorites bar</div>
+            </div>
+
+            <div class="inline-alert" id="bm-copy-alert" style="margin:.25rem 0"><span id="bm-copy-msg"></span></div>
+
+            <div style="display:flex;gap:.65rem;flex-wrap:wrap;align-items:center">
+                <button type="button" class="btn btn-ghost btn-sm" id="btn-copy-bookmarklet">📋 Copy code</button>
+                <a href="/bookmarklet" target="_blank" rel="noopener"
+                   class="btn btn-ghost btn-sm" style="text-decoration:none">🔍 Test popup</a>
+            </div>
+
+            <div style="margin-top:1rem;padding:.75rem;background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius-md);font-size:.78rem;color:var(--text-muted);line-height:1.7">
+                <strong style="display:block;margin-bottom:.3rem">How to use:</strong>
+                <ol style="margin-left:1.1rem;display:flex;flex-direction:column;gap:.2rem">
+                    <li>Drag the <strong>🔖 LetaLink</strong> button above to your browser bookmarks bar.</li>
+                    <li>While on any webpage, click the bookmarklet in your toolbar.</li>
+                    <li>A popup appears &mdash; choose a group, edit the title if needed, click <em>Add dial &rarr;</em>.</li>
+                </ol>
+                <div style="margin-top:.5rem;color:var(--text-faint)">Works in Chrome, Firefox, Edge, Safari. On mobile, bookmark any page then edit the URL and paste the copied code.</div>
+            </div>
         </div>
     </div>
 
@@ -1392,6 +1453,20 @@ loadSessions();
         syncPresets(w);
     });
 })();
+
+// ── LetaLink copy button (sesja 077) ──────────────────────────────────────────────
+document.getElementById('btn-copy-bookmarklet')?.addEventListener('click', async function() {
+    const code = <?= json_encode($_bm_js) ?>;
+    try {
+        await navigator.clipboard.writeText(code);
+        showAlert('bm-copy-alert', 'bm-copy-msg', 'success', '✓ Bookmarklet code copied!');
+        setTimeout(() => hideAlert('bm-copy-alert'), 3000);
+    } catch {
+        showAlert('bm-copy-alert', 'bm-copy-msg', 'info',
+            'Auto-copy failed. Right-click the LetaLink button → "Copy link address".');
+        setTimeout(() => hideAlert('bm-copy-alert'), 5000);
+    }
+});
 
 </script>
 </body>

@@ -89,6 +89,15 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
 - Recently used virtual tab — last 20 clicked dials, sorted by last_click DESC
 - OG meta auto-fetch — title and description auto-filled when adding a dial (debounced + blur)
 
+### LetaLink Bookmarklet
+- Drag-to-toolbar bookmarklet — add any webpage to LetaDial in one click
+- Popup window (430×540 px) pre-fills URL, title and OG description from the page
+- Group selector with localStorage memory of last used group
+- Notes field (500 chars) with live counter
+- Thumbnail generated in background after save; popup auto-closes after 2 s
+- Mobile fallback: copy bookmarklet code from Settings → LetaLink, paste as bookmark URL
+- Settings → LetaLink: drag button, Copy code, Test popup link
+
 ### Groups
 - Groups with emoji icons, custom color per group, custom image icon upload (32×32 WebP, GD decode)
 - Reorder groups left/right from context menu
@@ -193,7 +202,6 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
 ## Planned / Upcoming
 
 - Avatar upload per user (Imagick → WebP 128×128)
-- Dial size slider (CSS custom properties, saved in DB, live preview)
 - Trusted device — skip 2FA for 30 days on confirmed devices
 - GDPR: full data export (own dials, groups, settings as JSON)
 - GDPR: account self-deletion with cascade

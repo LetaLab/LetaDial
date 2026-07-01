@@ -1,14 +1,17 @@
 <?php
 /**
- * LetaDial — Admin Panel (sesja 065 + 066 + 067 + 068 + 069 + 074)
+ * LetaDial — Admin Panel (sesja 065 + 066 + 067 + 068 + 069 + 074 + 078)
  *
  * Tabs:
  *   1. Blocked IPs    — rate_limits; unblock / export
- *   2. Users          — accounts; delete; force-reset password; invite (067); registration toggle (068)
+ *   2. Users          — accounts; delete; force-reset password; invite (067); registration toggle (068); avatars (078)
  *   3. Sessions       — all active sessions; delete single / all for user
  *   4. Login History  — recent auth attempts; filter by IP
  *   5. Update         — git check vs github.com/LetaLab/LetaDial + git pull
  *   6. Install Check  — full health check
+ *
+ * sesja 078: avatar thumbnails shown next to login in the Users table, and the
+ * logged-in admin's own avatar shown in the topbar instead of the 👤 emoji.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die();
@@ -19,6 +22,7 @@ $app_name   = htmlspecialchars(APP_NAME, ENT_QUOTES, 'UTF-8');
 $user_login = htmlspecialchars($user['login'], ENT_QUOTES, 'UTF-8');
 $csrf_token = CSRF::token();
 $icon_url   = htmlspecialchars(APP_URL . '/assets/icons/icon-192.png', ENT_QUOTES, 'UTF-8');
+$has_avatar = !empty($user['avatar_path']);   // sesja 078
 
 $blocked       = Admin::getBlocked(3);
 $users_list    = Admin::getUsers();
@@ -288,6 +292,15 @@ body { min-height:100vh; background:var(--bg); }
 .confirm-box h3 { font-size:1rem; margin-bottom:.75rem; }
 .confirm-box p  { font-size:.875rem; color:var(--text-muted); margin-bottom:1.25rem; line-height:1.6; white-space:pre-line; }
 .confirm-actions { display:flex; gap:.75rem; justify-content:flex-end; }
+/* sesja 078: avatars */
+.admin-topbar-avatar-img { width:22px; height:22px; border-radius:50%; object-fit:cover;
+    vertical-align:middle; margin-right:.35rem; border:1px solid var(--border); flex-shrink:0; }
+.admin-avatar-img { width:28px; height:28px; border-radius:50%; object-fit:cover;
+    flex-shrink:0; border:1px solid var(--border); }
+.admin-avatar-fallback { width:28px; height:28px; border-radius:50%; background:var(--surface-alt);
+    border:1px solid var(--border); display:inline-flex; align-items:center; justify-content:center;
+    font-size:.85rem; flex-shrink:0; }
+.admin-user-cell { display:flex; align-items:center; gap:.55rem; }
 @media (max-width:640px) {
     .admin-main { padding:1rem; }
     .data-table { font-size:.8rem; }
@@ -305,7 +318,14 @@ body { min-height:100vh; background:var(--bg); }
     </a>
     <span class="admin-badge">ADMIN</span>
     <div class="admin-topbar-right">
-        <span style="color:var(--text-muted);font-size:.875rem">👤 <?= $user_login ?></span>
+        <span style="color:var(--text-muted);font-size:.875rem">
+            <?php if ($has_avatar): ?>
+            <img src="/api/avatars/<?= (int)$user['id'] ?>" alt="" class="admin-topbar-avatar-img" onerror="this.remove()">
+            <?php else: ?>
+            👤
+            <?php endif; ?>
+            <?= $user_login ?>
+        </span>
         <button class="theme-toggle" id="theme-btn">🌙 Dark</button>
         <a href="/settings" class="back-link">Settings</a>
         <a href="/" class="back-link">← Dashboard</a>
@@ -868,6 +888,19 @@ function parseUA(ua) {
     return `${b} / ${o}`;
 }
 
+/**
+ * Avatar thumbnail HTML for a user row (sesja 078).
+ * Falls back to a 👤 placeholder circle if avatar_path is null, or if the
+ * image 404s for any reason (file deleted out-of-band, etc).
+ */
+function avatarHtml(u) {
+    if (u.avatar_path) {
+        return `<img src="/api/avatars/${u.id}" alt="" class="admin-avatar-img"
+            onerror="this.outerHTML='<span class=&quot;admin-avatar-fallback&quot;>👤</span>'">`;
+    }
+    return `<span class="admin-avatar-fallback">👤</span>`;
+}
+
 // ── Tabs ──────────────────────────────────────────────────────────────────────
 document.querySelectorAll('.admin-tab').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -967,7 +1000,7 @@ function renderUsers(data) {
         const pwBtn=isMe?``:`<button class="btn btn-ghost btn-sm" style="margin-left:.25rem" onclick="showForceReset(${u.id},'${esc(u.login)}')">🔑</button>`;
         const sessBtn=`<button class="btn btn-ghost btn-sm" style="margin-left:.25rem" onclick="filterSessionsToUser(${u.id},'${esc(u.login)}')">🖥️ ${u.session_count||0}</button>`;
         return `<tr>
-            <td><strong>${esc(u.login)}</strong>${isMe?' <span class="muted">(you)</span>':''}</td>
+            <td><div class="admin-user-cell">${avatarHtml(u)}<strong>${esc(u.login)}</strong>${isMe?' <span class="muted">(you)</span>':''}</div></td>
             <td class="muted">${esc(u.email||'')}</td>
             <td>${roleDisp}</td><td>${twofa}</td><td>${verified}</td>
             <td class="muted">${u.group_count||0}</td><td class="muted">${u.dial_count||0}</td>
@@ -979,7 +1012,7 @@ function renderUsers(data) {
     }).join('');
 }
 async function doDeleteUser(userId,login) {
-    if(!await cfm('Delete account',`Permanently delete "${login}"?\n\nAll groups, dials, sessions and thumbnails will be removed.\nCannot be undone.`))return;
+    if(!await cfm('Delete account',`Permanently delete "${login}"?\n\nAll groups, dials, sessions, avatar and thumbnails will be removed.\nCannot be undone.`))return;
     const r=await api('POST','/api/admin/delete-user',{user_id:userId});
     if(!r.ok){toast(r.error||'Could not delete.','error');return;}
     toast(`Account "${r.login}" deleted.`,'success');

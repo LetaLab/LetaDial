@@ -26,6 +26,7 @@ require_once __DIR__ . '/src/Auth.php';       // Session management & login
 require_once __DIR__ . '/src/Group.php';      // Dial group CRUD
 require_once __DIR__ . '/src/Thumbnail.php';  // Thumbnail generation (GD/WebP) — before Dial
 require_once __DIR__ . '/src/GroupIcon.php';  // Group icon upload (GD/WebP) — sesja 052
+require_once __DIR__ . '/src/Avatar.php';     // User avatar upload (GD/WebP) — sesja 078
 require_once __DIR__ . '/src/Meta.php';       // OG/title meta fetcher — sesja 057
 require_once __DIR__ . '/src/Updater.php';    // GitHub release checker + git update — sesja 059/065
 require_once __DIR__ . '/src/Admin.php';      // Admin panel model — sesja 065

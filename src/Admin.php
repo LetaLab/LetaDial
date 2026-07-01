@@ -1,6 +1,6 @@
 <?php
 /**
- * LetaDial — Admin Model (sesja 065 + 066 + 067 + 068 + 069 + 071b + 077)
+ * LetaDial — Admin Model (sesja 065 + 066 + 067 + 068 + 069 + 071b + 077 + 078)
  *
  * Static methods for the admin panel.
  * 065: Blocked IPs, Users, Login History, Install Check, Export
@@ -10,6 +10,8 @@
  * 069: Direct user creation (admin sets login + email + password + role immediately)
  * 071b: installCheck — 3 nowe kolumny theme_*_primary
  * 077: installCheck — dodano pages/bookmarklet.php do listy integralności plików
+ * 078: getUsers() zwraca avatar_path; deleteUser() usuwa plik avatara;
+ *      installCheck() — dodano src/Avatar.php + api/avatars.php do listy integralności
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -80,7 +82,7 @@ class Admin
     {
         return DB::rows(
             "SELECT u.id, u.login, u.email, u.role, u.totp_enabled, u.email_verified,
-                    u.created_at, u.last_login,
+                    u.avatar_path, u.created_at, u.last_login,
                     (SELECT COUNT(*) FROM groups_list g WHERE g.user_id = u.id) AS group_count,
                     (SELECT COUNT(*) FROM dials d WHERE d.user_id = u.id) AS dial_count,
                     (SELECT COUNT(*) FROM sessions s WHERE s.user_id = u.id AND s.expires_at > NOW()) AS session_count
@@ -112,6 +114,12 @@ class Admin
         if (is_dir($iconDir)) {
             array_map('unlink', glob($iconDir . '/*.webp') ?: []);
             @rmdir($iconDir);
+        }
+
+        // Delete avatar file — sesja 078 (single file, not a per-user directory)
+        $avatarFile = __DIR__ . '/../storage/avatars/u' . $userId . '.webp';
+        if (is_file($avatarFile)) {
+            @unlink($avatarFile);
         }
 
         // Delete user (cascades to sessions, dials, groups, backup codes, remember tokens)
@@ -368,6 +376,11 @@ class Admin
             $imagick ? 'loaded (better thumbnails)' : 'not installed (optional)', 'PHP',
             'Imagick enables OG image capture and better thumbnail quality.');
 
+        $exif = extension_loaded('exif');
+        $checks[] = self::chk('exif extension', $exif, false,
+            $exif ? 'loaded (avatar auto-rotation)' : 'not installed (optional)', 'PHP',
+            'Used only to auto-correct avatar photo orientation from phone cameras. Avatar upload works without it — photos just keep their original orientation.');
+
         $execOk = function_exists('exec') && !in_array('exec', explode(',', ini_get('disable_functions') ?: ''));
         $checks[] = self::chk('exec() available', $execOk, false,
             $execOk ? 'yes' : 'disabled — git-based auto-update will not work', 'PHP',
@@ -390,7 +403,7 @@ class Admin
         $colChecks = [
             ['users',       'totp_secret',             'VARCHAR — 2FA support'],
             ['users',       'totp_enabled',             'TINYINT — 2FA flag'],
-            ['users',       'avatar_path',              'VARCHAR — avatar'],
+            ['users',       'avatar_path',              'VARCHAR — sesja 078 avatar'],
             ['users',       'reset_token',              'VARCHAR — password reset'],
             ['users',       'reset_expires',            'DATETIME — password reset expiry'],
             ['users',       'recent_disabled',          'TINYINT — sesja 064'],
@@ -510,6 +523,7 @@ class Admin
             'src/Meta.php'                 => true,
             'src/Updater.php'              => true,
             'src/GroupIcon.php'            => true,
+            'src/Avatar.php'               => true,   // sesja 078
             'pages/login.php'              => true,
             'pages/dashboard.php'          => true,
             'pages/setup-2fa.php'          => true,
@@ -532,6 +546,7 @@ class Admin
             'api/update.php'               => true,
             'api/meta.php'                 => true,
             'api/group_icons.php'          => true,
+            'api/avatars.php'              => true,   // sesja 078
             'assets/css/app.css'           => true,
             'assets/css/design-system.css' => true,
             'assets/js/app.js'             => true,

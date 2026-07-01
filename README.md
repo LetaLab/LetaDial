@@ -118,6 +118,12 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
 - Automatic contrast FG (#000/#fff) based on luminance
 - Recently used tab can be hidden per-user (Settings → UI Preferences → Hide Recent)
 
+### User Avatars
+- Upload profile photo per user (JPEG / PNG / GIF / WebP → GD → 128×128 WebP, EXIF stripped)
+- Shown in: dashboard topbar (desktop + mobile), Settings preview, Admin → Users table
+- Served through authenticated PHP endpoint — direct web access blocked
+- ETag / 304 caching; removed automatically when account is deleted
+
 ### Authentication & Security
 - Login with rate limiting (IP-based, `REMOTE_ADDR` only — X-Forwarded-For spoofing blocked)
 - TOTP two-factor authentication (Google Authenticator, Bitwarden, Authy)
@@ -201,7 +207,6 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
 
 ## Planned / Upcoming
 
-- Avatar upload per user (Imagick → WebP 128×128)
 - Trusted device — skip 2FA for 30 days on confirmed devices
 - GDPR: full data export (own dials, groups, settings as JSON)
 - GDPR: account self-deletion with cascade
@@ -228,8 +233,9 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
 | Web server | nginx or Apache with mod_rewrite |
 | HTTPS | Strongly recommended |
 
-Optional (better thumbnails):
-- `imagick` PHP extension - enables OG image capture and better image processing
+Optional:
+- `imagick` PHP extension — enables OG image capture and better image processing
+- `exif` PHP extension — auto-corrects avatar orientation from phone cameras (cosmetic, not required)
 
 Check requirements before installing:
 

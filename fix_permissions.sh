@@ -83,6 +83,7 @@ API_SRC_FILES=(
     QRCode.php RateLimit.php TOTP.php
     Group.php Dial.php Thumbnail.php GroupIcon.php
     Meta.php Updater.php Import.php Export.php Admin.php
+    Avatar.php
 )
 REMOVED_FROM_API=0
 for f in "${API_SRC_FILES[@]}"; do

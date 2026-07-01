@@ -545,6 +545,10 @@ body:has(.bulk-toolbar) .toast-container { bottom:calc(var(--space-5) + 60px); }
 .mobile-menu-danger { color:var(--error); }
 .mobile-menu-danger:hover { background:var(--error-bg); }
 
+/* ── Avatar in topbar + mobile menu (sesja 078) ─────────────────────────── */
+.topbar-avatar-img      { width:20px; height:20px; border-radius:50%; object-fit:cover; border:1px solid var(--border); flex-shrink:0; }
+.mobile-menu-avatar-img { width:22px; height:22px; border-radius:50%; object-fit:cover; border:1px solid var(--border); flex-shrink:0; }
+
 /* ============================================================
    STYLE MODAL — Icon & Color picker (sesja 051 + 052)
    ============================================================ */

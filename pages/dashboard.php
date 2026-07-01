@@ -1,9 +1,10 @@
 <?php
 /**
- * LetaDial — Dashboard (sesja 059 + 071b + 072)
+ * LetaDial — Dashboard (sesja 059 + 071b + 072 + 078)
  * sesja 059: update notification banner for admin
  * sesja 071b: custom primary color per theme
  * sesja 072: custom bg + text colors per theme
+ * sesja 078: avatar shown in topbar (desktop + mobile menu) instead of 👤 emoji
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die();
@@ -21,6 +22,7 @@ $user_login     = htmlspecialchars($user['login'], ENT_QUOTES, 'UTF-8');
 $is_admin       = ($user['role'] === 'admin');
 $icon_url       = htmlspecialchars(APP_URL . '/assets/icons/icon-192.png', ENT_QUOTES, 'UTF-8');
 $og_image_url   = htmlspecialchars(APP_URL . '/assets/icons/OG.png', ENT_QUOTES, 'UTF-8');
+$has_avatar     = !empty($user['avatar_path']);   // sesja 078
 
 $groups_data    = Group::getAll($user['id']);
 $groups_json    = json_encode($groups_data, JSON_HEX_TAG | JSON_HEX_QUOT);
@@ -196,6 +198,17 @@ $_inline_css[] = ":root{--dial-w:{$dial_width}px;}";
     opacity: .7; line-height: 1; padding: .1rem .3rem;
 }
 .update-banner-dismiss:hover { opacity: 1; }
+/* sesja 078: avatar in topbar */
+.topbar-avatar-img {
+    width: 20px; height: 20px; border-radius: 50%; object-fit: cover;
+    vertical-align: middle; margin-right: .35rem; border: 1px solid var(--border);
+    flex-shrink: 0;
+}
+.mobile-menu-avatar-img {
+    width: 22px; height: 22px; border-radius: 50%; object-fit: cover;
+    vertical-align: middle; margin-right: .4rem; border: 1px solid var(--border);
+    flex-shrink: 0;
+}
 </style>
 <script>
 (function(){
@@ -235,7 +248,14 @@ $_inline_css[] = ":root{--dial-w:{$dial_width}px;}";
         <button type="button" id="btn-import" class="topbar-btn-io" title="Import dials from JSON file">↑ Import</button>
         <button type="button" id="btn-export" class="topbar-btn-io" title="Export all dials to JSON">↓ Export</button>
         <div class="topbar-sep"></div>
-        <span class="topbar-user-name">👤 <?= $user_login ?></span>
+        <span class="topbar-user-name">
+            <?php if ($has_avatar): ?>
+            <img src="/api/avatars/<?= (int)$user['id'] ?>" alt="" class="topbar-avatar-img" onerror="this.remove()">
+            <?php else: ?>
+            👤
+            <?php endif; ?>
+            <?= $user_login ?>
+        </span>
         <?php if ($is_admin): ?>
         <a href="/admin" class="topbar-link">Admin</a>
         <?php endif; ?>
@@ -252,7 +272,14 @@ $_inline_css[] = ":root{--dial-w:{$dial_width}px;}";
 
 <div id="mobile-menu" class="mobile-menu topbar-show-mobile" aria-hidden="true">
     <div class="mobile-menu-inner">
-        <div class="mobile-menu-user">👤 <?= $user_login ?></div>
+        <div class="mobile-menu-user">
+            <?php if ($has_avatar): ?>
+            <img src="/api/avatars/<?= (int)$user['id'] ?>" alt="" class="mobile-menu-avatar-img" onerror="this.remove()">
+            <?php else: ?>
+            👤
+            <?php endif; ?>
+            <?= $user_login ?>
+        </div>
         <button class="mobile-menu-item" data-theme-toggle>🌙 Dark mode</button>
         <button class="mobile-menu-item" id="btn-bulk-select-mobile">☑ Select multiple</button>
         <button class="mobile-menu-item" id="btn-import-mobile">↑ Import</button>
@@ -317,6 +344,7 @@ window.LETADIAL_BOOT = {
     customColors:   <?= json_encode($custom_colors) ?>,
     customExtras:   <?= json_encode($custom_extras) ?>,
     dialWidth:      <?= $dial_width ?>,       // sesja 074
+    hasAvatar:      <?= $has_avatar ? 'true' : 'false' ?>,  // sesja 078
 };
 </script>
 <script src="/assets/js/app.js"></script>

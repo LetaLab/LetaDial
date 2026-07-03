@@ -1,6 +1,6 @@
 <?php
 /**
- * LetaDial — Admin Model (sesja 065 + 066 + 067 + 068 + 069 + 071b + 077 + 078)
+ * LetaDial — Admin Model (sesja 065 + 066 + 067 + 068 + 069 + 071b + 077 + 078 + SEC-079)
  *
  * Static methods for the admin panel.
  * 065: Blocked IPs, Users, Login History, Install Check, Export
@@ -12,12 +12,21 @@
  * 077: installCheck — dodano pages/bookmarklet.php do listy integralności plików
  * 078: getUsers() zwraca avatar_path; deleteUser() usuwa plik avatara;
  *      installCheck() — dodano src/Avatar.php + api/avatars.php do listy integralności
+ * SEC-079: fix_permissions.sh usunięty z repo i z listy integralności — patrz
+ *      README → Permissions. installCheck() — dodano: wykrywanie katalogów
+ *      world-writable, diagnostyka właściciela plików, weryfikacja
+ *      git remote "origin" (musi być zawsze github.com/LetaLab/LetaDial).
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
 
 class Admin
 {
+    // SEC-079: fix_permissions.sh nie istnieje już w repo — utrzymanie
+    // uprawnień jest teraz w całości poza gitem. Ten hint jest pokazywany
+    // w installCheck() przy każdym problemie z uprawnieniami plików/katalogów.
+    private const PERMS_FIX_HINT = 'Run: sudo /usr/sbin/LetaDial_Permissions.sh (see README → Permissions)';
+
     // ── Blocked IPs (Rate Limits) ─────────────────────────────────────────────
 
     public static function getBlocked(int $min = 3): array
@@ -349,6 +358,31 @@ class Admin
         ) ?: [];
     }
 
+    // ── Git remote verification (SEC-079) ───────────────────────────────────────
+    //
+    // Read-only. Used only by installCheck() to warn if 'origin' is ever
+    // something other than the official public GitHub repo — gitPull()
+    // always pulls from 'origin' by name, so a misconfigured remote would
+    // silently change where "Update now" fetches code from.
+
+    private static function execAvailable(): bool
+    {
+        if (!function_exists('exec')) return false;
+        $disabled = array_map('trim', explode(',', ini_get('disable_functions') ?: ''));
+        return !in_array('exec', $disabled, true);
+    }
+
+    private static function gitRemoteOriginUrl(string $dir): ?string
+    {
+        if (!self::execAvailable()) return null;
+        $dirEsc = escapeshellarg($dir);
+        $output = [];
+        $return = 1;
+        exec("git -C {$dirEsc} remote get-url origin 2>&1", $output, $return);
+        if ($return !== 0 || empty($output)) return null;
+        return trim(implode('', $output));
+    }
+
     // ── Install Check ─────────────────────────────────────────────────────────
 
     public static function installCheck(): array
@@ -470,12 +504,12 @@ class Admin
         $cfgSafe   = in_array($cfgPerms, ['0600', '0400'], true);
         $checks[] = self::chk('config.php permissions', $cfgSafe, true,
             $cfgExists ? "{$cfgPerms} (should be 0600)" : 'file not found', 'Security',
-            $cfgSafe ? '' : 'Run: chmod 600 config.php — or: bash fix_permissions.sh');
+            $cfgSafe ? '' : 'Run: chmod 600 config.php — or: ' . self::PERMS_FIX_HINT);
 
         $installExists = file_exists($appDir . '/install.php');
         $checks[] = self::chk('install.php removed', !$installExists, true,
             $installExists ? 'STILL PRESENT — security risk!' : 'not found (good)', 'Security',
-            $installExists ? 'Delete install.php immediately or run fix_permissions.sh' : '');
+            $installExists ? 'Delete immediately: rm install.php — or wait for the next scheduled run of LetaDial_Permissions.sh, if installed' : '');
 
         $keyLen = defined('ENCRYPTION_KEY') ? strlen(ENCRYPTION_KEY) : 0;
         $checks[] = self::chk('ENCRYPTION_KEY length', $keyLen === 64, true,
@@ -485,7 +519,37 @@ class Admin
         $checks[] = self::chk('HMAC_KEY length', $hmacLen === 64, true,
             "{$hmacLen} chars (must be 64 hex = 32 bytes)", 'Security');
 
+        // SEC-079: origin must always be the official public GitHub repo —
+        // never a private/self-hosted remote. Skipped entirely (no check
+        // added) if exec() is disabled or this isn't a git checkout, since
+        // in that case we genuinely cannot know and shouldn't guess.
+        $remoteUrl = self::gitRemoteOriginUrl($appDir);
+        if ($remoteUrl !== null) {
+            $expectedRemotes = [
+                'https://github.com/LetaLab/LetaDial',
+                'https://github.com/LetaLab/LetaDial.git',
+                'git@github.com:LetaLab/LetaDial.git',
+            ];
+            $remoteOk = in_array(rtrim($remoteUrl, '/'), $expectedRemotes, true);
+            $checks[] = self::chk('git remote "origin"', $remoteOk, true,
+                $remoteOk ? $remoteUrl : "{$remoteUrl} — UNEXPECTED",
+                'Security',
+                $remoteOk ? '' : 'origin must be https://github.com/LetaLab/LetaDial.git — fix with: git remote set-url origin https://github.com/LetaLab/LetaDial.git');
+        }
+
         // ── Filesystem ────────────────────────────────────────────────────────
+
+        // SEC-079: app root itself must not be world-writable.
+        $rootMode = @fileperms($appDir);
+        if ($rootMode !== false) {
+            $rootModeOct = substr(sprintf('%o', $rootMode), -4);
+            $rootWorldWr = ($rootMode & 0002) !== 0;
+            $checks[] = self::chk('App root not world-writable', !$rootWorldWr, true,
+                $rootWorldWr ? "{$rootModeOct} — WORLD-WRITABLE" : "{$rootModeOct} ok",
+                'Filesystem',
+                $rootWorldWr ? self::PERMS_FIX_HINT : '');
+        }
+
         $dirs = [
             'storage'             => ['writable' => true,  'required' => true],
             'storage/thumbnails'  => ['writable' => true,  'required' => true],
@@ -501,7 +565,40 @@ class Admin
             $checks[] = self::chk("Dir: {$rel}", $ok, $opts['required'],
                 $ok ? ($opts['writable'] ? 'exists + writable' : 'exists') : ($exists ? 'not writable' : 'MISSING'),
                 'Filesystem',
-                $ok ? '' : "Run: bash fix_permissions.sh");
+                $ok ? '' : self::PERMS_FIX_HINT);
+
+            // SEC-079: flag world-writable dirs — the classic "chmod -R 777
+            // to make it work" self-inflicted vulnerability. Any local user
+            // or process could write into LetaDial's data directories.
+            if ($exists) {
+                $mode    = fileperms($full);
+                $modeOct = substr(sprintf('%o', $mode), -4);
+                $worldWr = ($mode & 0002) !== 0;
+                $checks[] = self::chk("Dir: {$rel} not world-writable", !$worldWr, true,
+                    $worldWr ? "{$modeOct} — WORLD-WRITABLE" : "{$modeOct} ok",
+                    'Filesystem',
+                    $worldWr ? self::PERMS_FIX_HINT : '');
+            }
+        }
+
+        // SEC-079: ownership diagnostic — informational only (is_writable()
+        // above is the authoritative required check). Helps distinguish a
+        // mode problem from an ownership problem at a glance. Silently
+        // skipped if the posix extension isn't loaded.
+        if (function_exists('posix_geteuid') && function_exists('posix_getpwuid')) {
+            $procUid      = posix_geteuid();
+            $procInfo     = posix_getpwuid($procUid);
+            $procUser     = $procInfo['name'] ?? (string)$procUid;
+            $storageOwner = @fileowner($appDir . '/storage');
+            if ($storageOwner !== false) {
+                $ownerMatch = ($storageOwner === $procUid);
+                $ownerInfo  = posix_getpwuid($storageOwner);
+                $ownerName  = $ownerInfo['name'] ?? (string)$storageOwner;
+                $checks[] = self::chk('storage/ owner matches PHP process user', $ownerMatch, false,
+                    $ownerMatch ? $procUser : "owned by {$ownerName}, PHP runs as {$procUser}",
+                    'Filesystem',
+                    $ownerMatch ? '' : self::PERMS_FIX_HINT);
+            }
         }
 
         // ── File Integrity ────────────────────────────────────────────────────
@@ -550,7 +647,6 @@ class Admin
             'assets/css/app.css'           => true,
             'assets/css/design-system.css' => true,
             'assets/js/app.js'             => true,
-            'fix_permissions.sh'           => false,
         ];
         foreach ($keyFiles as $rel => $required) {
             $exists = file_exists($appDir . '/' . $rel);

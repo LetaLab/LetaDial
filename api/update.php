@@ -1,14 +1,18 @@
 <?php
 /**
- * LetaDial — Update API (sesja 059 + sesja 065)
+ * LetaDial — Update API (sesja 059 + sesja 065 + SEC-079)
  *
  * GET  /api/update              — cached GitHub Release status (sesja 059)
  * POST /api/update/refresh      — force-refresh GitHub Release cache
  * GET  /api/update/git-check    — git fetch + log HEAD..origin/main (sesja 065)
- * POST /api/update/git-pull     — git pull + fix_permissions.sh    (sesja 065)
+ * POST /api/update/git-pull     — git pull, requires current password (SEC-079 re-auth)
  *
  * Wszystkie endpointy: tylko admin.
  * POST endpointy: CSRF wymagany.
+ * POST /api/update/git-pull dodatkowo wymaga pola "password" w body —
+ * skradziona 30-dniowa sesja admina sama w sobie nie wystarcza już do
+ * wywołania update'u (który jest RCE-equivalent, jeśli origin repo
+ * zostanie kiedyś skompromitowane).
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -46,12 +50,35 @@ if ($method === 'GET' && $action === 'git-check') {
 // ── POST /api/update/git-pull ─────────────────────────────────────────────────
 if ($method === 'POST' && $action === 'git-pull') {
     CSRF::require();
+
     // Rate limit: 5 pull'ów na godzinę
     if (RateLimit::check('git_pull', (string)$user['id'], 5, 3600, 3600)) {
         http_response_code(429);
         echo json_encode(['ok' => false, 'error' => 'Too many update requests. Try again later.']); exit;
     }
+
+    // SEC-079: re-auth. Pulling and running new code from GitHub is
+    // functionally equivalent to remote code execution if the upstream
+    // repo were ever compromised — a stolen 30-day session cookie alone
+    // must not be enough to trigger it. Require the current password.
+    $body     = json_decode(file_get_contents('php://input'), true) ?? [];
+    $password = $body['password'] ?? '';
+    $row      = DB::row("SELECT password_hash FROM users WHERE id = ?", [$user['id']]);
+    if ($password === '' || !$row || !Password::verify($password, $row['password_hash'])) {
+        http_response_code(403);
+        echo json_encode(['ok' => false, 'error' => 'Incorrect password. Re-enter your password to confirm the update.']); exit;
+    }
+
     $result = Updater::gitPull();
+
+    // Clear OPcache so freshly-pulled PHP (including security fixes) takes
+    // effect immediately, rather than waiting for the next
+    // opcache.revalidate_freq cycle (only matters if validate_timestamps
+    // is disabled server-side — harmless no-op otherwise).
+    if (function_exists('opcache_reset')) {
+        opcache_reset();
+    }
+
     http_response_code($result['ok'] ? 200 : 500);
     echo json_encode($result);
     exit;

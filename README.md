@@ -91,10 +91,10 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
 
 ### LetaLink Bookmarklet
 - Drag-to-toolbar bookmarklet — add any webpage to LetaDial in one click
-- Popup window (430×540 px) pre-fills URL, title and OG description from the page
+- Popup window (430×540 px) pre-fills URL, title and OG description from the page
 - Group selector with localStorage memory of last used group
 - Notes field (500 chars) with live counter
-- Thumbnail generated in background after save; popup auto-closes after 2 s
+- Thumbnail generated in background after save; popup auto-closes after 2 s
 - Mobile fallback: copy bookmarklet code from Settings → LetaLink, paste as bookmark URL
 - Settings → LetaLink: drag button, Copy code, Test popup link
 
@@ -175,8 +175,8 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
 - Login history: last N entries, filter by IP or status
 - Sessions: all active sessions across all users, terminate any
 - Auto-update: check GitHub Releases API (cached 6h in `settings` table), update notification banner for admin
-- Update via git pull + `fix_permissions.sh` from admin panel with live output
-- Install Check: PHP extensions, GD WebP, Imagick, DB schema, config constants, security (no `install.php`, HTTPS, `.git` block), filesystem permissions, file integrity via `git status`
+- Update via git pull from admin panel, requires re-entering your password (step-up auth) — always pulls from `https://github.com/LetaLab/LetaDial`, verified live against `git remote -v` on every Install Check
+- Install Check: PHP extensions, GD WebP, Imagick, DB schema, config constants, security (no `install.php`, HTTPS, `.git` block, git remote origin, world-writable directories), filesystem permissions, file integrity via `git status`
 - Registration toggle: enable/disable self-registration with one click
 
 ### Installer (`install.php`)
@@ -189,7 +189,10 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
 - Creates all database tables and default settings in one transaction
 - Validates SMTP by sending a test activation email during setup
 - Self-deletes after successful installation
-- `fix_permissions.sh` removes `install.php` on every run (safety net)
+- `install.php` is also removed automatically after every `git pull` (via
+  the update flow), and again by `LetaDial_Permissions.sh` if you've set
+  it up (see [Permissions](#permissions)) — defense in depth, not reliant
+  on any single mechanism
 
 ### Architecture & Quality
 - Zero external PHP dependencies — no Composer, no CDN, no npm
@@ -290,9 +293,12 @@ Project structure after clone:
 chown -R www-data:www-data /var/www/html/LetaDial/
 find /var/www/html/LetaDial/ -type d -exec chmod 755 {} \;
 find /var/www/html/LetaDial/ -type f -exec chmod 644 {} \;
-chmod +x /var/www/html/LetaDial/fix_permissions.sh
-bash /var/www/html/LetaDial/fix_permissions.sh
 ```
+
+`install.php` creates `storage/`, `logs/`, and their `.htaccess` files
+itself during setup. For ongoing permission maintenance after install
+(recommended), set up `LetaDial_Permissions.sh` — see
+[Permissions](#permissions) below.
 
 ### 4. Configure nginx
 
@@ -435,6 +441,173 @@ This enables the update banner for admin users and the Admin → Update tab (git
 
 ---
 
+## Permissions
+
+LetaDial does **not** ship a permission-fixing script inside the repository.
+A script that lives inside a git-tracked, auto-updatable directory and later
+gets executed as root is a privilege-escalation risk if the GitHub repo were
+ever compromised. Instead, create your own copy **outside** the project
+directory and run it independently via cron.
+
+### 1. Create `/usr/sbin/LetaDial_Permissions.sh`
+
+```bash
+cat <<'EOF' > /usr/sbin/LetaDial_Permissions.sh
+#!/bin/bash
+# LetaDial — Permission Fix + Cleanup Script (standalone, root-only)
+#
+# This script intentionally lives OUTSIDE the git repository so a
+# compromised LetaDial origin can never modify it. It is not executed by
+# the web-based "Update now" flow or by any code inside the repo — run it
+# only via cron (see README) or manually.
+#
+# What this does:
+#   1. Sets correct ownership (www-data) and permissions (dirs 755, files 644)
+#      — this also strips any accidental world-writable (777/775/etc) bits.
+#   2. Protects config.php with 600
+#   3. Creates missing required directories with correct .htaccess files
+#   4. Removes misplaced src/*.php files from api/
+#   5. Removes leftover installer, migration, and legacy files
+
+# ── Configuration — EDIT THIS if your install path differs ────────────────
+APP_DIR="/var/www/html/LetaDial"
+WEB_USER="www-data"
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "This script must be run as root." >&2
+    exit 1
+fi
+
+if [ ! -d "$APP_DIR" ]; then
+    echo "APP_DIR does not exist: $APP_DIR" >&2
+    echo "Edit the APP_DIR variable at the top of this script." >&2
+    exit 1
+fi
+
+echo "LetaDial — fixing permissions"
+echo "APP_DIR: $APP_DIR"
+echo ""
+
+# ── 1. Ownership ──────────────────────────────────────────────────────────
+chown -R ${WEB_USER}:${WEB_USER} "$APP_DIR"
+
+# ── 2. Permissions: dirs 755, files 644 (also strips world-writable bits) ─
+find "$APP_DIR" -type d -exec chmod 755 {} \;
+find "$APP_DIR" -type f -exec chmod 644 {} \;
+
+# ── 3. config.php: 600 ────────────────────────────────────────────────────
+if [ -f "$APP_DIR/config.php" ]; then
+    chmod 600 "$APP_DIR/config.php"
+    echo "config.php → 600"
+fi
+
+# ── 4. Ensure required directories exist ─────────────────────────────────
+for dir in \
+    storage \
+    storage/thumbnails \
+    storage/sessions \
+    storage/avatars \
+    storage/group_icons \
+    logs \
+    api \
+    assets/css \
+    assets/js \
+    assets/icons \
+    src \
+    pages; do
+    full="$APP_DIR/$dir"
+    if [ ! -d "$full" ]; then
+        mkdir -p "$full"
+        chown ${WEB_USER}:${WEB_USER} "$full"
+        chmod 755 "$full"
+        echo "Created: $dir/"
+    fi
+done
+
+# ── 5. Create missing .htaccess files ────────────────────────────────────
+DENY_ALL="Options -Indexes\nOrder deny,allow\nDeny from all"
+NO_PHP="Options -Indexes\nphp_flag engine off"
+
+write_htaccess() {
+    local path="$1"
+    local content="$2"
+    if [ ! -f "$path" ]; then
+        printf "$content\n" > "$path"
+        chown ${WEB_USER}:${WEB_USER} "$path"
+        echo "Created: ${path#$APP_DIR/}"
+    fi
+}
+
+write_htaccess "$APP_DIR/storage/.htaccess"             "$DENY_ALL"
+write_htaccess "$APP_DIR/storage/sessions/.htaccess"    "$DENY_ALL"
+write_htaccess "$APP_DIR/storage/avatars/.htaccess"     "$DENY_ALL"
+write_htaccess "$APP_DIR/storage/group_icons/.htaccess" "$DENY_ALL"
+write_htaccess "$APP_DIR/storage/thumbnails/.htaccess"  "$NO_PHP"
+write_htaccess "$APP_DIR/logs/.htaccess"                "$DENY_ALL"
+
+# ── 6. Remove misplaced src/ files from api/ ─────────────────────────────
+API_SRC_FILES=(
+    Auth.php CSRF.php DB.php Mailer.php Password.php
+    QRCode.php RateLimit.php TOTP.php
+    Group.php Dial.php Thumbnail.php GroupIcon.php Avatar.php
+    Meta.php Updater.php Import.php Export.php Admin.php
+)
+REMOVED_FROM_API=0
+for f in "${API_SRC_FILES[@]}"; do
+    if [ -f "$APP_DIR/api/$f" ]; then
+        rm -f "$APP_DIR/api/$f"
+        echo "Removed misplaced: api/$f"
+        REMOVED_FROM_API=1
+    fi
+done
+[ "$REMOVED_FROM_API" -eq 0 ] && echo "api/ folder: clean"
+
+# ── 7. Remove installer, migration, and legacy files ─────────────────────
+for f in install.php fix_permissions.sh \
+         migrate_001.sql migrate_002.sql migrate_051.sql \
+         migrate_052.sql migrate_057.sql migrate_064.sql migrate_065.sql; do
+    if [ -f "$APP_DIR/$f" ]; then
+        rm -f "$APP_DIR/$f"
+        echo "Removed: $f"
+    fi
+done
+
+echo ""
+echo "Done."
+EOF
+chmod 700 /usr/sbin/LetaDial_Permissions.sh
+```
+
+If your install path is not `/var/www/html/LetaDial`, edit the `APP_DIR`
+variable near the top of the script before running it.
+
+### 2. Run it once manually
+
+```bash
+sudo /usr/sbin/LetaDial_Permissions.sh
+```
+
+### 3. Add it to root's crontab
+
+```bash
+sudo crontab -e
+```
+
+Add this line:
+
+```
+0 * * * * /usr/sbin/LetaDial_Permissions.sh >> /var/log/letadial-permissions.log 2>&1
+```
+
+Runs hourly. `*/30 * * * *` (every 30 minutes) is also reasonable on a
+low-traffic personal instance — adjust to your preference.
+
+Admin → Install Check flags world-writable directories and ownership
+mismatches, and always points back to `sudo /usr/sbin/LetaDial_Permissions.sh`
+as the fix.
+
+---
+
 ## Directory structure
 
 ```text
@@ -454,7 +627,6 @@ logs/          Application logs - NOT web-accessible
 install.php    Installer - auto-deletes after installation
 index.php      Main router
 config.php     Generated by installer - NEVER commit this file
-fix_permissions.sh  Run as root after deploy/update
 ```
 
 ---
@@ -469,7 +641,16 @@ fix_permissions.sh  Run as root after deploy/update
 - Passwords: bcrypt cost 12, minimum 12 characters with complexity requirements
 - Sessions: DB-backed with SHA-256 token hashing
 - Rate limiting on login (10/5min), 2FA (5/5min), imports, thumbnail generation
-- `fix_permissions.sh` removes `install.php` on every run
+- Updates only ever pull from `https://github.com/LetaLab/LetaDial` — the
+  Admin panel verifies `git remote get-url origin` on every Install Check
+  and warns if it's ever anything else
+- "Update now" requires re-entering your current password (step-up auth)
+  before it runs `git pull` — a stolen session cookie alone is not enough
+- `install.php` is removed automatically after every `git pull`, and again
+  by `LetaDial_Permissions.sh` if you've set it up — see [Permissions](#permissions)
+- Permission maintenance runs as an independent script **outside** the git
+  repository (`/usr/sbin/LetaDial_Permissions.sh`), so a compromised
+  GitHub repo can never modify the script a root cron executes
 
 ---
 
@@ -478,14 +659,21 @@ fix_permissions.sh  Run as root after deploy/update
 ### Via Admin Panel (recommended)
 
 1. Admin → Update tab → Check for updates
-2. If update available → "Update now" (runs `git pull` + `fix_permissions.sh`)
+2. If update available → "Update now" → re-enter your password to confirm → runs `git pull origin main`
 
 ### Manual
 
 ```bash
 cd /var/www/html/LetaDial
 sudo -u www-data git pull origin main
-sudo bash fix_permissions.sh
+```
+
+If you've set up `/usr/sbin/LetaDial_Permissions.sh` (see
+[Permissions](#permissions)), it will pick up any permission drift on its
+next scheduled run — or run it immediately:
+
+```bash
+sudo /usr/sbin/LetaDial_Permissions.sh
 ```
 
 Always back up `config.php` and your database before upgrading.
@@ -497,10 +685,18 @@ Always back up `config.php` and your database before upgrading.
 ### Thumbnails not showing
 
 ```bash
-sudo bash /var/www/html/LetaDial/fix_permissions.sh
+sudo /usr/sbin/LetaDial_Permissions.sh
 ```
 
-Check that `storage/thumbnails/` is writable by `www-data`.
+Check that `storage/thumbnails/` is writable by `www-data`. If you haven't
+set up `LetaDial_Permissions.sh` yet, see [Permissions](#permissions), or
+fix it directly:
+
+```bash
+sudo chown -R www-data:www-data /var/www/html/LetaDial/storage
+sudo find /var/www/html/LetaDial/storage -type d -exec chmod 755 {} \;
+sudo find /var/www/html/LetaDial/storage -type f -exec chmod 644 {} \;
+```
 
 ---
 

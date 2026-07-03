@@ -1,17 +1,21 @@
 <?php
 /**
- * LetaDial — Admin Panel (sesja 065 + 066 + 067 + 068 + 069 + 074 + 078)
+ * LetaDial — Admin Panel (sesja 065 + 066 + 067 + 068 + 069 + 074 + 078 + SEC-079)
  *
  * Tabs:
  *   1. Blocked IPs    — rate_limits; unblock / export
  *   2. Users          — accounts; delete; force-reset password; invite (067); registration toggle (068); avatars (078)
  *   3. Sessions       — all active sessions; delete single / all for user
  *   4. Login History  — recent auth attempts; filter by IP
- *   5. Update         — git check vs github.com/LetaLab/LetaDial + git pull
+ *   5. Update         — git check vs github.com/LetaLab/LetaDial + git pull (password re-auth required, SEC-079)
  *   6. Install Check  — full health check
  *
  * sesja 078: avatar thumbnails shown next to login in the Users table, and the
  * logged-in admin's own avatar shown in the topbar instead of the 👤 emoji.
+ * SEC-079: "Update now" requires re-entering the current password (step-up
+ * auth) before /api/update/git-pull is called — a stolen session cookie
+ * alone is no longer enough to trigger a git pull. fix_permissions.sh
+ * references removed (file no longer exists — see README → Permissions).
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die();
@@ -548,7 +552,7 @@ body { min-height:100vh; background:var(--bg); }
                 <div id="update-running" class="update-state" style="display:none">
                     <div class="spinner"></div>
                     <div class="update-title" style="font-size:1rem">Updating…</div>
-                    <div class="update-sub">Running git pull origin main + fix_permissions.sh<br><strong>Do not close this page.</strong></div>
+                    <div class="update-sub">Running git pull origin main<br><strong>Do not close this page.</strong></div>
                 </div>
                 <div id="update-done" class="update-state" style="display:none">
                     <div class="update-icon" id="update-done-icon">✅</div>
@@ -557,8 +561,10 @@ body { min-height:100vh; background:var(--bg); }
                     <div style="text-align:left;max-width:680px;margin:0 auto">
                         <div style="font-size:.75rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin:.75rem 0 .35rem">git pull output</div>
                         <div class="output-box" id="update-pull-output"></div>
-                        <div style="font-size:.75rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin:.75rem 0 .35rem">fix_permissions output</div>
-                        <div class="output-box" id="update-perms-output"></div>
+                    </div>
+                    <div style="font-size:.75rem;color:var(--text-faint);max-width:680px;margin:.5rem auto 0">
+                        File permissions are maintained independently by a system cron
+                        (<code>LetaDial_Permissions.sh</code>) — not part of this update.
                     </div>
                     <div style="display:flex;gap:.75rem;justify-content:center;margin-top:1rem;flex-wrap:wrap">
                         <button class="btn btn-primary" onclick="location.reload()">↻ Reload page</button>
@@ -684,6 +690,24 @@ body { min-height:100vh; background:var(--bg); }
         <div class="confirm-actions">
             <button class="btn btn-ghost" id="cu-cancel">Close</button>
             <button class="btn btn-primary" id="cu-ok">Create account →</button>
+        </div>
+    </div>
+</div>
+
+<!-- Update Re-auth Modal (SEC-079) -->
+<div class="confirm-overlay" id="reauth-overlay">
+    <div class="confirm-box" style="max-width:400px">
+        <h3>🔒 Confirm your password</h3>
+        <p style="margin-bottom:.75rem">
+            Updating pulls and runs new code from GitHub. Re-enter your
+            password to confirm.
+        </p>
+        <input type="password" id="reauth-password" class="form-input"
+               placeholder="Your current password" autocomplete="current-password">
+        <div id="reauth-error" style="display:none;padding:.5rem .75rem;background:var(--error-bg);color:var(--error);border-radius:var(--radius-sm);font-size:.85rem;margin-top:.75rem"></div>
+        <div class="confirm-actions" style="margin-top:1rem">
+            <button class="btn btn-ghost" id="reauth-cancel">Cancel</button>
+            <button class="btn btn-primary" id="reauth-ok">Confirm</button>
         </div>
     </div>
 </div>
@@ -1256,12 +1280,52 @@ async function doGitCheck(){
     }else{cl.style.display='none';}
     updateShow('update-available');
 }
+// ── Re-auth (SEC-079) ──────────────────────────────────────────────────────
+let _reauthResolve = null;
+function promptReauth(){
+    return new Promise(resolve=>{
+        _reauthResolve=resolve;
+        const pw=document.getElementById('reauth-password');
+        const err=document.getElementById('reauth-error');
+        if(pw)pw.value='';
+        if(err)err.style.display='none';
+        document.getElementById('reauth-overlay').classList.add('show');
+        setTimeout(()=>pw?.focus(),80);
+    });
+}
+document.getElementById('reauth-cancel')?.addEventListener('click',()=>{
+    document.getElementById('reauth-overlay').classList.remove('show');
+    _reauthResolve?.(null);
+});
+document.getElementById('reauth-overlay')?.addEventListener('click',e=>{
+    if(e.target===e.currentTarget){e.currentTarget.classList.remove('show');_reauthResolve?.(null);}
+});
+document.getElementById('reauth-ok')?.addEventListener('click',()=>{
+    const pw=document.getElementById('reauth-password')?.value||'';
+    if(!pw){
+        const err=document.getElementById('reauth-error');
+        err.textContent='Please enter your password.';err.style.display='';
+        return;
+    }
+    document.getElementById('reauth-overlay').classList.remove('show');
+    _reauthResolve?.(pw);
+});
+document.getElementById('reauth-password')?.addEventListener('keydown',e=>{
+    if(e.key==='Enter')document.getElementById('reauth-ok').click();
+});
+
 async function doGitPull(){
-    if(!await cfm('Update LetaDial','This will run:\n  1. git pull origin main\n  2. bash fix_permissions.sh\n\nDo not close this page.'))return;
+    if(!await cfm('Update LetaDial','This will run:\n  git pull origin main\n\nDo not close this page.'))return;
+    const password=await promptReauth();
+    if(password===null)return;
     updateShow('update-running');
-    const r=await api('POST','/api/update/git-pull',{});
+    const r=await api('POST','/api/update/git-pull',{password});
+    if(!r.ok && /password/i.test(r.error||'')){
+        updateShow('update-available');
+        toast(r.error,'error');
+        return;
+    }
     document.getElementById('update-pull-output').textContent=r.pull_output||'(no output)';
-    document.getElementById('update-perms-output').textContent=r.perms_output||'(no output)';
     if(r.ok){document.getElementById('update-done-icon').textContent='✅';document.getElementById('update-done-title').textContent='Update complete!';}
     else{document.getElementById('update-done-icon').textContent='❌';document.getElementById('update-done-title').textContent='Update failed';document.getElementById('update-done-sub').textContent=r.error||'See output below.';}
     updateShow('update-done');

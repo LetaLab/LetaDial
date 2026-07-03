@@ -1,9 +1,14 @@
 <?php
 /**
- * LetaDial — Updater (sesja 059 + sesja 065)
+ * LetaDial — Updater (sesja 059 + sesja 065 + SEC-079)
  *
  * Sesja 059: GitHub Releases API check (GITHUB_REPO) — baner dla admina.
  * Sesja 065: Git-based update check vs PUBLIC GitHub repo (LetaLab/LetaDial).
+ * SEC-079:   Usunięto exec("bash fix_permissions.sh") z gitPull() — patrz
+ *            komentarz przy metodzie. origin jest ZAWSZE
+ *            github.com/LetaLab/LetaDial — jedyne wspierane źródło update'u.
+ *            (Admin::installCheck() weryfikuje to na żywo przez `git remote
+ *            get-url origin` i ostrzega, jeśli kiedykolwiek będzie inaczej.)
  *
  * gitCheck():
  *   Używa GitHub Compare API żeby porównać lokalny HEAD SHA z main na GitHub.
@@ -12,13 +17,8 @@
  *
  * gitPull():
  *   Wykonuje git fetch origin main + git reset --hard origin/main
- *   (lokalne zmiany są nadpisywane bez pytania)
- *   + bash fix_permissions.sh
- *
- * Dlaczego dwa różne remotes?
- *   Check = porównanie z publicznym GitHub (LetaLab/LetaDial) — "co jest dostępne"
- *   Pull  = pobieranie z prywatnego repo (coderepo.andrzejl.eu) — "gdzie są credentials"
- *   Założenie: oba repo są zsynchronizowane (push do obu).
+ *   (lokalne zmiany są nadpisywane bez pytania). Wymaga potwierdzenia
+ *   aktualnym hasłem admina (re-auth) — patrz api/update.php.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -187,7 +187,19 @@ class Updater
     /**
      * git fetch origin main + git reset --hard origin/main
      * Lokalne zmiany są nadpisywane bez pytania.
-     * Pull jest z origin (coderepo.andrzejl.eu) gdzie są credentials www-data.
+     *
+     * SEC-079: exec("bash fix_permissions.sh") USUNIĘTE z tej metody.
+     * Uzasadnienie: uruchamianie dowolnego skryptu bash pobranego z tego
+     * samego źródła co aktualizacja było niepotrzebnym wzmocnieniem ryzyka
+     * "skompromitowane origin = RCE" — RCE na poziomie PHP jest już
+     * akceptowanym ryzykiem każdego mechanizmu update'u przez git (FreshRSS
+     * ma dokładnie to samo ryzyko w swoim gitPull()), ale dodatkowy,
+     * nieograniczony krok exec("bash ...") nałożony na to — nie musi już
+     * istnieć. Utrzymanie uprawnień plików jest teraz w całości poza gitem:
+     * /usr/sbin/LetaDial_Permissions.sh, instalowany ręcznie przez admina
+     * (patrz README → Permissions) i uruchamiany niezależnym cronem roota.
+     * Ten skrypt nigdy nie może zostać zmodyfikowany przez skompromitowane
+     * origin, ponieważ nigdy nie jest częścią tego repozytorium.
      */
     public static function gitPull(): array
     {
@@ -202,49 +214,29 @@ class Updater
 
         if (!$fetch['ok']) {
             return [
-                'ok'           => false,
-                'pull_output'  => $fetchOut,
-                'perms_output' => '',
-                'error'        => 'git fetch returned exit code ' . $fetch['code'],
+                'ok'          => false,
+                'pull_output' => $fetchOut,
+                'error'       => 'git fetch returned exit code ' . $fetch['code'],
             ];
         }
 
-        $reset    = self::git('reset --hard origin/main');
-        $pullOut  = $fetchOut . "\n" . $reset['output'];
+        $reset   = self::git('reset --hard origin/main');
+        $pullOut = $fetchOut . "\n" . $reset['output'];
 
         // Immediately remove install.php if git pull restored it from repo.
-        // There is a brief window between git pull and fix_permissions.sh where
-        // install.php would be accessible via HTTP — close it explicitly here.
+        // Defense in depth — LetaDial_Permissions.sh (independent root cron,
+        // outside git) also removes it on its own schedule, but closing the
+        // window here costs nothing and needs no exec().
         $installPhp = $dir . '/install.php';
         if (file_exists($installPhp)) {
             @unlink($installPhp);
             $pullOut .= "\n[LetaDial] install.php removed after git pull.";
         }
 
-        $script   = $dir . '/fix_permissions.sh';
-        $permsOut = '';
-
-        if (file_exists($script)) {
-            // exec() uses "bash $script" which reads the file directly —
-            // no chmod needed and intentionally NOT done here.
-            // Adding chmod before exec would be a security risk if the repo
-            // is compromised: an attacker could replace fix_permissions.sh
-            // with malicious content and this chmod+exec would run it.
-            // bash reads the script regardless of the executable bit.
-            $scriptEsc  = escapeshellarg($script);
-            $permsLines = [];
-            $permsCode  = 0;
-            exec("bash {$scriptEsc} 2>&1", $permsLines, $permsCode);
-            $permsOut = implode("\n", $permsLines);
-        } else {
-            $permsOut = 'fix_permissions.sh not found — skipped.';
-        }
-
         return [
-            'ok'           => $reset['ok'],
-            'pull_output'  => $pullOut,
-            'perms_output' => $permsOut,
-            'error'        => $reset['ok'] ? null : 'git reset --hard returned exit code ' . $reset['code'],
+            'ok'          => $reset['ok'],
+            'pull_output' => $pullOut,
+            'error'       => $reset['ok'] ? null : 'git reset --hard returned exit code ' . $reset['code'],
         ];
     }
 

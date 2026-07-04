@@ -305,6 +305,7 @@ function db_create_tables(PDO $pdo): void {
             role             ENUM('admin','user') NOT NULL DEFAULT 'user',
             totp_secret      VARCHAR(128)     DEFAULT NULL COMMENT 'AES-256-GCM encrypted',
             totp_enabled     TINYINT(1)       NOT NULL DEFAULT 0,
+            totp_last_step   INT UNSIGNED     DEFAULT NULL COMMENT 'SEC-080: last consumed TOTP step (replay guard)',
             totp_required    TINYINT(1)       NOT NULL DEFAULT 0,
             email_verified   TINYINT(1)       NOT NULL DEFAULT 0,
             activation_token VARCHAR(64)      DEFAULT NULL,

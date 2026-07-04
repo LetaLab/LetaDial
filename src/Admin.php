@@ -436,6 +436,7 @@ class Admin
         // Key columns
         $colChecks = [
             ['users',       'totp_secret',             'VARCHAR — 2FA support'],
+            ['users',       'totp_last_step',           'INT — SEC-080 TOTP replay guard'],
             ['users',       'totp_enabled',             'TINYINT — 2FA flag'],
             ['users',       'avatar_path',              'VARCHAR — sesja 078 avatar'],
             ['users',       'reset_token',              'VARCHAR — password reset'],

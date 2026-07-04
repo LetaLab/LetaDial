@@ -128,7 +128,7 @@ if ($action === 'backup-codes') {
         echo json_encode(['ok' => false, 'error' => '2FA code is required.']); exit;
     }
     $secret = TOTP::decrypt($user['totp_secret']);
-    $valid  = TOTP::verify($secret, $code);
+    $valid  = TOTP::verifyAndConsume($secret, $code, $user['id']); // SEC-080: replay-safe
     if (!$valid) {
         $codes = DB::rows("SELECT * FROM totp_backup_codes WHERE user_id = ? AND used = 0", [$user['id']]);
         foreach ($codes as $bc) {

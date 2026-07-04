@@ -10,6 +10,10 @@
  *   loginFromRemember() → creates session with totp_verified=0 if user has 2FA
  *   register()          → sesja 068: self-registration (if enabled)
  *
+ * SEC-080: verify2FA() and enable2FA() both call TOTP::verifyAndConsume()
+ *   (not TOTP::verify()) so a captured/replayed TOTP code cannot be used
+ *   twice. See TOTP.php for the full rationale.
+ *
  * CSRF consistency note:
  *   self::$sessionId is ALWAYS set to hash('sha256', raw_token) — the same
  *   value stored in the DB `sessions.id` column — so CSRF::token() produces
@@ -178,7 +182,7 @@ class Auth
         }
 
         $secret_enc = $user['totp_secret'] ?? '';
-        if ($secret_enc && TOTP::verify(TOTP::decrypt($secret_enc), $code)) {
+        if ($secret_enc && TOTP::verifyAndConsume(TOTP::decrypt($secret_enc), $code, $user['id'])) {
             RateLimit::clear('2fa', $ip);
             DB::run("UPDATE sessions SET totp_verified = 1 WHERE id = ?", [self::$sessionId]);
             return ['ok' => true];
@@ -226,7 +230,7 @@ class Auth
         $secret = self::getSetupSecret();
         if (!$secret) return ['ok' => false, 'error' => 'Setup session expired. Start again.'];
 
-        if (!TOTP::verify($secret, $code)) {
+        if (!TOTP::verifyAndConsume($secret, $code, $user['id'])) {
             return ['ok' => false, 'error' => 'Invalid code. Check your authenticator app.'];
         }
 

@@ -17,21 +17,85 @@ class TOTP
         return self::base32Encode(random_bytes(self::SECRET_BYTES));
     }
 
-    /** Verify a 6-digit code against a secret, within the time window */
+    /**
+     * Verify a 6-digit code against a secret, within the time window.
+     *
+     * SEC-080: this checks cryptographic correctness ONLY — it does NOT
+     * protect against replay (the same valid code accepted twice within
+     * its ~150s validity window). Any call site that gates authentication
+     * or a sensitive action MUST use verifyAndConsume() instead. This
+     * method stays public/stateless for any future non-authenticating use
+     * (e.g. a "does this code look right" preview with no user context).
+     */
     public static function verify(string $secret, string $code): bool
     {
+        return self::matchStep($secret, $code) !== null;
+    }
+
+    /**
+     * Verify a code AND atomically mark its time-step as consumed for this
+     * user, so the exact same code can never be accepted a second time.
+     * (SEC-080 — closes the replay gap flagged in the 2026-07 audit.)
+     *
+     * Threat this closes: a code is shoulder-surfed / MITM'd / read off a
+     * clipboard or screenshot. Without this, the captured code stays valid
+     * for its whole window and can authenticate a second, attacker session
+     * before or after the legitimate one. RFC 6238 §5.2 recommends
+     * tracking the last successfully used step per credential — that's
+     * exactly what this does, via `users.totp_last_step`.
+     *
+     * Why this can't break normal logins: server time only moves forward,
+     * so every later, legitimate authentication computes a step strictly
+     * greater than anything recorded in the past. The ONLY thing this can
+     * ever reject is re-submitting the SAME (or an earlier) step — which
+     * is either an actual replay or a harmless duplicate form submit, and
+     * failing closed on those is correct behaviour, not a regression.
+     *
+     * Why it's atomic: the UPDATE's own WHERE clause IS the check — there
+     * is no separate SELECT-then-decide step, so there's no race window
+     * (unlike RateLimit::check()'s purge, tracked separately). Two
+     * concurrent requests racing the same step: exactly one UPDATE affects
+     * a row; the other affects zero and returns false.
+     *
+     * Shared across every call site on purpose (login 2FA, initial 2FA
+     * setup, backup-code-regeneration re-auth) — a consumed step is
+     * consumed everywhere, matching RFC 6238's own recommendation, which
+     * does not distinguish by "purpose" of the check.
+     */
+    public static function verifyAndConsume(string $secret, string $code, int $userId): bool
+    {
+        $matchedStep = self::matchStep($secret, $code);
+        if ($matchedStep === null) return false;
+
+        $affected = DB::run(
+            "UPDATE users SET totp_last_step = ?
+             WHERE id = ? AND (totp_last_step IS NULL OR totp_last_step < ?)",
+            [$matchedStep, $userId, $matchedStep]
+        );
+
+        return $affected > 0;
+    }
+
+    /**
+     * Shared matching primitive — identical cryptographic check verify()
+     * always did, just returns WHICH step matched (or null) instead of a
+     * plain bool, so callers can compare it against the replay guard.
+     */
+    private static function matchStep(string $secret, string $code): ?int
+    {
         $code = preg_replace('/\s/', '', $code);
-        if (!preg_match('/^\d{6}$/', $code)) return false;
+        if (!preg_match('/^\d{6}$/', $code)) return null;
 
         $key  = self::base32Decode($secret);
         $step = (int)floor(time() / self::STEP);
 
         for ($offset = -self::WINDOW; $offset <= self::WINDOW; $offset++) {
-            if (hash_equals(self::compute($key, $step + $offset), $code)) {
-                return true;
+            $candidate = $step + $offset;
+            if (hash_equals(self::compute($key, $candidate), $code)) {
+                return $candidate;
             }
         }
-        return false;
+        return null;
     }
 
     /**

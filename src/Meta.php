@@ -7,7 +7,9 @@
  *
  * Security:
  *   - SSRF: blocks private/loopback/reserved IPs (same as Thumbnail.php)
- *   - Redirect: follow_location=true, max 3 hops, only http/https
+ *   - Redirect: max 3 hops, EACH hop re-validated via isSafeUrl() (SEC-081)
+ *     — never trusts PHP's built-in follow_location, which does not
+ *     re-check redirect targets against the SSRF filter
  *   - Timeout: 5s connect + read
  *   - Size limit: reads max 65536 bytes — <head> is always enough
  *   - Charset: auto-detected from Content-Type header or <meta charset>
@@ -79,46 +81,124 @@ class Meta
 
     // ── Download ──────────────────────────────────────────────────────────────
 
+    /**
+     * SEC-081: fetches $url, following up to 3 redirects — but RE-VALIDATING
+     * every redirect target through isSafeUrl() before following it.
+     *
+     * Why this was needed: follow_location=true (the old behaviour) trusts
+     * PHP's stream wrapper to follow redirects internally, and PHP never
+     * re-checks the redirect target against our SSRF filter. Any host that
+     * legitimately passes isSafeUrl() (i.e. any public server) could send
+     * back "HTTP/1.1 302 Found" + "Location: http://169.254.169.254/..."
+     * (cloud metadata) or "Location: http://127.0.0.1/admin" (internal
+     * service), and the old code would happily follow it — no DNS control
+     * needed, just one ordinary HTTP response. This closes that gap by
+     * disabling automatic redirect-following and manually validating each
+     * hop the same way the initial URL is validated in isSafeUrl().
+     */
     private static function download(string $url): ?string
     {
-        $ctx = stream_context_create([
-            'http' => [
-                'method'          => 'GET',
-                'timeout'         => self::TIMEOUT,
-                'follow_location' => true,
-                'max_redirects'   => 3,
-                'user_agent'      => 'LetaDial/2.0 MetaBot (+https://github.com)',
-                'header'          => implode("\r\n", [
-                    'Accept: text/html,application/xhtml+xml',
-                    'Accept-Language: en,*;q=0.5',
-                    'Connection: close',
-                ]),
-                'ignore_errors'   => false,
-            ],
-            'ssl' => [
-                'verify_peer'      => true,
-                'verify_peer_name' => true,
-            ],
-        ]);
+        $maxRedirects = 3;
 
-        // Suppress warnings — we handle null return
-        $handle = @fopen($url, 'r', false, $ctx);
-        if (!$handle) return null;
+        for ($hop = 0; $hop <= $maxRedirects; $hop++) {
+            $ctx = stream_context_create([
+                'http' => [
+                    'method'          => 'GET',
+                    'timeout'         => self::TIMEOUT,
+                    'follow_location' => false, // SEC-081: followed manually below, with re-validation
+                    'user_agent'      => 'LetaDial/2.0 MetaBot (+https://github.com)',
+                    'header'          => implode("\r\n", [
+                        'Accept: text/html,application/xhtml+xml',
+                        'Accept-Language: en,*;q=0.5',
+                        'Connection: close',
+                    ]),
+                    'ignore_errors'   => true, // so 3xx responses stay inspectable below
+                ],
+                'ssl' => [
+                    'verify_peer'      => true,
+                    'verify_peer_name' => true,
+                ],
+            ]);
 
-        $html = '';
-        $read = 0;
-        while (!feof($handle) && $read < self::MAX_BYTES) {
-            $chunk  = fread($handle, 4096);
-            if ($chunk === false) break;
-            $html  .= $chunk;
-            $read  += strlen($chunk);
+            // Suppress warnings — failure is handled via return values below.
+            $handle = @fopen($url, 'r', false, $ctx);
+            if (!$handle) return null;
 
-            // Early exit once </head> is found — no need for <body>
-            if (stripos($html, '</head>') !== false) break;
+            // $http_response_header is populated by PHP in this scope
+            // immediately after fopen() on an http(s):// stream.
+            $status   = self::parseStatusCode($http_response_header ?? []);
+            $location = self::parseHeaderValue($http_response_header ?? [], 'Location');
+
+            if ($status >= 300 && $status < 400 && $location) {
+                fclose($handle);
+                $next = self::resolveRedirectUrl($url, $location);
+                if (!$next || !self::isSafeUrl($next)) {
+                    return null; // SEC-081: refuse to follow a redirect to an unvalidated target
+                }
+                $url = $next;
+                continue;
+            }
+
+            $html = '';
+            $read = 0;
+            while (!feof($handle) && $read < self::MAX_BYTES) {
+                $chunk  = fread($handle, 4096);
+                if ($chunk === false) break;
+                $html  .= $chunk;
+                $read  += strlen($chunk);
+
+                // Early exit once </head> is found — no need for <body>
+                if (stripos($html, '</head>') !== false) break;
+            }
+            fclose($handle);
+
+            return strlen($html) > 0 ? $html : null;
         }
-        fclose($handle);
 
-        return strlen($html) > 0 ? $html : null;
+        return null; // too many redirects
+    }
+
+    /** SEC-081: extract the numeric HTTP status code from a stream's response header array. */
+    private static function parseStatusCode(array $headers): int
+    {
+        foreach ($headers as $h) {
+            if (preg_match('#^HTTP/\S+\s+(\d{3})#', $h, $m)) return (int)$m[1];
+        }
+        return 0;
+    }
+
+    /** SEC-081: case-insensitive header lookup within a stream's response header array. */
+    private static function parseHeaderValue(array $headers, string $name): ?string
+    {
+        $prefix = preg_quote($name, '#');
+        foreach ($headers as $h) {
+            if (preg_match('#^' . $prefix . ':\s*(.+)$#i', $h, $m)) {
+                return trim($m[1]);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * SEC-081: resolve a Location header (absolute, protocol-relative,
+     * root-relative, or path-relative) against the URL it was received
+     * from. Returns null if the base URL can't be parsed.
+     */
+    private static function resolveRedirectUrl(string $baseUrl, string $location): ?string
+    {
+        if (preg_match('#^https?://#i', $location)) return $location;
+
+        $parts = parse_url($baseUrl);
+        if (!$parts || empty($parts['scheme']) || empty($parts['host'])) return null;
+
+        $origin = $parts['scheme'] . '://' . $parts['host'] . (isset($parts['port']) ? ':' . $parts['port'] : '');
+
+        if (str_starts_with($location, '//')) return $parts['scheme'] . ':' . $location;
+        if (str_starts_with($location, '/'))  return $origin . $location;
+
+        $basePath = $parts['path'] ?? '/';
+        $dir      = substr($basePath, 0, (strrpos($basePath, '/') ?: 0) + 1) ?: '/';
+        return $origin . $dir . $location;
     }
 
     // ── Charset ───────────────────────────────────────────────────────────────

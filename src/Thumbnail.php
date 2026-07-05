@@ -5,7 +5,12 @@
  * Security:
  *   - SSRF: blocks private/loopback IPs before any HTTP request
  *   - Path: built from DB integers only — never from user input
- *   - Redirect: follow_location=false on outbound fetch
+ *   - Redirect: follow_location=false on ALL outbound fetches (favicon,
+ *     OG-page, OG-image). SEC-081: the OG-page and OG-image fetches used
+ *     to run with follow_location=true (this comment was only accurate for
+ *     the favicon fetch) — every redirect target is now re-validated via
+ *     isSafeHost()/isSafeHostLax() before being followed, same as the
+ *     initial URL, via the shared safeFetchBody() helper below.
  *   - Upload: magic bytes validation → Imagick strip → always WebP
  *
  * Storage: storage/thumbnails/u{userId}/{dialId}.webp
@@ -290,18 +295,7 @@ class Thumbnail
 
     private static function fetchOgImageUrl(string $url): ?string
     {
-        $ctx = stream_context_create([
-            'http' => [
-                'timeout'         => self::TIMEOUT,
-                'follow_location' => true,
-                'max_redirects'   => 3,
-                'user_agent'      => 'LetaDial/1.0 ThumbnailBot',
-                'header'          => "Accept: text/html\r\n",
-            ],
-            'ssl'  => ['verify_peer' => true, 'verify_peer_name' => true],
-        ]);
-
-        $html = @file_get_contents($url, false, $ctx, 0, 32768);
+        $html = self::safeFetchBody($url, "Accept: text/html\r\n", 32768, self::TIMEOUT);
         if (!$html) return null;
 
         $patterns = [
@@ -334,17 +328,7 @@ class Thumbnail
         $ogHost = parse_url($ogUrl, PHP_URL_HOST);
         if (!$ogHost || !self::isSafeHostLax($ogHost)) return false;
 
-        $ctx = stream_context_create([
-            'http' => [
-                'timeout'         => self::TIMEOUT + 5,
-                'follow_location' => true,
-                'max_redirects'   => 3,
-                'user_agent'      => 'LetaDial/1.0 ThumbnailBot',
-            ],
-            'ssl'  => ['verify_peer' => true, 'verify_peer_name' => true],
-        ]);
-
-        $imgData = @file_get_contents($ogUrl, false, $ctx, 0, 5 * 1024 * 1024);
+        $imgData = self::safeFetchBody($ogUrl, '', 5 * 1024 * 1024, self::TIMEOUT + 5);
         if (!$imgData || strlen($imgData) < 100) return false;
 
         try {
@@ -406,6 +390,97 @@ class Thumbnail
         // Full mitigation requires resolving once and connecting by IP with Host header.
         // Deferred — attacker needs control over a DNS zone, risk acceptable for self-hosted.
         return true;
+    }
+
+    // ── SEC-081: redirect-safe fetch ──────────────────────────────────────────
+    //
+    // fetchOgImageUrl() and generateFromOgImage() used to fetch with
+    // follow_location=true, which trusts PHP to follow redirects internally
+    // WITHOUT re-checking the target against isSafeHostLax(). Any public
+    // server that legitimately passes the initial check could respond with
+    // "Location: http://169.254.169.254/..." or "Location: http://127.0.0.1/..."
+    // and PHP would follow it — no DNS control needed, just one 3xx response.
+    // safeFetchBody() disables automatic redirect-following and re-validates
+    // every hop the same way the initial URL is validated. (Does NOT close
+    // the separate DNS-rebinding TOCTOU noted above — that remains deferred.)
+
+    private static function safeFetchBody(string $url, string $extraHeaders, int $maxBytes, int $timeout): ?string
+    {
+        $maxRedirects = 3;
+
+        for ($hop = 0; $hop <= $maxRedirects; $hop++) {
+            $ctx = stream_context_create([
+                'http' => [
+                    'timeout'         => $timeout,
+                    'follow_location' => false, // SEC-081: followed manually below, with re-validation
+                    'ignore_errors'   => true,  // so 3xx responses stay inspectable, not treated as failure
+                    'user_agent'      => 'LetaDial/1.0 ThumbnailBot',
+                    'header'          => $extraHeaders,
+                ],
+                'ssl' => ['verify_peer' => true, 'verify_peer_name' => true],
+            ]);
+
+            $body     = @file_get_contents($url, false, $ctx, 0, $maxBytes);
+            $status   = self::parseStatusCode($http_response_header ?? []);
+            $location = self::parseHeaderValue($http_response_header ?? [], 'Location');
+
+            if ($status >= 300 && $status < 400 && $location) {
+                $next     = self::resolveRedirectUrl($url, $location);
+                $nextHost = $next ? parse_url($next, PHP_URL_HOST) : null;
+                if (!$nextHost || !self::isSafeHostLax($nextHost)) {
+                    return null; // SEC-081: refuse to follow a redirect to an unvalidated/unsafe host
+                }
+                $url = $next;
+                continue;
+            }
+
+            return ($body !== false && $body !== '') ? $body : null;
+        }
+
+        return null; // too many redirects
+    }
+
+    /** SEC-081: extract the numeric HTTP status code from a stream's response header array. */
+    private static function parseStatusCode(array $headers): int
+    {
+        foreach ($headers as $h) {
+            if (preg_match('#^HTTP/\S+\s+(\d{3})#', $h, $m)) return (int)$m[1];
+        }
+        return 0;
+    }
+
+    /** SEC-081: case-insensitive header lookup within a stream's response header array. */
+    private static function parseHeaderValue(array $headers, string $name): ?string
+    {
+        $prefix = preg_quote($name, '#');
+        foreach ($headers as $h) {
+            if (preg_match('#^' . $prefix . ':\s*(.+)$#i', $h, $m)) {
+                return trim($m[1]);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * SEC-081: resolve a Location header (absolute, protocol-relative,
+     * root-relative, or path-relative) against the URL it was received
+     * from. Returns null if the base URL can't be parsed.
+     */
+    private static function resolveRedirectUrl(string $baseUrl, string $location): ?string
+    {
+        if (preg_match('#^https?://#i', $location)) return $location;
+
+        $parts = parse_url($baseUrl);
+        if (!$parts || empty($parts['scheme']) || empty($parts['host'])) return null;
+
+        $origin = $parts['scheme'] . '://' . $parts['host'] . (isset($parts['port']) ? ':' . $parts['port'] : '');
+
+        if (str_starts_with($location, '//')) return $parts['scheme'] . ':' . $location;
+        if (str_starts_with($location, '/'))  return $origin . $location;
+
+        $basePath = $parts['path'] ?? '/';
+        $dir      = substr($basePath, 0, (strrpos($basePath, '/') ?: 0) + 1) ?: '/';
+        return $origin . $dir . $location;
     }
 
     // ── GD fallback ───────────────────────────────────────────────────────────

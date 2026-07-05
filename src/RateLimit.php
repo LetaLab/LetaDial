@@ -1,7 +1,3 @@
-mkdir -p /root/backup
-cp /var/www/html/LetaDial/src/RateLimit.php "/root/backup/RateLimit.php.bak_$(date +%Y-%m-%d_%H-%M-%S)"
-
-cat <<'EOF' > /var/www/html/LetaDial/src/RateLimit.php
 <?php
 /**
  * LetaDial — RateLimit (sesja 065: key_plain stored for admin display)

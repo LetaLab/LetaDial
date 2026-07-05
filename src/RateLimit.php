@@ -1,6 +1,11 @@
+mkdir -p /root/backup
+cp /var/www/html/LetaDial/src/RateLimit.php "/root/backup/RateLimit.php.bak_$(date +%Y-%m-%d_%H-%M-%S)"
+
+cat <<'EOF' > /var/www/html/LetaDial/src/RateLimit.php
 <?php
 /**
  * LetaDial — RateLimit (sesja 065: key_plain stored for admin display)
+ * SEC-082: purge scoped to `action` — see check() for full rationale.
  *
  * check(action, key, maxAttempts, windowSec, blockSec)
  *   Returns TRUE  → limit exceeded, caller should block the request.
@@ -39,11 +44,31 @@ class RateLimit
         $hash  = hash('sha256', $key);
         $plain = mb_substr($key, 0, 255);
 
-        // Purge expired entries (older than blockSec)
+        // Purge expired entries for THIS action only (older than its own blockSec).
+        //
+        // SEC-082: previously this DELETE had no `action` filter, so it purged
+        // rows for EVERY action using only the CURRENT call's blockSec. Since
+        // blockSec varies per action (600s for login/2fa, 3600s for everything
+        // else — see grep across the whole codebase), and login/2fa are hit far
+        // more often than any other action, nearly every "hourly" rate limit in
+        // the app (forgot_pw, reset_pw, settings_email, admin_invite, …) got
+        // silently purged after ~10 minutes instead of the intended 60 —
+        // because SOME login/2fa check (blockSec=600) ran in between and wiped
+        // out rows that still had 3000+ seconds left on their own window.
+        //
+        // Fix: scope the purge to `action = ?`. This is safe because every
+        // caller of check() for a given action name always passes the same
+        // blockSec (verified: 21 distinct action names, each used at exactly
+        // one call site in the entire codebase — no action is ever called with
+        // two different blockSec values). So this purge now only ever removes
+        // rows for the SAME action, once THEIR OWN blockSec has elapsed —
+        // never another action's — while still cleaning up abandoned rows for
+        // any key under that action (not just the current one), so the table
+        // doesn't grow unbounded.
         DB::run(
             "DELETE FROM rate_limits
-             WHERE window_start < DATE_SUB(NOW(), INTERVAL ? SECOND)",
-            [$blockSec]
+             WHERE action = ? AND window_start < DATE_SUB(NOW(), INTERVAL ? SECOND)",
+            [$action, $blockSec]
         );
 
         $row = DB::row(

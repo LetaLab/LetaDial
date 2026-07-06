@@ -83,6 +83,21 @@ class Dial
         );
         if (!$group) return ['ok' => false, 'error' => 'Group not found.'];
 
+        // SEC-084: max_dials_per_user was enforced in duplicate()/bulkDuplicate()
+        // but not here — the plain "Add dial" form/bookmarklet/API path had no
+        // ceiling at all. Same check, same pattern, same error message as the
+        // other two call sites for consistency.
+        $maxDials = (int)(DB::val(
+            "SELECT value FROM settings WHERE key_name = 'max_dials_per_user'"
+        ) ?? 500);
+        $currentCount = (int)(DB::val(
+            'SELECT COUNT(*) FROM dials WHERE user_id = ?',
+            [$userId]
+        ) ?? 0);
+        if ($currentCount >= $maxDials) {
+            return ['ok' => false, 'error' => "Dial limit reached (max {$maxDials})."];
+        }
+
         $pos = (int)(DB::val(
             'SELECT COALESCE(MAX(position), -1) FROM dials WHERE user_id = ? AND group_id = ?',
             [$userId, $groupId]

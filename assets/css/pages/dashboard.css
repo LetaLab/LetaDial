@@ -1,0 +1,40 @@
+/*
+ * LetaDial — Dashboard (update banner + avatar w topbarze)
+ * Wyodrębnione z inline <style> w pages/dashboard.php (blok statyczny)
+ * PLAN_NAPRAWY_CSP.md — Krok 5b (statyczny <style> w dashboard.php/admin.php -> zewnętrzny CSS)
+ * Treść reguł ponizej NIEZMIENIONA wzgledem oryginalnego inline bloku.
+ *
+ * Blok DYNAMICZNY (custom kolory per-user, $_inline_css) POZOSTAJE inline
+ * w pages/dashboard.php z atrybutem nonce="<?= CSP::nonce() ?>" — musi być
+ * generowany server-side per request, nie da się go przenieść tutaj.
+ */
+.update-banner {
+    display: none;
+    background: var(--info-bg);
+    border-bottom: 1px solid var(--info-bdr);
+    padding: .6rem var(--space-5);
+    font-size: var(--text-sm);
+    color: var(--info);
+    align-items: center;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+}
+.update-banner.show { display: flex; }
+.update-banner a { color: var(--info); font-weight: 600; }
+.update-banner-dismiss {
+    margin-left: auto; background: none; border: none;
+    cursor: pointer; color: var(--info); font-size: 1.1rem;
+    opacity: .7; line-height: 1; padding: .1rem .3rem;
+}
+.update-banner-dismiss:hover { opacity: 1; }
+/* sesja 078: avatar in topbar */
+.topbar-avatar-img {
+    width: 20px; height: 20px; border-radius: 50%; object-fit: cover;
+    vertical-align: middle; margin-right: .35rem; border: 1px solid var(--border);
+    flex-shrink: 0;
+}
+.mobile-menu-avatar-img {
+    width: 22px; height: 22px; border-radius: 50%; object-fit: cover;
+    vertical-align: middle; margin-right: .4rem; border: 1px solid var(--border);
+    flex-shrink: 0;
+}

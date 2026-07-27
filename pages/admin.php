@@ -165,153 +165,10 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8')
 <link rel="manifest" href="/assets/manifest.json">
 <link rel="stylesheet" href="/assets/css/design-system.css">
 <?php if ($_inline_css): ?>
-<style><?= implode('', $_inline_css) ?></style>
+<style nonce="<?= CSP::nonce() ?>"><?= implode('', $_inline_css) ?></style>
 <?php endif; ?>
-<script>(function(){const t=localStorage.getItem('dv-theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
-<style>
-body { min-height:100vh; background:var(--bg); }
-.admin-topbar { height:56px; background:var(--surface); border-bottom:1px solid var(--border);
-    display:flex; align-items:center; padding:0 1.5rem; gap:1rem;
-    position:sticky; top:0; z-index:100; box-shadow:var(--shadow-xs); }
-.admin-brand { display:flex; align-items:center; gap:.6rem; text-decoration:none; color:var(--text); font-weight:700; font-size:1rem; }
-.admin-brand img { height:32px; width:32px; object-fit:contain; }
-.admin-brand:hover { color:var(--primary); text-decoration:none; }
-.admin-topbar-right { margin-left:auto; display:flex; align-items:center; gap:1rem; font-size:.875rem; }
-.admin-badge { background:var(--primary); color:var(--primary-fg); font-size:.7rem;
-    font-weight:700; padding:.1rem .5rem; border-radius:9999px; }
-.back-link { color:var(--text-muted); text-decoration:none; transition:color .15s; }
-.back-link:hover { color:var(--primary); text-decoration:none; }
-.admin-main { max-width:1200px; margin:0 auto; padding:1.5rem; }
-.admin-title { font-size:1.4rem; font-weight:700; margin-bottom:1.25rem; }
-.admin-tabs { display:flex; border-bottom:2px solid var(--border); margin-bottom:1.5rem; gap:2px; overflow-x:auto; }
-.admin-tab { padding:.6rem 1.2rem; font-size:.9rem; font-weight:500; color:var(--text-muted);
-    background:none; border:none; border-bottom:3px solid transparent; margin-bottom:-2px;
-    cursor:pointer; font-family:var(--font-sans); white-space:nowrap; transition:all .15s; }
-.admin-tab:hover { color:var(--text); }
-.admin-tab.active { color:var(--primary); border-bottom-color:var(--primary); font-weight:600; }
-.tab-badge { border-radius:9999px; font-size:.7rem; font-weight:700; padding:.05rem .45rem; margin-left:.3rem; }
-.tb-error { background:var(--error-bg); color:var(--error); border:1px solid var(--error-bdr); }
-.tb-info  { background:var(--info-bg);  color:var(--info);  border:1px solid var(--info-bdr); }
-.tb-warn  { background:var(--warning-bg); color:var(--warning); border:1px solid var(--warning-bdr); }
-.tb-ok    { background:var(--success-bg); color:var(--success); border:1px solid var(--success-bdr); }
-.tab-pane { display:none; }
-.tab-pane.active { display:block; }
-.data-table-wrap { overflow-x:auto; border:1px solid var(--border); border-radius:var(--radius-md); background:var(--surface); }
-.data-table { width:100%; border-collapse:collapse; font-size:.875rem; }
-.data-table th { background:var(--surface-alt); padding:.6rem .85rem; text-align:left;
-    font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em;
-    color:var(--text-muted); border-bottom:1px solid var(--border); white-space:nowrap; }
-.data-table td { padding:.6rem .85rem; border-bottom:1px solid var(--border-light); vertical-align:middle; }
-.data-table tr:last-child td { border-bottom:none; }
-.data-table tr:hover td { background:var(--surface-alt); }
-.mono  { font-family:var(--font-mono); font-size:.82rem; }
-.muted { color:var(--text-muted); }
-.ua    { max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-         color:var(--text-muted); font-size:.78rem; }
-.attempts-badge { display:inline-flex; align-items:center; justify-content:center;
-    min-width:2rem; padding:.15rem .5rem; border-radius:9999px; font-size:.8rem; font-weight:700; }
-.ab-low  { background:var(--warning-bg); color:var(--warning); }
-.ab-high { background:var(--error-bg);   color:var(--error); }
-.ab-crit { background:var(--error);       color:#fff; }
-.status-ok   { color:var(--success); font-weight:600; }
-.status-fail { color:var(--error);   font-weight:600; }
-.hist-success { color:var(--success); }
-.hist-fail    { color:var(--error); }
-.panel-toolbar { display:flex; align-items:center; gap:.75rem; margin-bottom:1rem; flex-wrap:wrap; }
-.panel-toolbar-right { margin-left:auto; display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
-.table-empty { text-align:center; padding:3rem 1rem; color:var(--text-faint); font-size:.9rem; }
-.filter-bar  { display:flex; gap:.6rem; margin-bottom:1rem; flex-wrap:wrap; }
-.filter-input { padding:.4rem .75rem; background:var(--surface-alt); border:1px solid var(--border);
-    border-radius:var(--radius-md); font-size:.875rem; color:var(--text); font-family:var(--font-sans); outline:none; }
-.filter-input:focus { border-color:var(--border-focus); box-shadow:0 0 0 3px var(--primary-bg); }
-.admin-card { background:var(--surface); border:1px solid var(--border);
-    border-radius:var(--radius-lg); box-shadow:var(--shadow-sm); overflow:hidden; margin-bottom:1.25rem; }
-.admin-card-header { padding:.85rem 1.25rem; border-bottom:1px solid var(--border);
-    display:flex; align-items:center; gap:.6rem; background:var(--surface-alt); }
-.admin-card-header h3 { font-size:.92rem; font-weight:600; margin:0; flex:1; }
-.admin-card-body { padding:1.25rem; }
-.sess-this { background:var(--primary-bg); border-left:3px solid var(--primary); }
-.pw-strength-modal { height:4px; border-radius:9999px; background:var(--border); margin-top:.4rem; overflow:hidden; }
-.pw-strength-modal-bar { height:100%; border-radius:9999px; transition:width .3s,background .3s; width:0; }
-/* Update tab */
-.update-state { text-align:center; padding:2.5rem 1.5rem; }
-.update-icon  { font-size:3.5rem; margin-bottom:1rem; line-height:1; }
-.update-title { font-size:1.2rem; font-weight:700; margin-bottom:.5rem; }
-.update-sub   { font-size:.9rem; color:var(--text-muted); margin-bottom:1.5rem; line-height:1.6; }
-.update-sha   { font-family:var(--font-mono); font-size:.78rem; color:var(--text-faint);
-    background:var(--surface-alt); border:1px solid var(--border); border-radius:var(--radius-sm);
-    padding:.25rem .75rem; display:inline-block; margin-bottom:1.25rem; }
-.commit-list  { text-align:left; max-width:640px; margin:0 auto 1.5rem;
-    border:1px solid var(--border); border-radius:var(--radius-md); overflow:hidden; }
-.commit-item  { display:flex; gap:.75rem; align-items:flex-start; padding:.5rem 1rem;
-    border-bottom:1px solid var(--border-light); font-size:.84rem; }
-.commit-item:last-child { border-bottom:none; }
-.commit-sha   { font-family:var(--font-mono); font-size:.74rem; color:var(--text-faint);
-    flex-shrink:0; padding-top:.05rem; min-width:52px; }
-.commit-msg   { color:var(--text); line-height:1.4; }
-.output-box   { background:var(--surface-alt); border:1px solid var(--border); border-radius:var(--radius-md);
-    padding:1rem; font-family:var(--font-mono); font-size:.76rem; color:var(--text);
-    white-space:pre-wrap; word-break:break-word; text-align:left;
-    max-height:280px; overflow-y:auto; margin-bottom:1rem; }
-.spinner { display:inline-block; width:28px; height:28px; border:3px solid var(--border);
-    border-top-color:var(--primary); border-radius:50%; animation:spin .7s linear infinite; margin:0 auto 1rem; }
-@keyframes spin { to { transform:rotate(360deg); } }
-/* Install Check */
-.check-row { display:flex; align-items:flex-start; gap:.75rem; padding:.5rem .85rem;
-    border-bottom:1px solid var(--border-light); font-size:.875rem; }
-.check-row:last-child { border-bottom:none; }
-.check-row:hover { background:var(--surface-alt); }
-.check-icon-col { width:22px; flex-shrink:0; text-align:center; font-size:1rem; padding-top:.05rem; }
-.check-icon-ok   { color:var(--success); }
-.check-icon-fail { color:var(--error); }
-.check-icon-warn { color:var(--warning); }
-.check-label-col { flex:1; min-width:0; }
-.check-label     { font-weight:500; color:var(--text); }
-.check-note-text { font-size:.76rem; color:var(--text-muted); margin-top:.15rem; line-height:1.4; }
-.check-value-col { font-family:var(--font-mono); font-size:.78rem; color:var(--text-muted);
-    text-align:right; flex-shrink:0; max-width:280px; word-break:break-all; padding-left:.5rem; padding-top:.05rem; }
-.check-value-ok   { color:var(--success); }
-.check-value-fail { color:var(--error); font-weight:600; }
-/* Toast */
-.toast-container { position:fixed; bottom:1.25rem; right:1.25rem; z-index:9999;
-    display:flex; flex-direction:column; gap:.5rem; pointer-events:none; }
-.toast { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg);
-    box-shadow:var(--shadow-lg); padding:.75rem 1rem; font-size:.875rem;
-    display:flex; align-items:center; gap:.75rem; min-width:200px; max-width:360px;
-    pointer-events:all; animation:toastIn .2s ease; transition:opacity .3s ease; }
-@keyframes toastIn { from{opacity:0;transform:translateX(20px)} to{opacity:1;transform:translateX(0)} }
-.toast-success { border-left:3px solid var(--success); }
-.toast-error   { border-left:3px solid var(--error); }
-.toast-info    { border-left:3px solid var(--info); }
-.toast-icon { font-size:1rem; flex-shrink:0; font-weight:700; }
-.toast-success .toast-icon { color:var(--success); }
-.toast-error   .toast-icon { color:var(--error); }
-.toast-info    .toast-icon { color:var(--info); }
-/* Confirm overlay */
-.confirm-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.45);
-    z-index:300; align-items:center; justify-content:center; padding:1rem; }
-.confirm-overlay.show { display:flex; }
-.confirm-box { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg);
-    box-shadow:var(--shadow-xl); max-width:480px; width:100%; padding:1.75rem; }
-.confirm-box h3 { font-size:1rem; margin-bottom:.75rem; }
-.confirm-box p  { font-size:.875rem; color:var(--text-muted); margin-bottom:1.25rem; line-height:1.6; white-space:pre-line; }
-.confirm-actions { display:flex; gap:.75rem; justify-content:flex-end; }
-/* sesja 078: avatars */
-.admin-topbar-avatar-img { width:22px; height:22px; border-radius:50%; object-fit:cover;
-    vertical-align:middle; margin-right:.35rem; border:1px solid var(--border); flex-shrink:0; }
-.admin-avatar-img { width:28px; height:28px; border-radius:50%; object-fit:cover;
-    flex-shrink:0; border:1px solid var(--border); }
-.admin-avatar-fallback { width:28px; height:28px; border-radius:50%; background:var(--surface-alt);
-    border:1px solid var(--border); display:inline-flex; align-items:center; justify-content:center;
-    font-size:.85rem; flex-shrink:0; }
-.admin-user-cell { display:flex; align-items:center; gap:.55rem; }
-@media (max-width:640px) {
-    .admin-main { padding:1rem; }
-    .data-table { font-size:.8rem; }
-    .data-table th, .data-table td { padding:.5rem .6rem; }
-    .check-value-col { max-width:100px; }
-}
-</style>
+<script nonce="<?= CSP::nonce() ?>">(function(){const t=localStorage.getItem('dv-theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
+<link rel="stylesheet" href="/assets/css/pages/admin.css">
 </head>
 <body>
 
@@ -324,7 +181,7 @@ body { min-height:100vh; background:var(--bg); }
     <div class="admin-topbar-right">
         <span style="color:var(--text-muted);font-size:.875rem">
             <?php if ($has_avatar): ?>
-            <img src="/api/avatars/<?= (int)$user['id'] ?>" alt="" class="admin-topbar-avatar-img" onerror="this.remove()">
+            <img src="/api/avatars/<?= (int)$user['id'] ?>" alt="" class="admin-topbar-avatar-img" id="admin-topbar-avatar-img">
             <?php else: ?>
             👤
             <?php endif; ?>
@@ -567,7 +424,7 @@ body { min-height:100vh; background:var(--bg); }
                         (<code>LetaDial_Permissions.sh</code>) — not part of this update.
                     </div>
                     <div style="display:flex;gap:.75rem;justify-content:center;margin-top:1rem;flex-wrap:wrap">
-                        <button class="btn btn-primary" onclick="location.reload()">↻ Reload page</button>
+                        <button class="btn btn-primary" id="btn-reload-page">↻ Reload page</button>
                         <button class="btn btn-ghost" id="btn-recheck-3">Check again</button>
                     </div>
                 </div>
@@ -714,7 +571,7 @@ body { min-height:100vh; background:var(--bg); }
 
 <div class="toast-container" id="toast-container"></div>
 
-<script>
+<script nonce="<?= CSP::nonce() ?>">
 const CSRF       = <?= json_encode($csrf_token) ?>;
 const ME_ID      = <?= (int)$user['id'] ?>;
 const MY_SESSION = <?= json_encode($my_session_id) ?>;
@@ -919,8 +776,7 @@ function parseUA(ua) {
  */
 function avatarHtml(u) {
     if (u.avatar_path) {
-        return `<img src="/api/avatars/${u.id}" alt="" class="admin-avatar-img"
-            onerror="this.outerHTML='<span class=&quot;admin-avatar-fallback&quot;>👤</span>'">`;
+        return `<img src="/api/avatars/${u.id}" alt="" class="admin-avatar-img">`;
     }
     return `<span class="admin-avatar-fallback">👤</span>`;
 }
@@ -953,13 +809,13 @@ function renderBlocked(data) {
     tbody.innerHTML=fil.map(r=>{
         const kd=r.key_plain?`<span class="mono">${esc(r.key_plain)}</span>`:`<span class="muted mono">hash:${esc((r.key_hash||'').slice(0,8))}…</span>`;
         const ua=r.last_ua?`<span class="ua" title="${esc(r.last_ua)}">${esc(r.last_ua)}</span>`:'<span class="muted">—</span>';
-        const hb=r.key_plain?`<button class="btn btn-ghost btn-sm" onclick="showHistoryFor('${esc(r.key_plain)}')">📋</button>`:'';
+        const hb=r.key_plain?`<button class="btn btn-ghost btn-sm" data-action="show-history" data-key="${esc(r.key_plain)}">📋</button>`:'';
         return `<tr><td><code>${esc(r.action)}</code></td><td>${kd}</td><td>${attemptBadge(r.attempts)}</td>
             <td class="muted" style="font-size:.8rem">${relTime(r.window_start)}</td>
             <td class="mono muted">${esc(r.last_login_attempt||'—')}</td><td>${ua}</td><td>${hb}</td>
             <td style="white-space:nowrap">
-                <button class="btn btn-ghost btn-sm" onclick="doUnblock('${esc(r.key_hash)}','${esc(r.action)}','${esc(r.key_plain||'')}')">✓ Unblock</button>
-                ${r.key_plain?`<button class="btn btn-danger btn-sm" style="margin-left:.25rem" onclick="doUnblockAll('${esc(r.key_plain)}')">All</button>`:''}
+                <button class="btn btn-ghost btn-sm" data-action="unblock" data-key-hash="${esc(r.key_hash)}" data-rl-action="${esc(r.action)}" data-key-plain="${esc(r.key_plain||'')}">✓ Unblock</button>
+                ${r.key_plain?`<button class="btn btn-danger btn-sm" style="margin-left:.25rem" data-action="unblock-all" data-key-plain="${esc(r.key_plain)}">All</button>`:''}
             </td></tr>`;
     }).join('');
 }
@@ -1020,9 +876,9 @@ function renderUsers(data) {
         const verified=parseInt(u.email_verified)?`<span class="status-ok">✓</span>`:`<span style="color:var(--warning)">pending</span>`;
         const isMe=parseInt(u.id)===ME_ID;
         const delBtn=isMe?`<span class="muted" title="Cannot delete own account">—</span>`
-            :`<button class="btn btn-danger btn-sm" onclick="doDeleteUser(${u.id},'${esc(u.login)}')">🗑</button>`;
-        const pwBtn=isMe?``:`<button class="btn btn-ghost btn-sm" style="margin-left:.25rem" onclick="showForceReset(${u.id},'${esc(u.login)}')">🔑</button>`;
-        const sessBtn=`<button class="btn btn-ghost btn-sm" style="margin-left:.25rem" onclick="filterSessionsToUser(${u.id},'${esc(u.login)}')">🖥️ ${u.session_count||0}</button>`;
+            :`<button class="btn btn-danger btn-sm" data-action="delete-user" data-user-id="${u.id}" data-login="${esc(u.login)}">🗑</button>`;
+        const pwBtn=isMe?``:`<button class="btn btn-ghost btn-sm" style="margin-left:.25rem" data-action="force-reset" data-user-id="${u.id}" data-login="${esc(u.login)}">🔑</button>`;
+        const sessBtn=`<button class="btn btn-ghost btn-sm" style="margin-left:.25rem" data-action="filter-sessions-to-user" data-user-id="${u.id}" data-login="${esc(u.login)}">🖥️ ${u.session_count||0}</button>`;
         return `<tr>
             <td><div class="admin-user-cell">${avatarHtml(u)}<strong>${esc(u.login)}</strong>${isMe?' <span class="muted">(you)</span>':''}</div></td>
             <td class="muted">${esc(u.email||'')}</td>
@@ -1178,13 +1034,13 @@ function renderSessions(data) {
         const roleDisp=s.role==='admin'?`<span class="status-ok" style="font-size:.78rem">admin</span>`:`<span class="muted" style="font-size:.78rem">user</span>`;
         const actions=isMine?`<span class="muted" style="font-size:.75rem">current</span>`
             :`<button class="btn btn-ghost btn-sm" style="border-color:var(--error-bdr);color:var(--error)"
-                onclick="doDeleteSession('${esc(s.id)}','${esc(s.login)}',this)">Sign out</button>
+                data-action="delete-session" data-session-id="${esc(s.id)}" data-login="${esc(s.login)}">Sign out</button>
                <button class="btn btn-ghost btn-sm" style="margin-left:.25rem"
-                onclick="doDeleteUserSessions(${s.user_id},'${esc(s.login)}')">All of user</button>`;
+                data-action="delete-user-sessions" data-user-id="${s.user_id}" data-login="${esc(s.login)}">All of user</button>`;
         return `<tr${rc}>
             <td><strong>${esc(s.login)}</strong>${badge}</td><td>${roleDisp}</td>
             <td><span class="mono">${esc(s.ip)}</span>
-                <button class="btn btn-ghost btn-sm" style="margin-left:.3rem;padding:.15rem .4rem;font-size:.7rem" onclick="showHistoryFor('${esc(s.ip)}')">📋</button></td>
+                <button class="btn btn-ghost btn-sm" style="margin-left:.3rem;padding:.15rem .4rem;font-size:.7rem" data-action="show-history" data-key="${esc(s.ip)}">📋</button></td>
             <td class="muted">${esc(ua)}</td>
             <td class="muted" style="font-size:.8rem">${relTime(s.last_activity)}</td>
             <td class="muted" style="font-size:.8rem">${relTime(s.created_at)}</td>
@@ -1239,7 +1095,7 @@ function renderHistory(data){
             <td class="muted mono" style="font-size:.78rem">${esc(h.created_at||'')}</td>
             <td>${esc(u)}</td><td class="muted">${esc(h.login_attempt||'—')}</td>
             <td><span class="mono">${esc(h.ip||'')}</span>
-                <button class="btn btn-ghost btn-sm" style="margin-left:.3rem;padding:.15rem .4rem" onclick="filterToIp('${esc(h.ip||'')}')">🔍</button></td>
+                <button class="btn btn-ghost btn-sm" style="margin-left:.3rem;padding:.15rem .4rem" data-action="filter-to-ip" data-ip="${esc(h.ip||'')}">🔍</button></td>
             <td class="${cls}">${esc(h.status||'')}</td>
             <td class="ua" title="${esc(h.user_agent||'')}">${esc((h.user_agent||'').slice(0,80))}</td>
         </tr>`;
@@ -1513,6 +1369,61 @@ document.getElementById('cu-ok').addEventListener('click', async () => {
     cuSuccess.style.display = '';
     btn.textContent = 'Create account →';
     toast(`Account "${r.login}" created.`, 'success');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CSP Krok 4b — delegated listeners (replaces all inline onXXX= attributes above)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Static, single-occurrence elements (own avatar + reload button) — simple id-based,
+// same pattern as Krok 4a (no list, no re-render, one listener is enough).
+document.getElementById('admin-topbar-avatar-img')?.addEventListener('error', function() { this.remove(); });
+document.getElementById('btn-reload-page')?.addEventListener('click', () => location.reload());
+
+// avatarHtml() image broken-load fallback — 'error' does NOT bubble, so this MUST be
+// attached with useCapture=true on an ancestor to work as delegation (unlike 'click').
+// Scoped to #users-tbody since that's the only place avatarHtml() is used.
+document.getElementById('users-tbody')?.addEventListener('error', e => {
+    const img = e.target.closest('img.admin-avatar-img');
+    if (img) img.outerHTML = '<span class="admin-avatar-fallback">👤</span>';
+}, true);
+
+// Single global delegated click dispatcher for every dynamically-rendered
+// data-action button across Blocked / Users / Sessions / History tables.
+// Survives re-renders (tbody.innerHTML replacement) without re-attaching —
+// attached once here, on document, regardless of which tab is active.
+document.addEventListener('click', e => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    switch (btn.dataset.action) {
+        case 'show-history':
+            showHistoryFor(btn.dataset.key);
+            break;
+        case 'unblock':
+            doUnblock(btn.dataset.keyHash, btn.dataset.rlAction, btn.dataset.keyPlain);
+            break;
+        case 'unblock-all':
+            doUnblockAll(btn.dataset.keyPlain);
+            break;
+        case 'delete-user':
+            doDeleteUser(parseInt(btn.dataset.userId), btn.dataset.login);
+            break;
+        case 'force-reset':
+            showForceReset(parseInt(btn.dataset.userId), btn.dataset.login);
+            break;
+        case 'filter-sessions-to-user':
+            filterSessionsToUser(parseInt(btn.dataset.userId), btn.dataset.login);
+            break;
+        case 'delete-session':
+            doDeleteSession(btn.dataset.sessionId, btn.dataset.login, btn);
+            break;
+        case 'delete-user-sessions':
+            doDeleteUserSessions(parseInt(btn.dataset.userId), btn.dataset.login);
+            break;
+        case 'filter-to-ip':
+            filterToIp(btn.dataset.ip);
+            break;
+    }
 });
 
 // ── INIT ──────────────────────────────────────────────────────────────────────

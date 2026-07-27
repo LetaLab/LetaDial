@@ -97,31 +97,8 @@ $pw_rules = Password::jsRules();
 <link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png">
 <link rel="manifest" href="/assets/manifest.json">
 <link rel="stylesheet" href="/assets/css/design-system.css">
-<style>
-body { display:flex; align-items:center; justify-content:center; min-height:100vh; padding:1.5rem; }
-.login-card {
-    width:100%; max-width:420px;
-    background:var(--surface); border:1px solid var(--border);
-    border-radius:var(--radius-lg); box-shadow:var(--shadow-xl);
-    padding:2.25rem 2rem 2rem;
-}
-.logo { text-align:center; margin-bottom:2rem; }
-.logo-img { width:72px; height:72px; object-fit:contain; filter:drop-shadow(0 2px 10px rgba(0,0,0,.18)); margin-bottom:.75rem; transition:transform .25s ease; }
-.logo-img:hover { transform:scale(1.06) rotate(-2deg); }
-.logo h1 { font-size:1.35rem; font-weight:700; }
-.logo p  { color:var(--text-muted); font-size:.875rem; margin:.15rem 0 0; }
-.back-link { display:block; text-align:center; margin-top:1.25rem; font-size:.85rem; color:var(--text-muted); text-decoration:none; transition:color .15s; }
-.back-link:hover { color:var(--primary); }
-.success-box { text-align:center; padding:.5rem 0; }
-.success-icon { font-size:3rem; margin-bottom:1rem; }
-.success-box h2 { font-size:1.1rem; font-weight:600; margin-bottom:.75rem; }
-.success-box p { color:var(--text-muted); font-size:.875rem; line-height:1.6; }
-.error-box { text-align:center; padding:.5rem 0; }
-.error-icon { font-size:3rem; margin-bottom:1rem; }
-.error-box h2 { font-size:1.1rem; font-weight:600; margin-bottom:.75rem; }
-.error-box p { color:var(--text-muted); font-size:.875rem; line-height:1.6; }
-</style>
-<script>(function(){ var t=localStorage.getItem('dv-theme'); if(t) document.documentElement.setAttribute('data-theme',t); })();</script>
+<link rel="stylesheet" href="/assets/css/pages/reset-password.css">
+<script nonce="<?= CSP::nonce() ?>">(function(){ var t=localStorage.getItem('dv-theme'); if(t) document.documentElement.setAttribute('data-theme',t); })();</script>
 </head>
 <body>
 
@@ -184,7 +161,7 @@ body { display:flex; align-items:center; justify-content:center; min-height:100v
                 <input type="password" id="password" name="password" class="form-input"
                        autocomplete="new-password" placeholder="Min. 12 characters"
                        autofocus required>
-                <button type="button" class="eye-btn" onclick="togglePw('password',this)" aria-label="Show/hide">
+                <button type="button" class="eye-btn" id="eye-btn-password" aria-label="Show/hide">
                     <?= eyeSvg(true) ?>
                 </button>
             </div>
@@ -199,7 +176,7 @@ body { display:flex; align-items:center; justify-content:center; min-height:100v
             <div class="input-wrap">
                 <input type="password" id="password_confirm" name="password_confirm" class="form-input"
                        autocomplete="new-password" placeholder="Repeat new password" required>
-                <button type="button" class="eye-btn" onclick="togglePw('password_confirm',this)" aria-label="Show/hide">
+                <button type="button" class="eye-btn" id="eye-btn-password-confirm" aria-label="Show/hide">
                     <?= eyeSvg(true) ?>
                 </button>
             </div>
@@ -213,7 +190,7 @@ body { display:flex; align-items:center; justify-content:center; min-height:100v
 
     <a href="/login" class="back-link">← Back to sign in</a>
 
-    <script>
+    <script nonce="<?= CSP::nonce() ?>">
     const PW_RULES = <?= $pw_rules ?>;
     const levels   = ['', 'Too short', 'Weak', 'Fair', 'Strong'];
     const colors   = ['', '#E53E3E', '#D69E2E', '#D69E2E', '#1D5C42'];
@@ -264,6 +241,10 @@ body { display:flex; align-items:center; justify-content:center; min-height:100v
             ? '<?= addslashes(eyeSvg(true)) ?>'
             : '<?= addslashes(eyeSvg(false)) ?>';
     }
+
+    // ── Event listeners (CSP: bez inline onXXX=, Krok 4a) ──────────────────────
+    document.getElementById('eye-btn-password')?.addEventListener('click', function() { togglePw('password', this); });
+    document.getElementById('eye-btn-password-confirm')?.addEventListener('click', function() { togglePw('password_confirm', this); });
     </script>
 
     <?php endif; ?>

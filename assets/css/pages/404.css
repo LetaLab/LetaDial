@@ -1,0 +1,11 @@
+/*
+ * LetaDial — 404 page
+ * Wyodrębnione z inline <style> w pages/404.php
+ * PLAN_NAPRAWY_CSP.md — Krok 5a (statyczne <style> -> zewnętrzny CSS)
+ * Treść reguł ponizej NIEZMIENIONA wzgledem oryginalnego inline bloku.
+ */
+body{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:2rem}
+.box{text-align:center;max-width:400px}
+.code{font-size:6rem;font-weight:800;color:var(--primary);line-height:1;margin-bottom:.5rem}
+h1{font-size:1.4rem;margin-bottom:.75rem}
+p{color:var(--text-muted);margin-bottom:1.5rem}

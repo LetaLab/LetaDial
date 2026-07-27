@@ -42,116 +42,8 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8')
 <title>Add to <?= $app_name ?></title>
 <link rel="icon" type="image/png" href="/assets/icons/favicon.png">
 <link rel="stylesheet" href="/assets/css/design-system.css">
-<script>(function(){const t=localStorage.getItem('dv-theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
-<style>
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-body {
-    font-family: var(--font-sans);
-    background: var(--bg);
-    color: var(--text);
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    font-size: 15px;
-    line-height: 1.5;
-}
-.bm-topbar {
-    background: var(--primary);
-    color: var(--primary-fg);
-    display: flex;
-    align-items: center;
-    gap: .6rem;
-    padding: .65rem 1rem;
-    flex-shrink: 0;
-}
-.bm-topbar img { width: 22px; height: 22px; object-fit: contain; filter: brightness(0) invert(1); }
-.bm-topbar-title { font-size: .92rem; font-weight: 700; }
-.bm-body { padding: .9rem 1rem; flex: 1; overflow-y: auto; }
-.bm-form-group { margin-bottom: .75rem; }
-.bm-label {
-    display: block;
-    font-size: .7rem;
-    font-weight: 700;
-    letter-spacing: .06em;
-    text-transform: uppercase;
-    color: var(--text-muted);
-    margin-bottom: .28rem;
-}
-.bm-input {
-    width: 100%;
-    padding: .48rem .65rem;
-    background: var(--surface);
-    border: 1.5px solid var(--border);
-    border-radius: var(--radius-md);
-    font-size: .875rem;
-    color: var(--text);
-    font-family: var(--font-sans);
-    outline: none;
-    transition: border-color .15s, box-shadow .15s;
-}
-.bm-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-bg); }
-.bm-textarea { resize: vertical; min-height: 58px; }
-.bm-select {
-    appearance: none; -webkit-appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right .65rem center;
-    padding-right: 2rem;
-    cursor: pointer;
-}
-.bm-footer {
-    padding: .65rem 1rem;
-    border-top: 1px solid var(--border);
-    background: var(--surface);
-    display: flex;
-    gap: .6rem;
-    flex-shrink: 0;
-}
-.bm-btn {
-    flex: 1;
-    padding: .55rem;
-    font-size: .875rem;
-    font-family: var(--font-sans);
-    font-weight: 600;
-    border-radius: var(--radius-md);
-    border: 1.5px solid transparent;
-    cursor: pointer;
-    transition: background .15s, color .15s, border-color .15s;
-    text-align: center;
-}
-.bm-btn-primary { background: var(--primary); color: var(--primary-fg); }
-.bm-btn-primary:hover:not(:disabled) { background: var(--primary-h, #520818); }
-.bm-btn-primary:disabled { opacity: .55; cursor: not-allowed; }
-.bm-btn-ghost { background: var(--surface-alt); color: var(--text-muted); border-color: var(--border); }
-.bm-btn-ghost:hover { background: var(--border); color: var(--text); }
-.bm-alert {
-    display: flex;
-    align-items: flex-start;
-    gap: .4rem;
-    padding: .55rem .75rem;
-    border-radius: var(--radius-md);
-    font-size: .82rem;
-    margin-bottom: .75rem;
-    border: 1px solid transparent;
-    line-height: 1.4;
-}
-.bm-alert-success { background: var(--success-bg); border-color: var(--success-bdr); color: var(--success); }
-.bm-alert-error   { background: var(--error-bg);   border-color: var(--error-bdr);   color: var(--error); }
-.bm-center-state {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    flex: 1;
-    text-align: center;
-    padding: 1.5rem 1rem;
-    gap: .6rem;
-}
-.bm-state-icon  { font-size: 2.5rem; line-height: 1; }
-.bm-state-title { font-size: .95rem; font-weight: 600; }
-.bm-state-sub   { font-size: .82rem; color: var(--text-muted); max-width: 240px; line-height: 1.5; }
-.notes-count { text-align: right; font-size: .68rem; color: var(--text-faint); margin-top: .18rem; }
-</style>
+<script nonce="<?= CSP::nonce() ?>">(function(){const t=localStorage.getItem('dv-theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
+<link rel="stylesheet" href="/assets/css/pages/bookmarklet.css">
 </head>
 <body>
 
@@ -168,12 +60,16 @@ body {
     <p class="bm-state-sub">
         You need to be signed in to <?= $app_name ?> to use LetaLink.
     </p>
-    <button type="button"
-            onclick="window.open('<?= h(APP_URL . '/login') ?>', '_blank')"
+    <button type="button" id="bm-open-app-login"
             class="bm-btn bm-btn-primary" style="max-width:200px;margin-top:.25rem">
         Open <?= $app_name ?> →
     </button>
 </div>
+<script nonce="<?= CSP::nonce() ?>">
+document.getElementById('bm-open-app-login')?.addEventListener('click', function() {
+    window.open(<?= json_encode(APP_URL . '/login') ?>, '_blank');
+});
+</script>
 
 <?php elseif (empty($groups_data)): ?>
 <!-- ── No groups yet ─────────────────────────────────────────────────────────── -->
@@ -183,12 +79,16 @@ body {
     <p class="bm-state-sub">
         Create at least one group in <?= $app_name ?> before using LetaLink.
     </p>
-    <button type="button"
-            onclick="window.open('<?= h(APP_URL) ?>', '_blank')"
+    <button type="button" id="bm-open-app-home"
             class="bm-btn bm-btn-primary" style="max-width:200px;margin-top:.25rem">
         Open <?= $app_name ?> →
     </button>
 </div>
+<script nonce="<?= CSP::nonce() ?>">
+document.getElementById('bm-open-app-home')?.addEventListener('click', function() {
+    window.open(<?= json_encode(APP_URL) ?>, '_blank');
+});
+</script>
 
 <?php else: ?>
 <!-- ── Add Dial Form ──────────────────────────────────────────────────────────── -->
@@ -234,7 +134,7 @@ body {
     </div>
 
     <div class="bm-footer">
-        <button type="button" class="bm-btn bm-btn-ghost" onclick="window.close()">Cancel</button>
+        <button type="button" class="bm-btn bm-btn-ghost" id="bm-cancel-btn">Cancel</button>
         <button type="button" class="bm-btn bm-btn-primary" id="bm-add-btn">Add dial →</button>
     </div>
 </div>
@@ -247,15 +147,14 @@ body {
         <p class="bm-state-sub" id="bm-success-sub">Closing in 2 seconds…</p>
     </div>
     <div class="bm-footer">
-        <button type="button" class="bm-btn bm-btn-ghost" onclick="window.close()">Close now</button>
-        <button type="button" class="bm-btn bm-btn-primary"
-                onclick="window.open('<?= h(APP_URL) ?>','_blank');window.close()">
+        <button type="button" class="bm-btn bm-btn-ghost" id="bm-close-now-btn">Close now</button>
+        <button type="button" class="bm-btn bm-btn-primary" id="bm-open-app-success">
             Open <?= $app_name ?>
         </button>
     </div>
 </div>
 
-<script>
+<script nonce="<?= CSP::nonce() ?>">
 (function() {
     const CSRF  = <?= json_encode($csrf_token) ?>;
     const sel   = document.getElementById('bm-group');
@@ -264,6 +163,15 @@ body {
     const count = document.getElementById('bm-notes-count');
     const urlEl = document.getElementById('bm-url');
     const titleEl = document.getElementById('bm-title');
+
+    // ── Event listeners (CSP: bez inline onXXX=, Krok 4a) ──────────────────────
+    const APP_URL_JS = <?= json_encode(APP_URL) ?>;
+    document.getElementById('bm-cancel-btn')?.addEventListener('click', function() { window.close(); });
+    document.getElementById('bm-close-now-btn')?.addEventListener('click', function() { window.close(); });
+    document.getElementById('bm-open-app-success')?.addEventListener('click', function() {
+        window.open(APP_URL_JS, '_blank');
+        window.close();
+    });
 
     // Restore last used group
     const lastGroup = localStorage.getItem('bm-last-group');

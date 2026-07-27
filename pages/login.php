@@ -110,57 +110,7 @@ $pw_rules = Password::jsRules();
 <link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png">
 <link rel="manifest" href="/assets/manifest.json">
 <link rel="stylesheet" href="/assets/css/design-system.css">
-<style>
-body { display:flex; align-items:center; justify-content:center; min-height:100vh; padding:1.5rem; }
-.login-card {
-    width:100%; max-width:420px;
-    background:var(--surface); border:1px solid var(--border);
-    border-radius:var(--radius-lg); box-shadow:var(--shadow-xl);
-    padding:2.25rem 2rem 2rem;
-}
-.logo { text-align:center; margin-bottom:2rem; }
-.logo-img { width:80px; height:80px; object-fit:contain; filter:drop-shadow(0 2px 10px rgba(0,0,0,.18)); margin-bottom:.75rem; transition:transform .25s ease; }
-.logo-img:hover { transform:scale(1.06) rotate(-2deg); }
-.logo h1 { font-size:1.35rem; font-weight:700; }
-.logo p  { color:var(--text-muted); font-size:.875rem; margin:.15rem 0 0; }
-.form-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:1.5rem; font-size:.85rem; flex-wrap:wrap; gap:.5rem; }
-.code-input { text-align:center !important; letter-spacing:.28em !important; font-size:1.5rem !important; font-weight:700 !important; font-family:var(--font-mono) !important; padding:.75rem !important; }
-.totp-info { text-align:center; color:var(--text-muted); font-size:.875rem; margin-bottom:1.25rem; line-height:1.6; }
-.register-switch { text-align:center; margin-top:1.25rem; font-size:.85rem; color:var(--text-muted); }
-.register-switch a { color:var(--primary); cursor:pointer; text-decoration:none; }
-.register-switch a:hover { text-decoration:underline; }
-.pw-strength { height:4px; border-radius:var(--radius-full); background:var(--border); margin-top:var(--space-2); overflow:hidden; }
-.pw-strength-bar { height:100%; border-radius:var(--radius-full); transition:width 0.3s ease, background-color 0.3s ease; width:0%; }
-/* Cookie Consent Banner */
-.cookie-overlay {
-    position:fixed; inset:0;
-    background:rgba(0,0,0,.35); z-index:9999;
-    display:flex; align-items:flex-end; padding:1rem;
-    backdrop-filter:blur(2px);
-}
-.cookie-banner {
-    background:var(--surface); border:1px solid var(--border);
-    border-radius:var(--radius-lg); box-shadow:var(--shadow-xl);
-    padding:1.5rem 1.75rem; max-width:640px; margin:0 auto; width:100%;
-    animation:cookieSlideUp .25s ease;
-}
-@keyframes cookieSlideUp { from{opacity:0;transform:translateY(24px)} to{opacity:1;transform:translateY(0)} }
-.cookie-banner h3 { font-size:1rem; font-weight:700; margin-bottom:.5rem; }
-.cookie-banner p  { font-size:.875rem; color:var(--text-muted); line-height:1.6; margin-bottom:.75rem; }
-.cookie-banner p:last-of-type { margin-bottom:1rem; }
-.cookie-banner a  { color:var(--primary); }
-.cookie-buttons   { display:flex; gap:.75rem; flex-wrap:wrap; }
-.cookie-buttons .cbtn {
-    flex:1; min-width:140px;
-    background:var(--surface-alt); color:var(--text);
-    border:1.5px solid var(--border); border-radius:var(--radius-md);
-    padding:.65rem 1rem; font-size:.875rem; font-weight:600;
-    cursor:pointer; text-align:center; font-family:var(--font-sans);
-    transition:all var(--transition);
-}
-.cookie-buttons .cbtn:hover { border-color:var(--primary); color:var(--primary); background:var(--primary-bg); }
-.login-blocked { pointer-events:none; filter:blur(2px); user-select:none; opacity:.6; transition:all .3s; }
-</style>
+<link rel="stylesheet" href="/assets/css/pages/login.css">
 </head>
 <body>
 
@@ -227,7 +177,7 @@ body { display:flex; align-items:center; justify-content:center; min-height:100v
             <div class="input-wrap">
                 <input type="password" id="pw" name="password" class="form-input"
                        autocomplete="current-password" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;" required>
-                <button type="button" class="eye-btn" onclick="togglePw('pw',this)" aria-label="Show/hide">
+                <button type="button" class="eye-btn" id="eye-btn-pw" aria-label="Show/hide">
                     <?= eyeSvg(true) ?>
                 </button>
             </div>
@@ -237,8 +187,7 @@ body { display:flex; align-items:center; justify-content:center; min-height:100v
                 <input type="checkbox" name="remember" value="1" checked>
                 Remember me for 90 days
             </label>
-            <a href="/forgot-password" style="color:var(--text-muted);font-size:.83rem;transition:color .15s"
-               onmouseover="this.style.color='var(--primary)'" onmouseout="this.style.color=''">
+            <a href="/forgot-password" id="forgot-pw-link" style="color:var(--text-muted);font-size:.83rem;transition:color .15s">
                 Forgot password?
             </a>
         </div>
@@ -247,7 +196,7 @@ body { display:flex; align-items:center; justify-content:center; min-height:100v
 
     <?php if ($registration_enabled): ?>
     <div class="register-switch">
-        Don't have an account? <a href="#" onclick="switchToRegister(event)">Create one</a>
+        Don't have an account? <a href="#" id="link-switch-register">Create one</a>
     </div>
     <?php endif; ?>
 
@@ -276,7 +225,7 @@ body { display:flex; align-items:center; justify-content:center; min-height:100v
             <div class="input-wrap">
                 <input type="password" id="reg_password" name="reg_password" class="form-input"
                        autocomplete="new-password" placeholder="Min. 12 characters" required>
-                <button type="button" class="eye-btn" onclick="togglePw('reg_password',this)" aria-label="Show/hide">
+                <button type="button" class="eye-btn" id="eye-btn-reg-password" aria-label="Show/hide">
                     <?= eyeSvg(true) ?>
                 </button>
             </div>
@@ -290,7 +239,7 @@ body { display:flex; align-items:center; justify-content:center; min-height:100v
             <div class="input-wrap">
                 <input type="password" id="reg_confirm" name="reg_confirm" class="form-input"
                        autocomplete="new-password" placeholder="Repeat password" required>
-                <button type="button" class="eye-btn" onclick="togglePw('reg_confirm',this)" aria-label="Show/hide">
+                <button type="button" class="eye-btn" id="eye-btn-reg-confirm" aria-label="Show/hide">
                     <?= eyeSvg(true) ?>
                 </button>
             </div>
@@ -298,7 +247,7 @@ body { display:flex; align-items:center; justify-content:center; min-height:100v
         </div>
         <button type="submit" class="btn btn-primary btn-block btn-lg">Create account &rarr;</button>
         <div class="register-switch" style="margin-top:1rem">
-            Already have an account? <a href="#" onclick="switchToLogin(event)">Sign in</a>
+            Already have an account? <a href="#" id="link-switch-login">Sign in</a>
         </div>
     </form>
     <?php endif; ?>
@@ -328,7 +277,7 @@ body { display:flex; align-items:center; justify-content:center; min-height:100v
             <div class="input-wrap">
                 <input type="password" id="reg_password" name="reg_password" class="form-input"
                        autocomplete="new-password" placeholder="Min. 12 characters" required>
-                <button type="button" class="eye-btn" onclick="togglePw('reg_password',this)" aria-label="Show/hide">
+                <button type="button" class="eye-btn" id="eye-btn-reg-password" aria-label="Show/hide">
                     <?= eyeSvg(true) ?>
                 </button>
             </div>
@@ -342,7 +291,7 @@ body { display:flex; align-items:center; justify-content:center; min-height:100v
             <div class="input-wrap">
                 <input type="password" id="reg_confirm" name="reg_confirm" class="form-input"
                        autocomplete="new-password" placeholder="Repeat password" required>
-                <button type="button" class="eye-btn" onclick="togglePw('reg_confirm',this)" aria-label="Show/hide">
+                <button type="button" class="eye-btn" id="eye-btn-reg-confirm" aria-label="Show/hide">
                     <?= eyeSvg(true) ?>
                 </button>
             </div>
@@ -394,7 +343,7 @@ body { display:flex; align-items:center; justify-content:center; min-height:100v
     <?php endif; ?>
 </div>
 
-<script>
+<script nonce="<?= CSP::nonce() ?>">
 (function(){ var t=localStorage.getItem('dv-theme'); if(t) document.documentElement.setAttribute('data-theme',t); })();
 
 // Cookie consent
@@ -517,6 +466,20 @@ function switchToLogin(e) {
     var lf = document.getElementById('lf');
     if (lf) lf.focus();
 }
+
+// ── Event listeners (CSP: bez inline onXXX=, Krok 4a) ──────────────────────────
+document.getElementById('eye-btn-pw')?.addEventListener('click', function() { togglePw('pw', this); });
+document.getElementById('eye-btn-reg-password')?.addEventListener('click', function() { togglePw('reg_password', this); });
+document.getElementById('eye-btn-reg-confirm')?.addEventListener('click', function() { togglePw('reg_confirm', this); });
+
+var forgotLink = document.getElementById('forgot-pw-link');
+if (forgotLink) {
+    forgotLink.addEventListener('mouseover', function() { this.style.color = 'var(--primary)'; });
+    forgotLink.addEventListener('mouseout',  function() { this.style.color = ''; });
+}
+
+document.getElementById('link-switch-register')?.addEventListener('click', switchToRegister);
+document.getElementById('link-switch-login')?.addEventListener('click', switchToLogin);
 
 <?php if ($step === 'register' && $registration_enabled): ?>
 // Server sent us back to register step (validation failed) — show strength meter

@@ -12,14 +12,8 @@ $app_name = htmlspecialchars(APP_NAME, ENT_QUOTES, 'UTF-8');
 <link rel="shortcut icon" href="/assets/icons/favicon.png" type="image/png">
 <link rel="icon" href="/assets/icons/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/assets/css/design-system.css">
-<script>(function(){const t=localStorage.getItem('dv-theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
-<style>
-body{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:2rem}
-.box{text-align:center;max-width:400px}
-.code{font-size:6rem;font-weight:800;color:var(--primary);line-height:1;margin-bottom:.5rem}
-h1{font-size:1.4rem;margin-bottom:.75rem}
-p{color:var(--text-muted);margin-bottom:1.5rem}
-</style>
+<script nonce="<?= CSP::nonce() ?>">(function(){const t=localStorage.getItem('dv-theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
+<link rel="stylesheet" href="/assets/css/pages/404.css">
 </head>
 <body>
 <div class="box">

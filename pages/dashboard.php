@@ -176,41 +176,10 @@ foreach ($custom_extras as $_ctk => $_extra) {
 $_inline_css[] = ":root{--dial-w:{$dial_width}px;}";
 ?>
 <?php if ($_inline_css): ?>
-<style><?= implode('', $_inline_css) ?></style>
+<style nonce="<?= CSP::nonce() ?>"><?= implode('', $_inline_css) ?></style>
 <?php endif; ?>
-<style>
-.update-banner {
-    display: none;
-    background: var(--info-bg);
-    border-bottom: 1px solid var(--info-bdr);
-    padding: .6rem var(--space-5);
-    font-size: var(--text-sm);
-    color: var(--info);
-    align-items: center;
-    gap: var(--space-3);
-    flex-wrap: wrap;
-}
-.update-banner.show { display: flex; }
-.update-banner a { color: var(--info); font-weight: 600; }
-.update-banner-dismiss {
-    margin-left: auto; background: none; border: none;
-    cursor: pointer; color: var(--info); font-size: 1.1rem;
-    opacity: .7; line-height: 1; padding: .1rem .3rem;
-}
-.update-banner-dismiss:hover { opacity: 1; }
-/* sesja 078: avatar in topbar */
-.topbar-avatar-img {
-    width: 20px; height: 20px; border-radius: 50%; object-fit: cover;
-    vertical-align: middle; margin-right: .35rem; border: 1px solid var(--border);
-    flex-shrink: 0;
-}
-.mobile-menu-avatar-img {
-    width: 22px; height: 22px; border-radius: 50%; object-fit: cover;
-    vertical-align: middle; margin-right: .4rem; border: 1px solid var(--border);
-    flex-shrink: 0;
-}
-</style>
-<script>
+<link rel="stylesheet" href="/assets/css/pages/dashboard.css">
+<script nonce="<?= CSP::nonce() ?>">
 (function(){
     var t = localStorage.getItem('dv-theme');
     if (t) document.documentElement.setAttribute('data-theme', t);
@@ -250,7 +219,7 @@ $_inline_css[] = ":root{--dial-w:{$dial_width}px;}";
         <div class="topbar-sep"></div>
         <span class="topbar-user-name">
             <?php if ($has_avatar): ?>
-            <img src="/api/avatars/<?= (int)$user['id'] ?>" alt="" class="topbar-avatar-img" onerror="this.remove()">
+            <img src="/api/avatars/<?= (int)$user['id'] ?>" alt="" class="topbar-avatar-img">
             <?php else: ?>
             👤
             <?php endif; ?>
@@ -274,7 +243,7 @@ $_inline_css[] = ":root{--dial-w:{$dial_width}px;}";
     <div class="mobile-menu-inner">
         <div class="mobile-menu-user">
             <?php if ($has_avatar): ?>
-            <img src="/api/avatars/<?= (int)$user['id'] ?>" alt="" class="mobile-menu-avatar-img" onerror="this.remove()">
+            <img src="/api/avatars/<?= (int)$user['id'] ?>" alt="" class="mobile-menu-avatar-img">
             <?php else: ?>
             👤
             <?php endif; ?>
@@ -331,7 +300,7 @@ $_inline_css[] = ":root{--dial-w:{$dial_width}px;}";
 
 <div class="toast-container"></div>
 
-<script>
+<script nonce="<?= CSP::nonce() ?>">
 window.LETADIAL_BOOT = {
     csrfToken:      <?= json_encode($csrf_token) ?>,
     groups:         <?= $groups_json ?>,
@@ -346,11 +315,16 @@ window.LETADIAL_BOOT = {
     dialWidth:      <?= $dial_width ?>,       // sesja 074
     hasAvatar:      <?= $has_avatar ? 'true' : 'false' ?>,  // sesja 078
 };
+
+// Avatar images: remove element on load failure (CSP: bez inline onerror=, Krok 4a)
+document.querySelectorAll('.topbar-avatar-img, .mobile-menu-avatar-img').forEach(function(img) {
+    img.addEventListener('error', function() { this.remove(); });
+});
 </script>
 <script src="/assets/js/app.js"></script>
 
 <?php if ($show_update_ui): ?>
-<script>
+<script nonce="<?= CSP::nonce() ?>">
 (function() {
     const DISMISS_KEY = 'dv-update-dismissed';
     const banner      = document.getElementById('update-banner');

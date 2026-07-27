@@ -18,6 +18,7 @@ require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/src/DB.php';         // PDO singleton — always first
 require_once __DIR__ . '/src/Password.php';   // Password hashing & validation
 require_once __DIR__ . '/src/CSRF.php';       // CSRF protection (v5)
+require_once __DIR__ . '/src/CSP.php';        // Content Security Policy — nonce + Report-Only (Krok 2, plan CSP)
 require_once __DIR__ . '/src/RateLimit.php';  // Brute-force protection
 require_once __DIR__ . '/src/TOTP.php';       // RFC 6238 TOTP 2FA
 require_once __DIR__ . '/src/QRCode.php';     // Pure PHP QR SVG (no external requests)
@@ -33,6 +34,17 @@ require_once __DIR__ . '/src/Admin.php';      // Admin panel model — sesja 065
 require_once __DIR__ . '/src/Dial.php';       // Speed dial CRUD — after Thumbnail (uses it)
 require_once __DIR__ . '/src/Import.php';     // JSON import
 require_once __DIR__ . '/src/Export.php';     // JSON export
+
+// ── CSP: Enforcing + Report-Only (Krok 2 i Krok 6, plan CSP) ──────────────────
+// Oba wysyłane na każdy request, przed jakimkolwiek outputem, z TYM SAMYM
+// nonce (patrz src/CSP.php::policy()). Enforcing NAPRAWDĘ blokuje inline
+// script/style bez nonce; Report-Only zostaje jako canary (patrz plan,
+// "Otwarte pytania" #2 — decyzja o jego zdjęciu to osobny, nierozstrzygnięty
+// Krok 7). Stara linia `add_header Content-Security-Policy ...` w configu
+// nginx (oba serwery) musi być usunięta/zakomentowana — patrz komentarz na
+// górze src/CSP.php i PLAN_NAPRAWY_CSP.md, Krok 6.
+CSP::sendEnforcingHeader();
+CSP::sendReportOnlyHeader();
 
 // ── URI ───────────────────────────────────────────────────────────────────────
 $uri = rtrim(strtolower(parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?? '/'), '/') ?: '/';

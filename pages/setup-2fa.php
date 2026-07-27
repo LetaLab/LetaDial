@@ -128,38 +128,7 @@ $secret_has_o = str_contains($secret, 'O');
 <link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png">
 <link rel="manifest" href="/assets/manifest.json">
 <link rel="stylesheet" href="/assets/css/design-system.css">
-<style>
-body { display:flex; align-items:flex-start; justify-content:center; padding:2rem 1rem; min-height:100vh; }
-.page-card { width:100%; max-width:530px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg); box-shadow:var(--shadow-lg); overflow:hidden; }
-.logo { text-align:center; padding:2rem 2rem 1rem; }
-.logo img { height:72px; width:72px; object-fit:contain; filter:drop-shadow(0 2px 8px rgba(0,0,0,.15)); margin-bottom:.75rem; transition:transform .25s ease; }
-.logo img:hover { transform:scale(1.06) rotate(-2deg); }
-.logo h1 { font-size:1.3rem; font-weight:700; }
-.logo p  { color:var(--text-muted); font-size:.875rem; margin-bottom:0; }
-.page-body { padding:0 2rem 2rem; }
-.setup-steps { margin:1.5rem 0; }
-.setup-step  { display:flex; gap:1rem; margin-bottom:1.5rem; align-items:flex-start; }
-.step-num { flex-shrink:0; width:28px; height:28px; background:var(--primary); color:var(--primary-fg); border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:.78rem; font-weight:700; margin-top:.1rem; }
-.step-body { flex:1; }
-.step-body strong { display:block; font-size:.95rem; margin-bottom:.25rem; }
-.step-body p { font-size:.84rem; color:var(--text-muted); margin-bottom:0; line-height:1.5; }
-.qr-container { display:flex; flex-direction:column; align-items:center; background:var(--surface-alt); border:1px solid var(--border); border-radius:var(--radius-md); padding:1rem; margin:.75rem 0; }
-.qr-container img { border-radius:0; border:0; display:block; }
-.qr-label { font-size:.72rem; color:var(--text-muted); margin-top:.5rem; text-align:center; }
-.secret-box { font-family:'Courier New',Courier,monospace; font-size:1.05rem; font-weight:700; letter-spacing:.12em; color:var(--primary); background:var(--primary-bg); border:1.5px solid var(--primary-bdr); border-radius:var(--radius-md); padding:.85rem; text-align:center; word-break:break-all; margin:.75rem 0 .4rem; cursor:pointer; transition:background-color var(--transition); user-select:all; }
-.secret-box:hover { background:var(--surface-alt); }
-.secret-note { font-size:.75rem; color:var(--text-muted); text-align:center; margin-bottom:.5rem; }
-.secret-note strong { color:var(--text); display:inline; }
-.copy-row { display:flex; align-items:center; justify-content:center; gap:.75rem; margin-bottom:.25rem; flex-wrap:wrap; }
-.copy-btn,.otp-link { background:none; border:none; font-size:.78rem; color:var(--text-muted); cursor:pointer; padding:.2rem .4rem; border-radius:4px; text-decoration:none; transition:color var(--transition); font-family:var(--font-sans); display:inline-flex; align-items:center; gap:.3rem; }
-.copy-btn:hover,.otp-link:hover { color:var(--primary); }
-.code-input { width:100% !important; text-align:center !important; letter-spacing:.3em !important; font-size:1.5rem !important; font-weight:700 !important; font-family:'Courier New',monospace !important; padding:.75rem !important; }
-.backup-grid { display:grid; grid-template-columns:1fr 1fr; gap:.5rem; margin:1rem 0; }
-.backup-code { background:var(--surface-alt); border:1px solid var(--border); border-radius:var(--radius-sm); padding:.6rem; text-align:center; font-family:'Courier New',monospace; font-size:.9rem; font-weight:700; letter-spacing:.08em; color:var(--text); }
-.success-icon { text-align:center; font-size:3rem; margin:.75rem 0; }
-.action-row { display:flex; gap:.75rem; margin-top:1.5rem; flex-wrap:wrap; }
-.action-row .btn { flex:1; }
-</style>
+<link rel="stylesheet" href="/assets/css/pages/setup-2fa.css">
 </head>
 <body>
 <div class="page-card">
@@ -186,7 +155,7 @@ body { display:flex; align-items:flex-start; justify-content:center; padding:2re
             <?php endforeach; ?>
         </div>
         <div class="action-row">
-            <button type="button" class="btn btn-ghost" onclick="downloadBackupCodes()">↓ Download .txt</button>
+            <button type="button" class="btn btn-ghost" id="btn-download-backup-codes">↓ Download .txt</button>
             <a href="/" class="btn btn-primary">Continue →</a>
         </div>
     </div>
@@ -242,7 +211,7 @@ body { display:flex; align-items:flex-start; justify-content:center; padding:2re
                     <p class="secret-note">⚠ Key contains <strong>letter O</strong> (not digit zero) — in this font: <strong style="font-family:'Courier New',monospace;font-size:1rem">O</strong> ≠ <strong style="font-family:'Courier New',monospace;font-size:1rem">0</strong></p>
                     <?php endif; ?>
                     <div class="copy-row">
-                        <button type="button" class="copy-btn" onclick="copySecret()">📋 Copy key</button>
+                        <button type="button" class="copy-btn" id="btn-copy-secret">📋 Copy key</button>
                         <span style="color:var(--border);font-size:.8rem">|</span>
                         <a href="<?= h($otp_uri) ?>" class="otp-link">📱 Open in app (mobile)</a>
                     </div>
@@ -274,7 +243,7 @@ body { display:flex; align-items:flex-start; justify-content:center; padding:2re
 
 </div>
 
-<script>
+<script nonce="<?= CSP::nonce() ?>">
 (function(){ const t=localStorage.getItem('dv-theme'); if(t) document.documentElement.setAttribute('data-theme',t); })();
 
 const RAW_SECRET = '<?= preg_replace('/\s+/', '', $secret) ?>';
@@ -331,6 +300,10 @@ function downloadBackupCodes() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 }
+
+// ── Event listeners (CSP: bez inline onXXX=, Krok 4a) ──────────────────────────
+document.getElementById('btn-copy-secret')?.addEventListener('click', copySecret);
+document.getElementById('btn-download-backup-codes')?.addEventListener('click', downloadBackupCodes);
 </script>
 </body>
 </html>

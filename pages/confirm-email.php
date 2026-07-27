@@ -79,24 +79,8 @@ $icon_url = h(APP_URL . '/assets/icons/icon-192.png');
 <link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png">
 <link rel="manifest" href="/assets/manifest.json">
 <link rel="stylesheet" href="/assets/css/design-system.css">
-<script>(function(){var t=localStorage.getItem('dv-theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
-<style>
-body { display:flex; align-items:center; justify-content:center; min-height:100vh; padding:1.5rem; }
-.ce-card {
-    width:100%; max-width:440px;
-    background:var(--surface); border:1px solid var(--border);
-    border-radius:var(--radius-lg); box-shadow:var(--shadow-xl);
-    padding:2.5rem 2rem 2rem; text-align:center;
-}
-.ce-logo { width:72px; height:72px; object-fit:contain; margin-bottom:.75rem;
-    filter:drop-shadow(0 2px 8px rgba(0,0,0,.15)); }
-.ce-icon { font-size:3.5rem; margin:1rem 0; line-height:1; }
-.ce-title { font-size:1.2rem; font-weight:700; margin-bottom:.75rem; }
-.ce-sub { color:var(--text-muted); font-size:.875rem; line-height:1.6; margin-bottom:1.5rem; }
-.back-link { display:block; margin-top:1.25rem; font-size:.82rem;
-    color:var(--text-muted); text-decoration:none; }
-.back-link:hover { color:var(--primary); }
-</style>
+<script nonce="<?= CSP::nonce() ?>">(function(){var t=localStorage.getItem('dv-theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
+<link rel="stylesheet" href="/assets/css/pages/confirm-email.css">
 </head>
 <body>
 <div class="ce-card">

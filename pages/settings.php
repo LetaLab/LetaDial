@@ -102,134 +102,8 @@ function eyeSvg(bool $show): string {
 <link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png">
 <link rel="manifest" href="/assets/manifest.json">
 <link rel="stylesheet" href="/assets/css/design-system.css">
-<script>(function(){const t=localStorage.getItem('dv-theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
-<style>
-body { padding:0; min-height:100vh; background:var(--bg); }
-.settings-topbar {
-    height:56px; background:var(--surface); border-bottom:1px solid var(--border);
-    display:flex; align-items:center; padding:0 1.5rem; gap:1rem;
-    position:sticky; top:0; z-index:100; box-shadow:var(--shadow-xs);
-}
-.settings-topbar-brand { display:flex; align-items:center; gap:.6rem; text-decoration:none; color:var(--text); font-weight:700; font-size:1rem; }
-.settings-topbar-brand img { height:32px; width:32px; object-fit:contain; }
-.settings-topbar-brand:hover { color:var(--primary); text-decoration:none; }
-.settings-topbar-right { margin-left:auto; display:flex; align-items:center; gap:1rem; font-size:.875rem; }
-.back-link { color:var(--text-muted); text-decoration:none; transition:color .15s; }
-.back-link:hover { color:var(--primary); text-decoration:none; }
-/* sesja 078: avatar in topbar */
-.settings-topbar-avatar {
-    width:22px; height:22px; border-radius:50%; object-fit:cover;
-    border:1px solid var(--border); vertical-align:middle; flex-shrink:0;
-}
-.settings-main { max-width:640px; margin:0 auto; padding:2rem 1.5rem 4rem; }
-.settings-title { font-size:1.5rem; font-weight:700; margin-bottom:1.75rem; }
-.settings-section {
-    background:var(--surface); border:1px solid var(--border);
-    border-radius:var(--radius-lg); box-shadow:var(--shadow-sm);
-    overflow:hidden; margin-bottom:1.5rem;
-}
-.settings-section-header {
-    padding:1.1rem 1.5rem; border-bottom:1px solid var(--border);
-    display:flex; align-items:center; gap:.75rem;
-}
-.settings-section-icon { font-size:1.1rem; }
-.settings-section-header h2 { font-size:1rem; font-weight:600; margin:0; flex:1; }
-.settings-section-body { padding:1.5rem; }
-.field-row { margin-bottom:1.1rem; }
-.field-row:last-child { margin-bottom:0; }
-.field-hint { font-size:.78rem; color:var(--text-muted); margin-top:.3rem; }
-.pw-strength { height:4px; border-radius:9999px; background:var(--border); margin-top:.4rem; overflow:hidden; }
-.pw-strength-bar { height:100%; border-radius:9999px; transition:width .3s ease, background .3s ease; width:0; }
-.inline-alert { display:none; padding:.6rem .85rem; border-radius:var(--radius-md); font-size:.875rem; margin-bottom:1rem; align-items:flex-start; gap:.5rem; }
-.inline-alert.show { display:flex; }
-.inline-alert.success { background:var(--success-bg); border:1px solid var(--success-bdr); color:var(--success); }
-.inline-alert.error   { background:var(--error-bg);   border:1px solid var(--error-bdr);   color:var(--error);   }
-.inline-alert.info    { background:var(--info-bg);     border:1px solid var(--info-bdr);     color:var(--info);    }
-.status-badge { display:inline-flex; align-items:center; gap:.35rem; padding:.2rem .65rem; border-radius:9999px; font-size:.78rem; font-weight:600; }
-.status-badge.on  { background:var(--success-bg); color:var(--success); border:1px solid var(--success-bdr); }
-.status-badge.off { background:var(--error-bg);   color:var(--error);   border:1px solid var(--error-bdr);   }
-.backup-grid { display:grid; grid-template-columns:1fr 1fr; gap:.4rem; margin:1rem 0; }
-.backup-code-item { background:var(--surface-alt); border:1px solid var(--border); border-radius:var(--radius-sm); padding:.5rem; text-align:center; font-family:var(--font-mono); font-size:.9rem; font-weight:700; color:var(--text); }
-.pref-row { display:flex; align-items:center; justify-content:space-between; padding:.6rem 0; border-bottom:1px solid var(--border-light); }
-.pref-row:last-child { border-bottom:none; padding-bottom:0; }
-.pref-label { font-size:.9rem; color:var(--text); }
-.pref-hint  { font-size:.78rem; color:var(--text-muted); margin-top:.15rem; }
-.verify-form { display:none; background:var(--surface-alt); border:1px solid var(--border); border-radius:var(--radius-md); padding:1rem; margin-top:1rem; }
-.verify-form.show { display:block; }
-.code-input { text-align:center; letter-spacing:.25em; font-size:1.4rem; font-weight:700; font-family:var(--font-mono); padding:.75rem; }
-.session-list { display:flex; flex-direction:column; gap:.6rem; }
-.session-item { display:flex; align-items:flex-start; gap:.75rem; background:var(--surface-alt); border:1px solid var(--border); border-radius:var(--radius-md); padding:.75rem 1rem; }
-.session-item.current-session { border-color:var(--primary); background:var(--primary-bg); }
-.session-icon { font-size:1.4rem; flex-shrink:0; margin-top:.1rem; }
-.session-info { flex:1; min-width:0; }
-.session-title { font-size:.875rem; font-weight:600; color:var(--text); }
-.session-meta  { font-size:.75rem; color:var(--text-muted); margin-top:.15rem; line-height:1.5; }
-.session-badge { font-size:.7rem; background:var(--primary); color:var(--primary-fg); padding:.1rem .5rem; border-radius:9999px; font-weight:700; margin-left:.4rem; }
-.session-actions { flex-shrink:0; display:flex; align-items:center; }
-.sessions-loading { text-align:center; padding:1.5rem; color:var(--text-faint); font-size:.875rem; }
-.email-pending-banner { background:var(--info-bg); border:1px solid var(--info-bdr); border-radius:var(--radius-md); padding:.75rem 1rem; font-size:.875rem; color:var(--info); display:flex; align-items:flex-start; gap:.6rem; margin-bottom:1rem; }
-.email-locked { display:flex; align-items:center; gap:.5rem; background:var(--surface-alt); border:1.5px solid var(--border); border-radius:var(--radius-md); padding:.55rem .75rem; font-size:.9rem; color:var(--text-muted); }
-.email-locked .email-val { flex:1; font-weight:500; color:var(--text); }
-/* About section */
-.about-links { display:flex; gap:.75rem; flex-wrap:wrap; margin-bottom:1rem; }
-.about-link-btn { display:inline-flex; align-items:center; gap:.5rem; padding:.55rem 1rem; background:var(--surface-alt); border:1.5px solid var(--border); border-radius:var(--radius-md); font-size:.875rem; color:var(--text-muted); text-decoration:none; font-family:var(--font-sans); font-weight:500; transition:all var(--transition); cursor:pointer; }
-.about-link-btn:hover { border-color:var(--primary); color:var(--primary); background:var(--primary-bg); text-decoration:none; }
-.about-meta { font-size:.78rem; color:var(--text-faint); line-height:1.6; }
-/* Custom Colors (071b + 072) */
-.color-theme-tabs { display:flex; gap:4px; margin-bottom:1rem; border-bottom:1px solid var(--border); }
-.color-theme-tab { padding:.45rem 1.1rem; font-size:.875rem; font-family:var(--font-sans); font-weight:500; color:var(--text-muted); background:none; border:none; border-bottom:3px solid transparent; margin-bottom:-1px; cursor:pointer; transition:color var(--transition),border-color var(--transition); white-space:nowrap; }
-.color-theme-tab:hover { color:var(--text); }
-.color-theme-tab.active { color:var(--primary); border-bottom-color:var(--primary); font-weight:600; }
-.color-tab-pane { display:none; }
-.color-tab-pane.active { display:block; animation:colorTabIn .12s ease; }
-@keyframes colorTabIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
-.color-status { display:flex; align-items:center; gap:.6rem; padding:.45rem .75rem; background:var(--surface-alt); border:1px solid var(--border); border-radius:var(--radius-sm); font-size:.82rem; color:var(--text-muted); margin-bottom:.75rem; }
-.color-status-dot { width:16px; height:16px; border-radius:50%; flex-shrink:0; border:2px solid rgba(0,0,0,.12); display:inline-block; }
-.color-suggestions { display:flex; flex-wrap:wrap; gap:8px; margin:.75rem 0; }
-.color-swatch { width:34px; height:34px; border-radius:50%; cursor:pointer; border:3px solid transparent; transition:transform .15s,border-color .15s,box-shadow .15s; outline:none; flex-shrink:0; }
-.color-swatch:hover  { transform:scale(1.15); box-shadow:0 2px 8px rgba(0,0,0,.2); }
-.color-swatch.active { border-color:var(--text); box-shadow:0 0 0 2px var(--text); }
-.color-swatch-wrap { position:relative; }
-.color-custom-row { display:flex; align-items:center; gap:.65rem; flex-wrap:wrap; margin:.75rem 0; }
-.color-picker-input { width:38px; height:36px; padding:2px; border-radius:var(--radius-sm); border:1.5px solid var(--border); background:var(--surface-alt); cursor:pointer; flex-shrink:0; }
-.color-picker-input::-webkit-color-swatch-wrapper { padding:0; }
-.color-picker-input::-webkit-color-swatch { border:none; border-radius:3px; }
-.color-hex-input { width:100px; font-family:var(--font-mono); font-size:.875rem; text-transform:uppercase; }
-.color-preview-row { display:flex; align-items:center; gap:.75rem; padding:.6rem .85rem; background:var(--surface-alt); border:1px solid var(--border); border-radius:var(--radius-md); margin:.75rem 0; }
-.color-preview-label { font-size:.75rem; color:var(--text-faint); flex-shrink:0; }
-.color-preview-btn { display:inline-flex; align-items:center; gap:.4rem; padding:.4rem .9rem; font-size:.8rem; font-weight:600; border-radius:var(--radius-md); border:none; cursor:default; transition:background .2s,color .2s; }
-.color-preview-tab { display:inline-flex; align-items:center; gap:.4rem; padding:.3rem .75rem; font-size:.8rem; font-weight:600; border-radius:var(--radius-sm); border-bottom:3px solid currentColor; }
-.page-colors-section { margin-top:1rem; padding-top:.85rem; border-top:1px solid var(--border); }
-.page-colors-label { font-size:.72rem; font-weight:700; color:var(--text-faint); text-transform:uppercase; letter-spacing:.06em; margin-bottom:.55rem; }
-.page-color-row { display:flex; align-items:center; gap:.6rem; margin-bottom:.4rem; }
-.page-color-row:last-child { margin-bottom:0; }
-.page-color-name { font-size:.82rem; color:var(--text-muted); min-width:78px; flex-shrink:0; }
-.page-color-hex { width:90px; font-family:var(--font-mono); font-size:.84rem; text-transform:uppercase; }
-/* LetaLink (077) */
-.bookmarklet-wrap { background:var(--surface-alt); border:1.5px dashed var(--border); border-radius:var(--radius-md); padding:1.25rem 1rem; text-align:center; margin:.5rem 0 .85rem; }
-.bookmarklet-link { display:inline-flex; align-items:center; gap:.5rem; padding:.65rem 1.25rem; background:var(--primary); color:var(--primary-fg); border-radius:var(--radius-md); font-size:.9rem; font-weight:600; text-decoration:none; cursor:grab; transition:background .15s,transform .1s; user-select:none; border:none; }
-.bookmarklet-link:hover { background:var(--primary-h,#520818); text-decoration:none; color:var(--primary-fg); }
-.bookmarklet-link:active { cursor:grabbing; transform:scale(.97); }
-.bookmarklet-hint { font-size:.75rem; color:var(--text-faint); margin-top:.5rem; }
-/* sesja 078: avatar preview */
-.avatar-preview-circle {
-    width:96px; height:96px; border-radius:50%; overflow:hidden;
-    background:var(--surface-alt); border:2px solid var(--border);
-    display:flex; align-items:center; justify-content:center;
-    flex-shrink:0; font-size:2.8rem;
-}
-.avatar-preview-circle img {
-    width:100%; height:100%; object-fit:cover; display:block;
-}
-@media (max-width:640px) {
-    .settings-main { padding:1.25rem 1rem 3rem; }
-    .settings-section-body { padding:1.1rem; }
-    .session-item { flex-wrap:wrap; }
-    .about-links { flex-direction:column; }
-    .page-color-row { flex-wrap:wrap; }
-    .page-color-name { min-width:60px; }
-}
-</style>
+<script nonce="<?= CSP::nonce() ?>">(function(){const t=localStorage.getItem('dv-theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
+<link rel="stylesheet" href="/assets/css/pages/settings.css">
 </head>
 <body>
 
@@ -243,8 +117,7 @@ body { padding:0; min-height:100vh; background:var(--bg); }
             <?php if ($has_avatar): ?>
             <img id="topbar-settings-avatar"
                  src="<?= h($avatar_url) ?>"
-                 alt="" class="settings-topbar-avatar"
-                 onerror="this.style.display='none'">
+                 alt="" class="settings-topbar-avatar">
             <?php else: ?>
             <img id="topbar-settings-avatar" src="" alt=""
                  class="settings-topbar-avatar" style="display:none">
@@ -273,8 +146,7 @@ body { padding:0; min-height:100vh; background:var(--bg); }
                     <?php if ($has_avatar): ?>
                     <img id="avatar-preview-img"
                          src="<?= h($avatar_url) ?>"
-                         alt="Your avatar"
-                         onerror="this.style.display='none';document.getElementById('avatar-preview-icon').style.display=''">
+                         alt="Your avatar">
                     <span id="avatar-preview-icon" style="display:none">👤</span>
                     <?php else: ?>
                     <img id="avatar-preview-img" src="" alt="" style="display:none">
@@ -325,14 +197,14 @@ body { padding:0; min-height:100vh; background:var(--bg); }
                 <label class="form-label" for="current-pw">Current password</label>
                 <div class="input-wrap">
                     <input type="password" id="current-pw" class="form-input" autocomplete="current-password" placeholder="Enter current password">
-                    <button type="button" class="eye-btn" onclick="togglePw('current-pw',this)" aria-label="Show/hide"><?= eyeSvg(true) ?></button>
+                    <button type="button" class="eye-btn" id="eye-btn-current-pw" aria-label="Show/hide"><?= eyeSvg(true) ?></button>
                 </div>
             </div>
             <div class="field-row">
                 <label class="form-label" for="new-pw">New password</label>
                 <div class="input-wrap">
                     <input type="password" id="new-pw" class="form-input" autocomplete="new-password" placeholder="Min. 12 characters">
-                    <button type="button" class="eye-btn" onclick="togglePw('new-pw',this)" aria-label="Show/hide"><?= eyeSvg(true) ?></button>
+                    <button type="button" class="eye-btn" id="eye-btn-new-pw" aria-label="Show/hide"><?= eyeSvg(true) ?></button>
                 </div>
                 <div class="pw-strength"><div class="pw-strength-bar" id="pw-strength-bar"></div></div>
                 <div class="field-hint" id="pw-strength-label"></div>
@@ -341,7 +213,7 @@ body { padding:0; min-height:100vh; background:var(--bg); }
                 <label class="form-label" for="confirm-pw">Confirm new password</label>
                 <div class="input-wrap">
                     <input type="password" id="confirm-pw" class="form-input" autocomplete="new-password" placeholder="Repeat new password">
-                    <button type="button" class="eye-btn" onclick="togglePw('confirm-pw',this)" aria-label="Show/hide"><?= eyeSvg(true) ?></button>
+                    <button type="button" class="eye-btn" id="eye-btn-confirm-pw" aria-label="Show/hide"><?= eyeSvg(true) ?></button>
                 </div>
             </div>
             <button type="button" class="btn btn-primary" id="btn-change-pw">Change password</button>
@@ -656,8 +528,8 @@ body { padding:0; min-height:100vh; background:var(--bg); }
             </p>
             <div class="bookmarklet-wrap">
                 <a href="<?= $bookmarklet_href ?>"
-                   class="bookmarklet-link"
-                   onclick="event.preventDefault();alert('Drag this button to your bookmarks/favorites bar, then click it while visiting any webpage.')">
+                   id="bookmarklet-drag-link"
+                   class="bookmarklet-link">
                     🔖 LetaLink — Add to <?= $app_name ?>
                 </a>
                 <div class="bookmarklet-hint">↑ Drag to your bookmarks/favorites bar</div>
@@ -700,7 +572,7 @@ body { padding:0; min-height:100vh; background:var(--bg); }
 
 </main>
 
-<script>
+<script nonce="<?= CSP::nonce() ?>">
 (function(){const t=localStorage.getItem('dv-theme');if(t)document.documentElement.setAttribute('data-theme',t)})();
 
 const CSRF_TOKEN      = <?= json_encode($csrf_token) ?>;
@@ -735,6 +607,13 @@ document.querySelectorAll('#theme-btn,#theme-btn-pref').forEach(btn=>btn.addEven
 
 // ── Shared utilities ───────────────────────────────────────────────────────────
 function togglePw(id,btn){const i=document.getElementById(id);const showing=i.type==='text';i.type=showing?'password':'text';btn.innerHTML=showing?'<?= addslashes(eyeSvg(true)) ?>':'<?= addslashes(eyeSvg(false)) ?>';}
+// ── Event listeners (CSP: bez inline onXXX=, Krok 4a) ──────────────────────────
+document.getElementById('eye-btn-current-pw')?.addEventListener('click',function(){togglePw('current-pw',this);});
+document.getElementById('eye-btn-new-pw')?.addEventListener('click',function(){togglePw('new-pw',this);});
+document.getElementById('eye-btn-confirm-pw')?.addEventListener('click',function(){togglePw('confirm-pw',this);});
+document.getElementById('topbar-settings-avatar')?.addEventListener('error',function(){this.style.display='none';});
+document.getElementById('avatar-preview-img')?.addEventListener('error',function(){this.style.display='none';const ic=document.getElementById('avatar-preview-icon');if(ic)ic.style.display='';});
+document.getElementById('bookmarklet-drag-link')?.addEventListener('click',function(e){e.preventDefault();alert('Drag this button to your bookmarks/favorites bar, then click it while visiting any webpage.');});
 const pwInput=document.getElementById('new-pw');const pwBar=document.getElementById('pw-strength-bar');const pwLabel=document.getElementById('pw-strength-label');
 const levels=['','Too short','Weak','Fair','Strong'];const levelClrs=['','#E53E3E','#D69E2E','#D69E2E','#1D5C42'];const levelPct=['','25%','50%','75%','100%'];
 function calcStrength(pw){if(!pw||pw.length<PW_RULES.minLength)return 1;let s=0;if(/[A-Z]/.test(pw))s++;if(/[a-z]/.test(pw))s++;if(/[0-9]/.test(pw))s++;if(/[^A-Za-z0-9]/.test(pw))s++;if(pw.length>=16)s=Math.min(s+1,4);return Math.max(1,Math.min(s,4));}
@@ -905,8 +784,15 @@ function downloadCodes(codes){const appName=<?= json_encode(APP_NAME) ?>;const n
 // ── Sessions ───────────────────────────────────────────────────────────────────
 function parseUA(ua){if(!ua)return{browser:'Unknown',os:'Unknown',icon:'🖥️'};let b='Unknown',o='Unknown',icon='🖥️';if(/EdgA?\//.test(ua))b='Edge';else if(/OPR\//.test(ua))b='Opera';else if(/Chrome\//.test(ua))b='Chrome';else if(/Safari\//.test(ua)&&/Version\//.test(ua))b='Safari';else if(/Firefox\//.test(ua))b='Firefox';if(/Windows NT/.test(ua)){o='Windows';icon='🖥️';}else if(/Macintosh/.test(ua)){o='macOS';icon='🍎';}else if(/Android/.test(ua)){o='Android';icon='📱';}else if(/iPhone|iPad/.test(ua)){o='iOS';icon='📱';}else if(/Linux/.test(ua)){o='Linux';icon='🐧';}return{browser:b,os:o,icon};}
 function relTime(s){if(!s)return'—';const d=new Date(s.replace(' ','T'));const diff=Math.floor((Date.now()-d.getTime())/1000);if(diff<60)return`${diff}s ago`;if(diff<3600)return`${Math.floor(diff/60)}m ago`;if(diff<86400)return`${Math.floor(diff/3600)}h ago`;return`${Math.floor(diff/86400)}d ago`;}
-async function loadSessions(){const list=document.getElementById('sessions-list');if(!list)return;list.innerHTML='<div class="sessions-loading">Loading…</div>';const r=await apiGet('/api/settings/sessions');if(!r.ok||!r.sessions){list.innerHTML='<div class="sessions-loading">Could not load sessions.</div>';return;}if(!r.sessions.length){list.innerHTML='<div class="sessions-loading">No active sessions found.</div>';return;}const html=r.sessions.map(s=>{const ua=parseUA(s.user_agent);const isCur=s.id===CURRENT_SESSION;const badge=isCur?'<span class="session-badge">This device</span>':'';const delBtn=isCur?`<span style="font-size:.75rem;color:var(--text-faint)">current</span>`:`<button type="button" class="btn btn-ghost btn-sm" style="border-color:var(--error-bdr);color:var(--error)" onclick="deleteSession('${esc(s.id)}',this)">Sign out</button>`;return `<div class="session-item${isCur?' current-session':''}"><div class="session-icon">${esc(ua.icon)}</div><div class="session-info"><div class="session-title">${esc(ua.browser)} on ${esc(ua.os)}${badge}</div><div class="session-meta">IP: <strong>${esc(s.ip)}</strong> · Last active: ${relTime(s.last_activity)} · Signed in: ${relTime(s.created_at)}</div></div><div class="session-actions">${delBtn}</div></div>`;}).join('');list.innerHTML=`<div class="session-list">${html}</div>`;}
+async function loadSessions(){const list=document.getElementById('sessions-list');if(!list)return;list.innerHTML='<div class="sessions-loading">Loading…</div>';const r=await apiGet('/api/settings/sessions');if(!r.ok||!r.sessions){list.innerHTML='<div class="sessions-loading">Could not load sessions.</div>';return;}if(!r.sessions.length){list.innerHTML='<div class="sessions-loading">No active sessions found.</div>';return;}const html=r.sessions.map(s=>{const ua=parseUA(s.user_agent);const isCur=s.id===CURRENT_SESSION;const badge=isCur?'<span class="session-badge">This device</span>':'';const delBtn=isCur?`<span style="font-size:.75rem;color:var(--text-faint)">current</span>`:`<button type="button" class="btn btn-ghost btn-sm" style="border-color:var(--error-bdr);color:var(--error)" data-action="delete-session" data-session-id="${esc(s.id)}">Sign out</button>`;return `<div class="session-item${isCur?' current-session':''}"><div class="session-icon">${esc(ua.icon)}</div><div class="session-info"><div class="session-title">${esc(ua.browser)} on ${esc(ua.os)}${badge}</div><div class="session-meta">IP: <strong>${esc(s.ip)}</strong> · Last active: ${relTime(s.last_activity)} · Signed in: ${relTime(s.created_at)}</div></div><div class="session-actions">${delBtn}</div></div>`;}).join('');list.innerHTML=`<div class="session-list">${html}</div>`;}
 async function deleteSession(sessionId,btn){btn.disabled=true;btn.textContent='…';const r=await apiPost('/api/settings/sessions/delete',{session_id:sessionId});if(!r.ok){btn.disabled=false;btn.textContent='Sign out';showAlert('sess-alert','sess-alert-msg','error',r.error||'Could not sign out session.');return;}showAlert('sess-alert','sess-alert-msg','success','Session signed out.');loadSessions();}
+// CSP Krok 4b — single delegated listener on the (stable) list container replaces the
+// per-row inline click handler that used to be built inside the template literal above.
+// #sessions-list itself is never replaced, only its innerHTML — attaching once here is enough.
+document.getElementById('sessions-list')?.addEventListener('click', e => {
+    const btn = e.target.closest('[data-action="delete-session"]');
+    if (btn) deleteSession(btn.dataset.sessionId, btn);
+});
 document.getElementById('btn-refresh-sessions')?.addEventListener('click',()=>{hideAlert('sess-alert');loadSessions();});
 document.getElementById('btn-signout-all-others')?.addEventListener('click',async()=>{const btn=document.getElementById('btn-signout-all-others');btn.disabled=true;btn.textContent='…';const r=await apiPost('/api/settings/sessions/delete-all',{});btn.disabled=false;btn.textContent='Sign out all other devices';if(!r.ok){showAlert('sess-alert','sess-alert-msg','error',r.error||'Could not sign out other sessions.');return;}const n=r.deleted||0;showAlert('sess-alert','sess-alert-msg','success',n===0?'No other sessions to sign out.':`${n} other session${n!==1?'s':''} signed out.`);loadSessions();});
 loadSessions();

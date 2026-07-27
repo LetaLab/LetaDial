@@ -588,6 +588,13 @@ const LetaDial = (() => {
             this.render();
             document.getElementById('btn-add-group')?.addEventListener('click', () => this.showAddModal());
             document.getElementById('btn-create-first')?.addEventListener('click', () => this.showAddModal());
+            // CSP Krok 4b — broken group-icon fallback, replaces the inline onerror= that
+            // used to sit on the dynamically-built <img class="tab-icon-img"> above.
+            // 'error' does NOT bubble (unlike 'click'), so useCapture=true is required for
+            // this single listener to catch it via delegation from any tab, current or future.
+            this.bar.addEventListener('error', e => {
+                if (e.target.matches('.tab-icon-img')) e.target.style.display = 'none';
+            }, true);
         },
 
         async reload() {
@@ -661,7 +668,7 @@ const LetaDial = (() => {
                 if (g.color) tab.style.setProperty('--tab-c', g.color);
 
                 const iconHtml = g.icon_path
-                    ? `<img class="tab-icon-img" src="/api/group_icons/${g.id}?t=${Date.now()}" alt="" loading="lazy" onerror="this.style.display='none'">`
+                    ? `<img class="tab-icon-img" src="/api/group_icons/${g.id}?t=${Date.now()}" alt="" loading="lazy">`
                     : (g.icon ? `<span class="tab-icon" aria-hidden="true">${escHtml(g.icon)}</span>` : '');
 
                 tab.innerHTML = `${iconHtml}<span class="tab-name">${escHtml(g.name)}</span><span class="tab-count">${g.dial_count || 0}</span>`;
@@ -1440,6 +1447,19 @@ const LetaDial = (() => {
             document.getElementById('btn-bulk-select')?.addEventListener('click', () => { this.active ? this.exit() : this.enter(); });
             document.getElementById('btn-bulk-select-mobile')?.addEventListener('click', () => { mobile_menu.close(); this.active ? this.exit() : this.enter(); });
             document.addEventListener('keydown', e => { if (e.key === 'Escape' && this.active) this.exit(); });
+            // CSP Krok 4b — hover highlight for _showGroupPicker() rows, replaces the inline
+            // onmouseover/onmouseout that used to sit on each <label class="group-picker-row">.
+            // mouseover/mouseout bubble normally, and modal.el is recreated on every
+            // _showGroupPicker() call — attaching once here on document (not on modal.el)
+            // means it keeps working across every open/close cycle with no re-attachment.
+            document.addEventListener('mouseover', e => {
+                const row = e.target.closest('.group-picker-row');
+                if (row) row.style.background = 'var(--surface-alt)';
+            });
+            document.addEventListener('mouseout', e => {
+                const row = e.target.closest('.group-picker-row');
+                if (row) row.style.background = '';
+            });
         },
         enter() {
             if (activeGroupId === RECENT_GROUP_ID) { toast.error('Switch to a regular group to use bulk select.'); return; }
@@ -1498,7 +1518,7 @@ const LetaDial = (() => {
                 const iconHtml = g.icon_path
                     ? `<img src="/api/group_icons/${g.id}" alt="" style="width:16px;height:16px;border-radius:2px;object-fit:cover;vertical-align:middle;flex-shrink:0">`
                     : (g.icon ? `<span>${escHtml(g.icon)}</span>` : '');
-                return `<label style="display:flex;align-items:center;gap:.6rem;padding:.45rem .5rem;border-radius:var(--radius-sm);cursor:pointer;font-size:var(--text-sm);transition:background var(--transition)" onmouseover="this.style.background='var(--surface-alt)'" onmouseout="this.style.background=''">
+                return `<label class="group-picker-row" style="display:flex;align-items:center;gap:.6rem;padding:.45rem .5rem;border-radius:var(--radius-sm);cursor:pointer;font-size:var(--text-sm);transition:background var(--transition)">
                     <input type="radio" name="bulk-group" value="${g.id}" style="accent-color:var(--primary);flex-shrink:0">
                     ${iconHtml}<span style="flex:1">${escHtml(g.name)}</span>
                     <span style="color:var(--text-faint);font-size:var(--text-xs)">${g.dial_count||0} dials</span>

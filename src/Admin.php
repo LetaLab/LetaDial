@@ -608,6 +608,7 @@ class Admin
             'src/Auth.php'                 => true,
             'src/DB.php'                   => true,
             'src/CSRF.php'                 => true,
+            'src/CSP.php'                  => true,   // BUG-007 — was missing despite being loaded by index.php
             'src/Dial.php'                 => true,
             'src/Group.php'                => true,
             'src/Thumbnail.php'            => true,
@@ -645,9 +646,25 @@ class Admin
             'api/meta.php'                 => true,
             'api/group_icons.php'          => true,
             'api/avatars.php'              => true,   // sesja 078
+            'api/csp-report.php'           => true,   // BUG-007 — CSP-era file, was missing
             'assets/css/app.css'           => true,
             'assets/css/design-system.css' => true,
             'assets/js/app.js'             => true,
+            // BUG-007 — 12 per-page stylesheets extracted during the CSP
+            // cleanup were never added here; Install Check could report
+            // "all OK" even if one had gone missing on the server.
+            'assets/css/pages/404.css'             => true,
+            'assets/css/pages/activate.css'        => true,
+            'assets/css/pages/admin.css'           => true,
+            'assets/css/pages/login.css'           => true,
+            'assets/css/pages/confirm-email.css'   => true,
+            'assets/css/pages/forgot-password.css' => true,
+            'assets/css/pages/reset-password.css'  => true,
+            'assets/css/pages/settings.css'        => true,
+            'assets/css/pages/dashboard.css'       => true,
+            'assets/css/pages/bookmarklet.css'     => true,
+            'assets/css/pages/setup-2fa.css'       => true,
+            'assets/css/pages/setup-account.css'   => true,
         ];
         foreach ($keyFiles as $rel => $required) {
             $exists = file_exists($appDir . '/' . $rel);

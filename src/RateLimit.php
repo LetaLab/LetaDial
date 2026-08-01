@@ -67,44 +67,48 @@ class RateLimit
             [$action, $blockSec]
         );
 
-        $row = DB::row(
-            "SELECT id, attempts, window_start
-             FROM rate_limits
-             WHERE key_hash = ? AND action = ?",
-            [$hash, $action]
-        );
-
-        if (!$row) {
-            // First attempt — insert and allow
-            DB::run(
-                "INSERT INTO rate_limits (key_hash, action, attempts, window_start, key_plain)
-                 VALUES (?, ?, 1, NOW(), ?)",
-                [$hash, $action, $plain]
-            );
-            return false;
-        }
-
-        // Check if current window has expired → reset
-        $elapsed = time() - strtotime($row['window_start']);
-        if ($elapsed > $windowSec) {
-            DB::run(
-                "UPDATE rate_limits
-                 SET attempts = 1, window_start = NOW(), key_plain = ?
-                 WHERE key_hash = ? AND action = ?",
-                [$plain, $hash, $action]
-            );
-            return false;
-        }
-
-        // Within window — increment
+        // SEC-089: this used to be a SELECT, then a branch into either an
+        // INSERT ("no row yet") or an UPDATE ("row exists") — not atomic.
+        // Under concurrent requests for the SAME key/action (e.g. a scripted
+        // brute-force firing many parallel connections from one IP), several
+        // requests could all see "no row yet" and all attempt INSERT at
+        // once; the table's own UNIQUE KEY uq_key_action (key_hash, action)
+        // then rejected every INSERT after the first with a duplicate-key
+        // PDOException, which was not caught anywhere and propagated as an
+        // unhandled 500 instead of a clean 429/"invalid password" response.
+        // This was NOT a bypass of the limit itself — the exception fires
+        // before Auth::login() ever reaches password_verify() — just a
+        // stability problem under concurrent load.
+        //
+        // Fix: a single atomic INSERT ... ON DUPLICATE KEY UPDATE, guarded
+        // by the same unique key that used to cause the race. MySQL/MariaDB
+        // resolves "fresh row vs. existing row, window still open vs.
+        // expired" server-side in one round trip, so two concurrent
+        // requests for the same key/action can never both take a
+        // "row doesn't exist yet" branch. Column names referenced (not
+        // wrapped in VALUES()) inside ON DUPLICATE KEY UPDATE refer to the
+        // row's current stored value, per MySQL semantics.
         DB::run(
-            "UPDATE rate_limits
-             SET attempts = attempts + 1, key_plain = ?
-             WHERE key_hash = ? AND action = ?",
-            [$plain, $hash, $action]
+            "INSERT INTO rate_limits (key_hash, action, attempts, window_start, key_plain)
+             VALUES (?, ?, 1, NOW(), ?)
+             ON DUPLICATE KEY UPDATE
+                attempts     = IF(window_start < DATE_SUB(NOW(), INTERVAL ? SECOND), 1, attempts + 1),
+                window_start = IF(window_start < DATE_SUB(NOW(), INTERVAL ? SECOND), NOW(), window_start),
+                key_plain    = VALUES(key_plain)",
+            [$hash, $action, $plain, $windowSec, $windowSec]
         );
 
-        return ((int)$row['attempts'] + 1) > $maxAttempts;
+        // Read back the now-authoritative attempts count. Safe as a separate
+        // statement here because the write above is already atomic — this
+        // SELECT can only ever see a value >= what this request's own
+        // upsert just wrote (never less, regardless of what any concurrent
+        // request did in between).
+        $attempts = (int)(DB::val(
+            "SELECT attempts FROM rate_limits WHERE key_hash = ? AND action = ?",
+            [$hash, $action]
+        ) ?? 0);
+
+        return $attempts > $maxAttempts;
     }
 
     /**

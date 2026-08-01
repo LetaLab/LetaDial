@@ -11,6 +11,12 @@ defined('DIALVAULT_APP') or die('Direct access forbidden.');
 class Dial
 {
     private const MAX_NOTES  = 500;
+    // BUG-003: dials.title is VARCHAR(100) — Group::create(), Import.php and
+    // Meta.php all enforce this same limit in PHP, but create()/update() did
+    // not, relying only on the client-side maxlength="100" attribute (trivially
+    // bypassed via direct API/bookmarklet calls) and risking a hard DB error
+    // under STRICT_TRANS_TABLES instead of a clean validation truncation.
+    private const MAX_TITLE  = 100;
     private const RECENT_MAX = 20;
 
     // ── Read ──────────────────────────────────────────────────────────────────
@@ -103,7 +109,7 @@ class Dial
             [$userId, $groupId]
         ) ?? -1) + 1;
 
-        $title = $title !== '' ? $title : self::_titleFromUrl($url);
+        $title = self::_cleanTitle($title !== '' ? $title : self::_titleFromUrl($url));
         $notes = self::_cleanNotes($notes);
 
         DB::run(
@@ -332,7 +338,7 @@ class Dial
             return ['ok' => false, 'error' => 'Dial not found.'];
         }
 
-        $title = $title !== '' ? $title : self::_titleFromUrl($url);
+        $title = self::_cleanTitle($title !== '' ? $title : self::_titleFromUrl($url));
         $notes = self::_cleanNotes($notes);
 
         DB::run(
@@ -484,5 +490,10 @@ class Dial
     private static function _cleanNotes(string $notes): string
     {
         return mb_substr(trim(strip_tags($notes)), 0, self::MAX_NOTES);
+    }
+
+    private static function _cleanTitle(string $title): string
+    {
+        return mb_substr(trim(strip_tags($title)), 0, self::MAX_TITLE);
     }
 }

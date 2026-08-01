@@ -30,8 +30,16 @@ if (file_exists(__DIR__ . '/config.php')) {
 }
 
 // ── Session ───────────────────────────────────────────────────────────────────
+// SEC-094: conditional 'secure' flag — same HTTPS-detection pattern already
+// used by CSRF::preAuthToken() and Auth::setSessionCookie() elsewhere in the
+// app. Without this, the installer session cookie (which carries the CSRF
+// token and the in-progress install data) would be sent in plaintext if the
+// installer is ever reached over plain HTTP before the 80->443 redirect
+// takes effect.
+$isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+        || ($_SERVER['SERVER_PORT'] ?? 80) == 443;
 session_name('letadial_install');
-session_set_cookie_params(['httponly' => true, 'samesite' => 'Strict']);
+session_set_cookie_params(['httponly' => true, 'secure' => $isHttps, 'samesite' => 'Strict']);
 session_start();
 
 if (empty($_SESSION['csrf'])) {
@@ -106,6 +114,7 @@ function process_admin(string &$step): void {
     if (strlen($password) < 12)
         $errors[] = 'Password must be at least 12 characters.';
     if (!preg_match('/[A-Z]/', $password)) $errors[] = 'Password needs an uppercase letter.';
+    if (!preg_match('/[a-z]/', $password)) $errors[] = 'Password needs a lowercase letter.';
     if (!preg_match('/[0-9]/', $password)) $errors[] = 'Password needs a number.';
     if (!preg_match('/[^A-Za-z0-9]/', $password)) $errors[] = 'Password needs a special character.';
     if ($password !== $confirm)
@@ -199,8 +208,11 @@ function process_install(string &$step): void {
         chmod($cfg_path, 0600);
 
         // 6. Create directory structure
+        // BUG-006: storage/group_icons was missing — GroupIcon.php creates it
+        // lazily on first use, but a fresh install should have the full
+        // storage/ layout ready immediately, matching the current feature set.
         $dirs = [
-            'storage', 'storage/thumbnails', 'storage/sessions', 'storage/avatars',
+            'storage', 'storage/thumbnails', 'storage/sessions', 'storage/avatars', 'storage/group_icons',
             'logs', 'assets/css', 'assets/js', 'assets/icons', 'src', 'api', 'pages',
         ];
         foreach ($dirs as $dir) {
@@ -209,13 +221,20 @@ function process_install(string &$step): void {
         }
 
         // Protect sensitive directories with .htaccess
+        // BUG-006: storage/avatars and storage/group_icons were missing here —
+        // both classes create their own .htaccess lazily on first use, but a
+        // fresh install should not depend on that. Note nginx does NOT read
+        // .htaccess at all (see SEC-085 / README "Security notes") — the real
+        // protection on nginx installs is the `location ^~ /storage/` block.
         $deny_all  = "Options -Indexes\nOrder deny,allow\nDeny from all\n";
         $no_php    = "Options -Indexes\nphp_flag engine off\n";
         foreach ([
-            'storage/.htaccess'            => $deny_all,
-            'storage/thumbnails/.htaccess' => $no_php,
-            'storage/sessions/.htaccess'   => $deny_all,
-            'logs/.htaccess'               => $deny_all,
+            'storage/.htaccess'             => $deny_all,
+            'storage/thumbnails/.htaccess'  => $no_php,
+            'storage/sessions/.htaccess'    => $deny_all,
+            'storage/avatars/.htaccess'     => $deny_all,
+            'storage/group_icons/.htaccess' => $deny_all,
+            'logs/.htaccess'                => $deny_all,
         ] as $rel => $content) {
             $p = __DIR__ . '/' . $rel;
             if (!file_exists($p)) file_put_contents($p, $content);

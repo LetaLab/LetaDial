@@ -31,6 +31,12 @@
  *     katalog jest już poza zasięgiem web roota (nginx
  *     `location ^~ /logs/` deny-all na obu serwerach + .htaccess jako
  *     druga warstwa), więc nic dodatkowego nie trzeba tu zabezpieczać.
+ *   - SEC-093: zapis do logs/csp-violations.log pomijany, jeśli plik
+ *     przekroczył 10 MB — twardy backstop niezależny od tego, czy
+ *     logrotate (/etc/logrotate.d/letadial) jest poprawnie skonfigurowany
+ *     na danym serwerze; przy rozproszonym nadużyciu z wielu IP (każde
+ *     osobno w granicach limitu 100/h) plik mógłby rosnąć nawet cały
+ *     dzień między kolejnymi uruchomieniami logrotate.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -75,7 +81,17 @@ $entry = [
 $logDir  = __DIR__ . '/../logs';
 $logFile = $logDir . '/csp-violations.log';
 
-if (is_dir($logDir) && is_writable($logDir)) {
+// SEC-093: hard size backstop alongside the logrotate config
+// (/etc/logrotate.d/letadial on the server) — this endpoint is
+// intentionally public/unauthenticated (see docblock above), so under
+// sustained abuse from many distinct IPs (each individually within the
+// 100/h rate limit) the file could still grow for up to a full day before
+// logrotate's next scheduled run. Skipping the write past 10 MB is cheap
+// (one filesize() stat call) and bounds worst-case growth independent of
+// whether logrotate is configured correctly on a given install.
+$maxLogBytes = 10 * 1024 * 1024;
+if (is_dir($logDir) && is_writable($logDir)
+    && (!file_exists($logFile) || filesize($logFile) < $maxLogBytes)) {
     @file_put_contents(
         $logFile,
         json_encode($entry, JSON_UNESCAPED_SLASHES) . "\n",

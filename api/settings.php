@@ -129,15 +129,11 @@ if ($action === 'backup-codes') {
     }
     $secret = TOTP::decrypt($user['totp_secret']);
     $valid  = TOTP::verifyAndConsume($secret, $code, $user['id']); // SEC-080: replay-safe
+    // SEC-092: consolidated onto TOTP::useBackupCode() — see
+    // Auth::verify2FA() for the full rationale (case-normalization was
+    // missing from this duplicated loop too).
     if (!$valid) {
-        $codes = DB::rows("SELECT * FROM totp_backup_codes WHERE user_id = ? AND used = 0", [$user['id']]);
-        foreach ($codes as $bc) {
-            if (password_verify($code, $bc['code_hash'])) {
-                $valid = true;
-                DB::run("UPDATE totp_backup_codes SET used = 1, used_at = NOW() WHERE id = ?", [$bc['id']]);
-                break;
-            }
-        }
+        $valid = TOTP::useBackupCode($user['id'], $code);
     }
     if (!$valid) {
         http_response_code(422);

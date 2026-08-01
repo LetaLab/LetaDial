@@ -207,6 +207,38 @@ class Updater
             return ['ok' => false, 'error' => 'exec() not available on this server.'];
         }
 
+        // SEC-088: Admin::installCheck() already warns (passively, on its own
+        // tab) if `git remote get-url origin` is ever anything other than the
+        // official public repo. But an admin can click "Update now" without
+        // ever having opened Install Check first — in that path, a tampered
+        // `origin` (e.g. earlier local access, a mistake during manual git
+        // setup) would previously be trusted silently by gitFetch/reset
+        // below. gitPull() itself is the method that actually performs
+        // "fetch + reset --hard" and is documented elsewhere in this file
+        // and in README.md as "RCE-equivalent if origin repo is ever
+        // compromised" — it must not rely on the admin having separately
+        // checked a different tab first. Re-verify right here, immediately
+        // before the fetch, using the same three accepted URL variants as
+        // Admin::installCheck().
+        $originCheck = self::git('remote get-url origin');
+        if (!$originCheck['ok']) {
+            return ['ok' => false, 'error' => 'Could not read git remote "origin": ' . $originCheck['output']];
+        }
+        $originUrl = rtrim(trim($originCheck['output']), '/');
+        $expectedRemotes = [
+            'https://github.com/LetaLab/LetaDial',
+            'https://github.com/LetaLab/LetaDial.git',
+            'git@github.com:LetaLab/LetaDial.git',
+        ];
+        if (!in_array($originUrl, $expectedRemotes, true)) {
+            return [
+                'ok'    => false,
+                'error' => 'git remote "origin" is not the official LetaDial repository ('
+                         . $originUrl . '). Refusing to pull. Fix with: '
+                         . 'git remote set-url origin https://github.com/LetaLab/LetaDial.git',
+            ];
+        }
+
         $dir = self::appDir();
 
         $fetch    = self::git('fetch origin main');

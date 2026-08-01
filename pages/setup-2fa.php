@@ -2,36 +2,32 @@
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die();
 
-if (isset($_GET['download_codes'])) {
-    $codes = $_SESSION['show_backup_codes'] ?? [];
-    if (!empty($codes)) {
-        $app_name = APP_NAME;
-        $login    = Auth::getPartialUser()['login'] ?? Auth::getUser()['login'] ?? 'user';
-        $date     = date('Y-m-d H:i:s');
-        $content  = "===========================================\n";
-        $content .= "  {$app_name} — 2FA Backup Codes\n";
-        $content .= "  Generated: {$date}\n";
-        $content .= "  Account:   {$login}\n";
-        $content .= "===========================================\n";
-        $content .= "IMPORTANT: Each code can only be used ONCE.\n";
-        $content .= "Store this file in a password manager.\n";
-        $content .= "===========================================\n\n";
-        foreach ($codes as $i => $code) {
-            $content .= sprintf("  %2d.  %s\n", $i + 1, $code);
-        }
-        $content .= "\n===========================================\n";
-        $content .= "After using all codes, regenerate them in\n";
-        $content .= "Settings -> Security -> Manage 2FA.\n";
-        $fname = preg_replace('/[^a-z0-9_-]/i', '_', APP_NAME) . '_backup_codes.txt';
-        header('Content-Type: text/plain; charset=UTF-8');
-        header("Content-Disposition: attachment; filename=\"{$fname}\"");
-        header('Cache-Control: no-cache, no-store, must-revalidate');
-        header('Content-Length: ' . strlen($content));
-        echo $content;
-        exit;
-    }
-    header('Location: /setup-2fa'); exit;
-}
+// BUG-002 (audit finding, corrected on re-verification): this file used to
+// have a `?download_codes=1` GET handler here that read
+// $_SESSION['show_backup_codes'] and streamed a .txt attachment. It was
+// removed as dead code:
+//   - No session is ever started for it: session_start() is called exactly
+//     once in the whole app, in install.php's one-time setup wizard —
+//     confirmed via `grep -rn "session_start(" *.php` across the full
+//     project. Writing to $_SESSION here silently created a
+//     request-local array with nothing persisting it to a cookie or store,
+//     so a follow-up GET to this handler always saw an empty $_SESSION and
+//     fell through to `header('Location: /setup-2fa')` — a silent redirect
+//     instead of a download.
+//   - But nothing in the app ever linked to `?download_codes=1` in the
+//     first place (confirmed via a project-wide grep for
+//     "download_codes" — the only match was this handler's own
+//     `isset($_GET['download_codes'])` check). The "↓ Download .txt"
+//     button below is wired to downloadBackupCodes() (see the <script> at
+//     the bottom of this file), a client-side function that builds the
+//     .txt file straight from the already-rendered #backup-grid DOM via a
+//     Blob — no session, no network round-trip, and it works correctly
+//     today. settings.php's backup-code regeneration uses the identical
+//     client-side pattern (downloadCodes() in pages/settings.php).
+//   - Given the rest of the app deliberately avoids native PHP sessions
+//     everywhere else (DB-backed sessions table instead), reintroducing
+//     session_start() here just to serve a code path nothing calls was not
+//     worth it — removing the dead handler is the cleaner fix.
 
 $user = Auth::getPartialUser();
 if (!$user) { header('Location: /login'); exit; }

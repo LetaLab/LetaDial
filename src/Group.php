@@ -168,10 +168,31 @@ class Group
             return ['ok' => false, 'error' => 'You must have at least one group.'];
         }
 
+        // BUG-001: collect dial IDs BEFORE the cascade delete removes the rows.
+        // dials.group_id has ON DELETE CASCADE, but that only cleans up the
+        // database rows — it never touches the thumbnail files on disk. Same
+        // pattern already used by Dial::bulkDelete() and Admin::deleteUser();
+        // this was the one deletion path that skipped it.
+        $dialIds = array_column(
+            DB::rows("SELECT id FROM dials WHERE group_id = ? AND user_id = ?", [$groupId, $userId]),
+            'id'
+        );
+
         DB::run("DELETE FROM groups_list WHERE id = ? AND user_id = ?", [$groupId, $userId]);
 
         // Re-normalize positions after deletion
         self::normalizePositions($userId);
+
+        // Clean up files orphaned by the cascade delete: every dial thumbnail
+        // that was in this group, plus the group's own custom icon (if any).
+        foreach ($dialIds as $dialId) {
+            try {
+                Thumbnail::delete((int)$dialId, $userId);
+            } catch (Throwable $e) {
+                error_log('[Group::delete] Thumbnail::delete(' . $dialId . ') failed: ' . $e->getMessage());
+            }
+        }
+        GroupIcon::delete($groupId, $userId);
 
         return ['ok' => true];
     }

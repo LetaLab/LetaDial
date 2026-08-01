@@ -50,6 +50,11 @@ class Avatar
     private const ICON_H    = 128;
     private const QUALITY   = 85;
     private const MAX_BYTES = 5 * 1024 * 1024; // 5 MB — matches Thumbnail's upload limit
+    // SEC-090: reject images with a declared width/height above this BEFORE
+    // imagecreatefromstring() fully decodes them — a small compressed file
+    // can still declare huge pixel dimensions ("decompression bomb"), and
+    // GD has no configurable internal resource limit the way Imagick does.
+    private const MAX_DIMENSION = 8000;
 
     // ── Paths ─────────────────────────────────────────────────────────────────
 
@@ -109,6 +114,21 @@ class Avatar
         // Read raw bytes — GD will decode and validate them for real
         $raw = @file_get_contents($tmpPath);
         if ($raw === false || strlen($raw) === 0) {
+            self::cleanupTmp($tmpPath);
+            return false;
+        }
+
+        // SEC-090: getimagesizefromstring() only parses the image header —
+        // it does NOT allocate a full decoded pixel buffer, so it stays
+        // cheap even for a "decompression bomb" (a tiny compressed file
+        // whose header declares huge dimensions, e.g. a few KB of PNG that
+        // would decode to hundreds of MB of RGBA pixels). Reject oversized
+        // images here, BEFORE imagecreatefromstring() below performs the
+        // actual full decode.
+        $dims = @getimagesizefromstring($raw);
+        if (!$dims || $dims[0] < 1 || $dims[1] < 1
+            || $dims[0] > self::MAX_DIMENSION || $dims[1] > self::MAX_DIMENSION) {
+            error_log('[Avatar] Upload rejected: missing or oversized image dimensions.');
             self::cleanupTmp($tmpPath);
             return false;
         }

@@ -5,6 +5,13 @@ defined('DIALVAULT_APP') or die('Direct access forbidden.');
 class Password
 {
     private const MIN_LENGTH = 12;
+    // BUG-009: bcrypt (password_hash with PASSWORD_BCRYPT) silently ignores
+    // any input beyond 72 bytes — a password longer than that would not
+    // actually contribute to strength even though the user might assume it
+    // does. This is a UX/input-hygiene limit, not a real DoS concern (bcrypt
+    // itself is not vulnerable to long-input DoS, since it only ever reads
+    // the first 72 bytes).
+    private const MAX_LENGTH = 128;
 
     /**
      * Validate password strength.
@@ -16,6 +23,9 @@ class Password
 
         if (strlen($password) < self::MIN_LENGTH) {
             $errors[] = 'Password must be at least ' . self::MIN_LENGTH . ' characters.';
+        }
+        if (strlen($password) > self::MAX_LENGTH) {
+            $errors[] = 'Password must be at most ' . self::MAX_LENGTH . ' characters.';
         }
         if (!preg_match('/[A-Z]/', $password)) {
             $errors[] = 'Password must contain at least one uppercase letter.';
@@ -56,6 +66,7 @@ class Password
     {
         return json_encode([
             'minLength'   => self::MIN_LENGTH,
+            'maxLength'   => self::MAX_LENGTH,
             'uppercase'   => true,
             'lowercase'   => true,
             'number'      => true,

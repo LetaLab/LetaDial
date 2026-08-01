@@ -188,14 +188,18 @@ class Auth
             return ['ok' => true];
         }
 
-        $codes = DB::rows("SELECT * FROM totp_backup_codes WHERE user_id = ? AND used = 0", [$user['id']]);
-        foreach ($codes as $bc) {
-            if (password_verify($code, $bc['code_hash'])) {
-                RateLimit::clear('2fa', $ip);
-                DB::run("UPDATE totp_backup_codes SET used = 1, used_at = NOW() WHERE id = ?", [$bc['id']]);
-                DB::run("UPDATE sessions SET totp_verified = 1 WHERE id = ?", [self::$sessionId]);
-                return ['ok' => true, 'used_backup' => true];
-            }
+        // SEC-092: consolidated onto TOTP::useBackupCode() — the one
+        // implementation of this check that already normalizes case
+        // (strtoupper) before comparing. This call site and the one in
+        // api/settings.php (backup-codes regeneration) previously
+        // duplicated the same loop WITHOUT that normalization, so a
+        // correct backup code typed in lowercase (e.g. copied by hand
+        // from a printed sheet) was wrongly rejected as "Invalid code"
+        // here even though TOTP::useBackupCode() itself would accept it.
+        if (TOTP::useBackupCode($user['id'], $code)) {
+            RateLimit::clear('2fa', $ip);
+            DB::run("UPDATE sessions SET totp_verified = 1 WHERE id = ?", [self::$sessionId]);
+            return ['ok' => true, 'used_backup' => true];
         }
 
         DB::run("INSERT INTO login_history (user_id, login_attempt, ip, user_agent, status)

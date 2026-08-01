@@ -22,6 +22,11 @@ class GroupIcon
     private const ICON_H    = 32;
     private const QUALITY   = 90;   // WebP quality
     private const MAX_BYTES = 2 * 1024 * 1024; // 2 MB
+    // SEC-090: reject images with a declared width/height above this BEFORE
+    // imagecreatefromstring() fully decodes them — same rationale as
+    // Avatar.php's MAX_DIMENSION (GD has no configurable internal resource
+    // limit the way Imagick does, so the dimension pre-check IS the guard).
+    private const MAX_DIMENSION = 8000;
 
     // ── Paths ─────────────────────────────────────────────────────────────────
 
@@ -59,6 +64,19 @@ class GroupIcon
         // Read raw bytes
         $raw = file_get_contents($tmpPath);
         if ($raw === false || strlen($raw) === 0) return false;
+
+        // SEC-090: getimagesizefromstring() only parses the image header —
+        // it does NOT allocate a full decoded pixel buffer, so it stays
+        // cheap even for a "decompression bomb" (a tiny compressed file
+        // whose header declares huge dimensions). Reject oversized images
+        // here, BEFORE imagecreatefromstring() below performs the actual
+        // full decode. See Avatar.php for the identical, more thoroughly
+        // commented version of this check.
+        $dims = @getimagesizefromstring($raw);
+        if (!$dims || $dims[0] < 1 || $dims[1] < 1
+            || $dims[0] > self::MAX_DIMENSION || $dims[1] > self::MAX_DIMENSION) {
+            return false;
+        }
 
         // imagecreatefromstring decodes pixel data — fails on non-image bytes
         $src = @imagecreatefromstring($raw);

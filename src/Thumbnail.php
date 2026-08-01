@@ -4,14 +4,24 @@
  *
  * Security:
  *   - SSRF: blocks private/loopback IPs before any HTTP request
+ *   - SEC-086/SEC-087: resolvePinned() resolves a host ONCE, validates
+ *     every A record AND every AAAA record, and every outbound fetch then
+ *     connects directly to that one validated IPv4 address — never by
+ *     handing a hostname to file_get_contents()/fopen() and letting PHP
+ *     resolve it again independently. Closes DNS-rebinding TOCTOU
+ *     (SEC-086, previously an accepted/deferred risk noted in
+ *     isSafeHostLax()) and unvalidated-AAAA bypass (SEC-087) in one place.
+ *     isSafeHost()/isSafeHostLax() are now thin boolean wrappers around it.
  *   - Path: built from DB integers only — never from user input
  *   - Redirect: follow_location=false on ALL outbound fetches (favicon,
- *     OG-page, OG-image). SEC-081: the OG-page and OG-image fetches used
- *     to run with follow_location=true (this comment was only accurate for
- *     the favicon fetch) — every redirect target is now re-validated via
- *     isSafeHost()/isSafeHostLax() before being followed, same as the
- *     initial URL, via the shared safeFetchBody() helper below.
+ *     OG-page, OG-image), every hop re-resolved + re-validated via the
+ *     shared safeFetchBody() helper below (SEC-081, extended by SEC-086/087)
  *   - Upload: magic bytes validation → Imagick strip → always WebP
+ *   - SEC-090: pingImage()/pingImageBlob() checks declared dimensions
+ *     BEFORE any full decode (processUpload(), generateFromOgImage()), and
+ *     applyImagickSafetyLimits() caps Imagick's memory/map resource usage
+ *     — guards against decompression-bomb images (a small file whose
+ *     header declares huge pixel dimensions)
  *
  * Storage: storage/thumbnails/u{userId}/{dialId}.webp
  * Served:  GET /api/thumbs/{dialId} — PHP checks auth, streams file
@@ -27,6 +37,11 @@ class Thumbnail
     private const QUALITY = 72;
     private const TIMEOUT = 5;
     private const BASE    = 'storage/thumbnails';
+    // SEC-090: reject images with a declared width/height above this BEFORE
+    // Imagick fully decodes them (see applyImagickSafetyLimits() and the
+    // pingImage()/pingImageBlob() calls in processUpload() /
+    // generateFromOgImage() below).
+    private const MAX_DIMENSION = 8000;
 
     // ── Public API ────────────────────────────────────────────────────────────
 
@@ -91,6 +106,40 @@ class Thumbnail
      * @param int    $userId  User ID (used for directory path)
      * @param string $tmpPath PHP upload temp path ($_FILES['thumb']['tmp_name'])
      */
+    /**
+     * SEC-090: process-wide Imagick resource ceiling, applied right before
+     * any decode. ImageMagick's resource limits (the underlying C library's
+     * MagickSetResourceLimit) are process-global rather than scoped to one
+     * Imagick object, even though the PHP method is called on an instance
+     * — confirmed against the Imagick/imagick extension's own test suite
+     * and multiple independently-reported PHP manual notes, since the
+     * manual's own one-line summary ("...in megabytes") is misleading: the
+     * actual values are bytes. This constrains every Imagick operation for
+     * the rest of this PHP-FPM worker's lifetime, which is what we want,
+     * since every Imagick call site in this app wants the same
+     * conservative ceiling.
+     *
+     * Deliberately does NOT set RESOURCETYPE_TIME: ImageMagick handles a
+     * breached time limit by calling the C library's exit() directly
+     * (confirmed via Imagick/imagick issue #333 — "the process to exit
+     * without returning control to the php code"), which kills the whole
+     * PHP-FPM worker mid-request instead of raising a catchable
+     * ImagickException the way MEMORY/MAP do. WordPress core shipped this
+     * exact pattern and later deprecated it for the same reason. The
+     * MAX_DIMENSION ping-check below is the primary defense against a slow
+     * decode; MEMORY/MAP are the graceful backstop.
+     */
+    private static function applyImagickSafetyLimits(\Imagick $im): void
+    {
+        // 512 MB pixel-cache memory, 512 MB disk-backed map overflow —
+        // comfortably above what this app's own images need (a validated
+        // MAX_DIMENSION=8000 image fully decoded to RGBA is ~244 MiB, plus
+        // working overhead for crop/resize), but well short of what an
+        // actual decompression bomb would try to allocate.
+        @$im->setResourceLimit(\Imagick::RESOURCETYPE_MEMORY, 512 * 1024 * 1024);
+        @$im->setResourceLimit(\Imagick::RESOURCETYPE_MAP,    512 * 1024 * 1024);
+    }
+
     public static function processUpload(int $dialId, int $userId, string $tmpPath): bool
     {
         if (!extension_loaded('imagick')) {
@@ -122,9 +171,29 @@ class Thumbnail
         $absPath = self::absPath($dialId, $userId);
 
         try {
+            $im = new \Imagick();
+
+            // SEC-090: process-wide Imagick resource ceiling, applied before
+            // any decode — see applyImagickSafetyLimits() docblock.
+            self::applyImagickSafetyLimits($im);
+
+            // SEC-090: pingImage() reads only the image header (format,
+            // width, height) — it does NOT decode pixel data, so it stays
+            // cheap even for a "decompression bomb" (a tiny compressed file
+            // whose header declares huge dimensions, e.g. a few KB of PNG
+            // that would decode to hundreds of MB of RGBA pixels). Reject
+            // oversized images here, BEFORE the real readImage() below
+            // performs the actual full decode.
+            $im->pingImage($tmpPath . '[0]');
+            if ($im->getImageWidth()  < 1 || $im->getImageWidth()  > self::MAX_DIMENSION
+             || $im->getImageHeight() < 1 || $im->getImageHeight() > self::MAX_DIMENSION) {
+                $im->clear();
+                error_log('[Thumbnail] processUpload rejected: image dimensions missing or too large.');
+                return false;
+            }
+
             // Read only first frame/page — "[0]" prevents loading all GIF frames,
             // TIFF pages, PDF pages, etc. Safer and more memory-efficient.
-            $im = new \Imagick();
             $im->readImage($tmpPath . '[0]');
 
             // Strip ALL metadata (EXIF, GPS, XMP, IPTC, ICC profiles, comments)
@@ -266,15 +335,67 @@ class Thumbnail
         return strtolower(preg_replace('/^www\./i', '', $host));
     }
 
+    /**
+     * SEC-086/SEC-087: resolve $host to ONE validated public IPv4 address,
+     * suitable for a pinned connection (see safeFetchBody()/fetchFavicon()
+     * below).
+     *
+     * Uses gethostbynamel() (plural — returns every A record) rather than
+     * gethostbyname() (singular — returns only the first), so a
+     * round-robin/multi-A host cannot hide a private address behind a
+     * public one that happens to be returned first: ANY private/reserved A
+     * record rejects the whole host.
+     *
+     * Also checks every AAAA record the same way (SEC-087), even though
+     * this method only ever returns an IPv4 address for the caller to
+     * connect over: a host that publishes a private/loopback AAAA (e.g.
+     * ::1) alongside a clean public A is treated as unsafe outright, rather
+     * than assuming the IPv4 pin alone makes that irrelevant.
+     *
+     * This is now the ONE authoritative resolve+validate function for this
+     * class — isSafeHost() and isSafeHostLax() below are thin boolean
+     * wrappers kept only so existing call sites stay self-documenting
+     * ("is this domain OK to touch at all" vs. "is this specific
+     * redirect/og:image host OK"). The actual outbound connection is always
+     * made to the IP this method returns, never by re-resolving the
+     * hostname later — that is what closes SEC-086 (DNS-rebinding TOCTOU:
+     * a DNS zone the attacker controls could previously answer a public IP
+     * for the check and a private IP moments later for the real connect,
+     * since those used to be two separate, independently-timed lookups).
+     *
+     * @return string|null a single validated public IPv4 address, or null
+     *                      if the host has no usable A record, or if any
+     *                      A/AAAA record it publishes is private/reserved.
+     */
+    private static function resolvePinned(string $host): ?string
+    {
+        $ipv4s = @gethostbynamel($host);
+        if (!$ipv4s) return null; // DNS failure / no A record at all
+
+        foreach ($ipv4s as $ip) {
+            if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) return null;
+            if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                return null; // any private/reserved A record → reject the whole host
+            }
+        }
+
+        // dns_get_record() can return false (or emit a warning) on resolver
+        // failure — treated the same as "no AAAA records", which is the
+        // common, legitimate case, not an error.
+        $aaaaRecords = @dns_get_record($host, DNS_AAAA) ?: [];
+        foreach ($aaaaRecords as $rec) {
+            $ip6 = $rec['ipv6'] ?? null;
+            if ($ip6 !== null && !filter_var($ip6, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                return null;
+            }
+        }
+
+        return $ipv4s[0];
+    }
+
     private static function isSafeHost(string $host): bool
     {
-        $ip = @gethostbyname($host);
-        if ($ip === $host) return false;
-        return filter_var(
-            $ip,
-            FILTER_VALIDATE_IP,
-            FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE
-        ) !== false;
+        return self::resolvePinned($host) !== null;
     }
 
     /**
@@ -333,6 +454,21 @@ class Thumbnail
 
         try {
             $im = new \Imagick();
+
+            // SEC-090: same guard as processUpload() — see
+            // applyImagickSafetyLimits() docblock. This path is arguably
+            // HIGHER risk: the bytes come from an arbitrary external URL's
+            // og:image tag, fetched automatically on every dial add, with
+            // no user review of the image before it's decoded.
+            self::applyImagickSafetyLimits($im);
+
+            $im->pingImageBlob($imgData);
+            if ($im->getImageWidth()  < 1 || $im->getImageWidth()  > self::MAX_DIMENSION
+             || $im->getImageHeight() < 1 || $im->getImageHeight() > self::MAX_DIMENSION) {
+                $im->clear();
+                return false;
+            }
+
             $im->readImageBlob($imgData);
             $im->setFirstIterator();
             $im->stripImage();
@@ -369,30 +505,19 @@ class Thumbnail
 
     private static function isSafeHostLax(string $host): bool
     {
-        // SEC-055: Block loopback, link-local AND private ranges (RFC 1918).
-        // Previous version only blocked 127.x and 169.254.x — allowed 10.x,
-        // 192.168.x, 172.16-31.x → SSRF to internal network (router, NAS, etc).
-        $ip = @gethostbyname($host);
-        if (!$ip || $ip === $host) return false;
-
-        if (!filter_var($ip, FILTER_VALIDATE_IP)) return false;
-
-        // FILTER_FLAG_NO_PRIV_RANGE blocks: 10.x, 172.16-31.x, 192.168.x
-        // FILTER_FLAG_NO_RES_RANGE blocks: 127.x, 169.254.x, ::1, etc.
-        if (!filter_var($ip, FILTER_VALIDATE_IP,
-            FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
-            return false;
-        }
-
-        // NOTE: DNS rebinding (TOCTOU) — gethostbyname() is called once here,
-        // but file_get_contents() resolves DNS again. A controlled DNS server
-        // could return public IP on check, internal IP on connect.
-        // Full mitigation requires resolving once and connecting by IP with Host header.
-        // Deferred — attacker needs control over a DNS zone, risk acceptable for self-hosted.
-        return true;
+        // SEC-086/SEC-087: now identical to isSafeHost() — both delegate to
+        // resolvePinned(), which performs the full A+AAAA check (see its
+        // docblock above). Kept as a separately-named call site purely for
+        // readability at each call site: isSafeHost() gates the primary
+        // page URL, isSafeHostLax() gates a redirect target or an
+        // extracted og:image URL. The DNS-rebinding TOCTOU risk this
+        // function's comment used to note as "deferred" is closed now that
+        // every fetch connects to resolvePinned()'s literal IP instead of
+        // re-resolving the hostname (see safeFetchBody()/fetchFavicon()).
+        return self::resolvePinned($host) !== null;
     }
 
-    // ── SEC-081: redirect-safe fetch ──────────────────────────────────────────
+    // ── SEC-081/SEC-086/SEC-087: redirect-safe, pin-connected fetch ──────────
     //
     // fetchOgImageUrl() and generateFromOgImage() used to fetch with
     // follow_location=true, which trusts PHP to follow redirects internally
@@ -400,36 +525,73 @@ class Thumbnail
     // server that legitimately passes the initial check could respond with
     // "Location: http://169.254.169.254/..." or "Location: http://127.0.0.1/..."
     // and PHP would follow it — no DNS control needed, just one 3xx response.
-    // safeFetchBody() disables automatic redirect-following and re-validates
-    // every hop the same way the initial URL is validated. (Does NOT close
-    // the separate DNS-rebinding TOCTOU noted above — that remains deferred.)
+    // safeFetchBody() disables automatic redirect-following and re-resolves
+    // + re-validates every hop the same way the initial URL is validated.
+    //
+    // SEC-086/SEC-087: on top of that, every hop now connects DIRECTLY to
+    // the IP resolvePinned() returned for that hop's host, instead of
+    // handing the hostname to file_get_contents() and letting PHP resolve
+    // it again independently. That closes the DNS-rebinding TOCTOU this
+    // comment used to flag as deferred (a DNS zone the attacker controls
+    // could answer differently between the validation lookup and the real
+    // connect) and the unvalidated-AAAA bypass (SEC-087) — see
+    // resolvePinned()'s docblock for the full rationale.
 
     private static function safeFetchBody(string $url, string $extraHeaders, int $maxBytes, int $timeout): ?string
     {
         $maxRedirects = 3;
 
         for ($hop = 0; $hop <= $maxRedirects; $hop++) {
-            $ctx = stream_context_create([
+            $parts = parse_url($url);
+            if (!$parts || empty($parts['scheme']) || empty($parts['host'])) return null;
+
+            $scheme = strtolower($parts['scheme']);
+            if (!in_array($scheme, ['http', 'https'], true)) return null;
+
+            $host = $parts['host'];
+            $port = $parts['port'] ?? ($scheme === 'https' ? 443 : 80);
+
+            $ip = self::resolvePinned($host);
+            if (!$ip) return null;
+
+            $path      = ($parts['path'] ?? '/') . (isset($parts['query']) ? '?' . $parts['query'] : '');
+            $pinnedUrl = $scheme . '://' . $ip . ':' . $port . $path;
+
+            $hostHeader = $host;
+            if (($scheme === 'http' && $port !== 80) || ($scheme === 'https' && $port !== 443)) {
+                $hostHeader .= ':' . $port;
+            }
+
+            $ctxOpts = [
                 'http' => [
                     'timeout'         => $timeout,
                     'follow_location' => false, // SEC-081: followed manually below, with re-validation
                     'ignore_errors'   => true,  // so 3xx responses stay inspectable, not treated as failure
                     'user_agent'      => 'LetaDial/1.0 ThumbnailBot',
-                    'header'          => $extraHeaders,
+                    'header'          => 'Host: ' . $hostHeader . "\r\n" . $extraHeaders,
                 ],
-                'ssl' => ['verify_peer' => true, 'verify_peer_name' => true],
-            ]);
+            ];
+            if ($scheme === 'https') {
+                $ctxOpts['ssl'] = [
+                    'verify_peer'      => true,
+                    'verify_peer_name' => true,
+                    // Pin SNI + certificate hostname verification to the
+                    // ORIGINAL domain, not the IP we're literally
+                    // connecting to.
+                    'peer_name'        => $host,
+                ];
+            }
+            $ctx = stream_context_create($ctxOpts);
 
-            $body     = @file_get_contents($url, false, $ctx, 0, $maxBytes);
+            $body     = @file_get_contents($pinnedUrl, false, $ctx, 0, $maxBytes);
             $status   = self::parseStatusCode($http_response_header ?? []);
             $location = self::parseHeaderValue($http_response_header ?? [], 'Location');
 
             if ($status >= 300 && $status < 400 && $location) {
-                $next     = self::resolveRedirectUrl($url, $location);
-                $nextHost = $next ? parse_url($next, PHP_URL_HOST) : null;
-                if (!$nextHost || !self::isSafeHostLax($nextHost)) {
-                    return null; // SEC-081: refuse to follow a redirect to an unvalidated/unsafe host
-                }
+                $next = self::resolveRedirectUrl($url, $location);
+                if (!$next) return null;
+                // Re-resolved + re-pinned (resolvePinned()) at the top of
+                // the next loop iteration — never trusted from this hop.
                 $url = $next;
                 continue;
             }
@@ -487,14 +649,28 @@ class Thumbnail
 
     private static function fetchFavicon(string $domain): ?string
     {
-        if (!self::isSafeHost($domain)) return null;
-        $ctx = stream_context_create([
-            'http' => ['timeout' => self::TIMEOUT, 'follow_location' => false,
-                       'max_redirects' => 0, 'user_agent' => 'LetaDial/1.0 ThumbnailBot'],
-            'ssl'  => ['verify_peer' => true, 'verify_peer_name' => true],
-        ]);
+        // SEC-086/SEC-087: resolve+validate ONCE and reuse the same pinned
+        // IP for both the https and http attempts below, instead of letting
+        // file_get_contents() resolve $domain independently each time.
+        $ip = self::resolvePinned($domain);
+        if (!$ip) return null;
+
         foreach (['https', 'http'] as $scheme) {
-            $data = @file_get_contents("{$scheme}://{$domain}/favicon.ico", false, $ctx);
+            $ctxOpts = [
+                'http' => [
+                    'timeout' => self::TIMEOUT, 'follow_location' => false,
+                    'max_redirects' => 0, 'user_agent' => 'LetaDial/1.0 ThumbnailBot',
+                    'header' => 'Host: ' . $domain . "\r\n",
+                ],
+            ];
+            if ($scheme === 'https') {
+                $ctxOpts['ssl'] = [
+                    'verify_peer' => true, 'verify_peer_name' => true,
+                    'peer_name'   => $domain,
+                ];
+            }
+            $ctx  = stream_context_create($ctxOpts);
+            $data = @file_get_contents("{$scheme}://{$ip}/favicon.ico", false, $ctx);
             if ($data && strlen($data) >= 8 && self::isImageData($data)) return $data;
         }
         return null;

@@ -253,9 +253,6 @@ function process_install(string &$step): void {
             ['remember_me_days',       '30'],
             ['max_groups_per_user',    '50'],
             ['max_dials_per_user',     '500'],
-            ['thumb_width',            '163'],
-            ['thumb_height',           '100'],
-            ['thumb_quality',          '72'],
         ] as [$k, $v]) {
             $stmt->execute([$k, $v]);
         }
@@ -516,11 +513,6 @@ define('HMAC_KEY',       '{$hmac}');  // HMAC-SHA256 key for CSRF tokens (v3)
 
 // ── Sessions ──────────────────────────────────────────────────────────────────
 define('SESSION_TTL', 2592000);  // 30 days
-
-// ── Thumbnails ────────────────────────────────────────────────────────────────
-define('THUMB_WIDTH',   163);
-define('THUMB_HEIGHT',  100);
-define('THUMB_QUALITY', 72);
 
 // ── SMTP ──────────────────────────────────────────────────────────────────────
 define('SMTP_ENABLED', {$smtp_enabled});

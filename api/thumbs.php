@@ -94,7 +94,7 @@ if ($method === 'POST' && $action === 'upload') {
 if ($method === 'POST' && $action === null) {
     CSRF::require();
 
-    // Rate limit: 10 refreshes per hour per user
+    // Rate limit: 60 refreshes per hour per user
     if (RateLimit::check('thumb_refresh', (string)$user['id'], 60, 3600, 3600)) {
         http_response_code(429);
         header('Content-Type: application/json; charset=UTF-8');

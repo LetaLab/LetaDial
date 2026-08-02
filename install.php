@@ -252,7 +252,10 @@ function process_install(string &$step): void {
             ['session_lifetime',       '2592000'],    // 30 days
             ['remember_me_days',       '30'],
             ['max_groups_per_user',    '50'],
-            ['max_dials_per_user',     '500'],
+            // SEC-095: raised 500 -> 5000 for new installs. Existing
+            // installs keep whatever value is already in their `settings`
+            // table. This only affects fresh install.php runs.
+            ['max_dials_per_user',     '5000'],
         ] as [$k, $v]) {
             $stmt->execute([$k, $v]);
         }

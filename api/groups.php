@@ -9,6 +9,11 @@
  * PUT    /api/groups/{id}/style   — set icon+color {icon, color}
  * DELETE /api/groups/{id}         — delete group
  * POST   /api/groups/reorder      — reorder        {ids: [1,2,3,...]}
+ *
+ * SEC-095: every mutating endpoint below shares one 'group_mutate' rate
+ * limit bucket: 500 requests/hour per user. Separate bucket from dials.php's
+ * 'dial_mutate' so a burst of group renames does not eat into your budget
+ * for adding dials, or vice versa.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -41,6 +46,11 @@ if ($method === 'GET' && $sub === null) {
 // ── POST /api/groups/reorder ──────────────────────────────────────────────────
 if ($method === 'POST' && $sub === 'reorder') {
     CSRF::require();
+    // SEC-095: 500 group mutations/hour per user (see docblock above).
+    if (RateLimit::check('group_mutate', (string)$user['id'], 500, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
     $body = json_decode(file_get_contents('php://input'), true) ?? [];
     $ids  = array_map('intval', $body['ids'] ?? []);
     echo json_encode(Group::reorder($user['id'], $ids));
@@ -50,6 +60,11 @@ if ($method === 'POST' && $sub === 'reorder') {
 // ── POST /api/groups — create ─────────────────────────────────────────────────
 if ($method === 'POST' && $sub === null) {
     CSRF::require();
+    // SEC-095
+    if (RateLimit::check('group_mutate', (string)$user['id'], 500, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
     $body = json_decode(file_get_contents('php://input'), true) ?? [];
     $name = trim($body['name'] ?? $_POST['name'] ?? '');
     $result = Group::create($user['id'], $name);
@@ -61,6 +76,11 @@ if ($method === 'POST' && $sub === null) {
 // ── PUT /api/groups/{id}/style — set icon + color ─────────────────────────────
 if ($method === 'PUT' && $sub !== null && ctype_digit($sub) && $action === 'style') {
     CSRF::require();
+    // SEC-095
+    if (RateLimit::check('group_mutate', (string)$user['id'], 500, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
     $body  = json_decode(file_get_contents('php://input'), true) ?? [];
     // null = clear, absent key = keep existing (we pass null for both to allow clearing)
     $icon  = array_key_exists('icon',  $body) ? ($body['icon']  === '' ? null : $body['icon'])  : null;
@@ -74,6 +94,11 @@ if ($method === 'PUT' && $sub !== null && ctype_digit($sub) && $action === 'styl
 // ── PUT /api/groups/{id} — rename ─────────────────────────────────────────────
 if ($method === 'PUT' && $sub !== null && ctype_digit($sub) && $action === null) {
     CSRF::require();
+    // SEC-095
+    if (RateLimit::check('group_mutate', (string)$user['id'], 500, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
     $body = json_decode(file_get_contents('php://input'), true) ?? [];
     $name = trim($body['name'] ?? '');
     $result = Group::rename((int)$sub, $user['id'], $name);
@@ -85,6 +110,11 @@ if ($method === 'PUT' && $sub !== null && ctype_digit($sub) && $action === null)
 // ── DELETE /api/groups/{id} ───────────────────────────────────────────────────
 if ($method === 'DELETE' && $sub !== null && ctype_digit($sub)) {
     CSRF::require();
+    // SEC-095
+    if (RateLimit::check('group_mutate', (string)$user['id'], 500, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
     $result = Group::delete((int)$sub, $user['id']);
     http_response_code($result['ok'] ? 200 : 422);
     echo json_encode($result);

@@ -93,9 +93,13 @@ class Dial
         // but not here — the plain "Add dial" form/bookmarklet/API path had no
         // ceiling at all. Same check, same pattern, same error message as the
         // other two call sites for consistency.
+        // SEC-095: fallback raised 500 -> 5000. The DB value in `settings`
+        // (seeded by install.php, editable directly in the DB) is what
+        // actually governs existing installs. This literal is only used
+        // if that row is ever missing.
         $maxDials = (int)(DB::val(
             "SELECT value FROM settings WHERE key_name = 'max_dials_per_user'"
-        ) ?? 500);
+        ) ?? 5000);
         $currentCount = (int)(DB::val(
             'SELECT COUNT(*) FROM dials WHERE user_id = ?',
             [$userId]
@@ -158,9 +162,10 @@ class Dial
             return ['ok' => false, 'error' => 'Target group not found.'];
         }
 
+        // SEC-095: fallback raised 500 → 5000, see create() above for rationale.
         $maxDials = (int)(DB::val(
             "SELECT value FROM settings WHERE key_name = 'max_dials_per_user'"
-        ) ?? 500);
+        ) ?? 5000);
         $currentCount = (int)(DB::val(
             'SELECT COUNT(*) FROM dials WHERE user_id = ?',
             [$userId]
@@ -279,9 +284,10 @@ class Dial
         );
         if (!$group) return ['ok' => false, 'error' => 'Target group not found.'];
 
+        // SEC-095: fallback raised 500 → 5000, see create() above for rationale.
         $maxDials = (int)(DB::val(
             "SELECT value FROM settings WHERE key_name = 'max_dials_per_user'"
-        ) ?? 500);
+        ) ?? 5000);
         $currentCount = (int)(DB::val(
             'SELECT COUNT(*) FROM dials WHERE user_id = ?',
             [$userId]

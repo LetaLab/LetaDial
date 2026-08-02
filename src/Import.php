@@ -226,9 +226,13 @@ class Import
 
     private static function getLimits(): array
     {
+        // SEC-095: dials fallback raised 500 -> 5000. The DB value in
+        // `settings` (seeded by install.php, editable directly in the DB)
+        // is what actually governs existing installs. This literal is
+        // only used if that row is ever missing.
         return [
             'groups' => (int)(DB::val("SELECT value FROM settings WHERE key_name='max_groups_per_user'") ?? 50),
-            'dials'  => (int)(DB::val("SELECT value FROM settings WHERE key_name='max_dials_per_user'")  ?? 500),
+            'dials'  => (int)(DB::val("SELECT value FROM settings WHERE key_name='max_dials_per_user'")  ?? 5000),
         ];
     }
 

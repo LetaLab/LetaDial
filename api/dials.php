@@ -14,6 +14,13 @@
  * POST   /api/dials/bulk-delete     bulk delete   {ids:[1,2,3]}
  * POST   /api/dials/bulk-move       bulk move     {ids:[...], group_id:X}
  * POST   /api/dials/bulk-duplicate  bulk duplicate{ids:[...], group_id:X}
+ *
+ * SEC-095: every mutating endpoint below (everything except the two GET
+ * list endpoints and the CSRF-exempt {id}/click endpoint) shares one
+ * 'dial_mutate' rate limit bucket: 500 requests/hour per user. A single
+ * bulk-* call counts as ONE hit regardless of how many dial IDs it
+ * carries, so normal heavy use (bulk-move 200 dials at once, a big
+ * reorder) is unaffected. This only trips on a genuine rapid-fire loop.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -51,6 +58,11 @@ if ($method === 'GET' && $sub === null) {
 // ── POST /api/dials/reorder ───────────────────────────────────────────────────
 if ($method === 'POST' && $sub === 'reorder') {
     CSRF::require();
+    // SEC-095: 500 dial mutations/hour per user (see docblock above).
+    if (RateLimit::check('dial_mutate', (string)$user['id'], 500, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
     $body    = json_decode(file_get_contents('php://input'), true) ?? [];
     $groupId = (int)($body['group_id'] ?? 0);
     $ids     = array_map('intval', (array)($body['ids'] ?? []));
@@ -61,6 +73,11 @@ if ($method === 'POST' && $sub === 'reorder') {
 // ── POST /api/dials/bulk-delete ───────────────────────────────────────────────
 if ($method === 'POST' && $sub === 'bulk-delete') {
     CSRF::require();
+    // SEC-095
+    if (RateLimit::check('dial_mutate', (string)$user['id'], 500, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
     $body = json_decode(file_get_contents('php://input'), true) ?? [];
     $ids  = (array)($body['ids'] ?? []);
     $result = Dial::bulkDelete($ids, $user['id']);
@@ -72,6 +89,11 @@ if ($method === 'POST' && $sub === 'bulk-delete') {
 // ── POST /api/dials/bulk-move ─────────────────────────────────────────────────
 if ($method === 'POST' && $sub === 'bulk-move') {
     CSRF::require();
+    // SEC-095
+    if (RateLimit::check('dial_mutate', (string)$user['id'], 500, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
     $body          = json_decode(file_get_contents('php://input'), true) ?? [];
     $ids           = (array)($body['ids'] ?? []);
     $targetGroupId = (int)($body['group_id'] ?? 0);
@@ -88,6 +110,11 @@ if ($method === 'POST' && $sub === 'bulk-move') {
 // ── POST /api/dials/bulk-duplicate ────────────────────────────────────────────
 if ($method === 'POST' && $sub === 'bulk-duplicate') {
     CSRF::require();
+    // SEC-095
+    if (RateLimit::check('dial_mutate', (string)$user['id'], 500, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
     $body          = json_decode(file_get_contents('php://input'), true) ?? [];
     $ids           = (array)($body['ids'] ?? []);
     $targetGroupId = (int)($body['group_id'] ?? 0);
@@ -111,6 +138,11 @@ if ($method === 'POST' && $sub !== null && ctype_digit($sub) && $action === 'cli
 // ── POST /api/dials/{id}/pin — toggle pin/unpin (sesja 061) ──────────────────
 if ($method === 'POST' && $sub !== null && ctype_digit($sub) && $action === 'pin') {
     CSRF::require();
+    // SEC-095
+    if (RateLimit::check('dial_mutate', (string)$user['id'], 500, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
     $result = Dial::togglePin((int)$sub, $user['id']);
     http_response_code($result['ok'] ? 200 : 422);
     echo json_encode($result);
@@ -120,6 +152,11 @@ if ($method === 'POST' && $sub !== null && ctype_digit($sub) && $action === 'pin
 // ── POST /api/dials/{id}/duplicate ───────────────────────────────────────────
 if ($method === 'POST' && $sub !== null && ctype_digit($sub) && $action === 'duplicate') {
     CSRF::require();
+    // SEC-095
+    if (RateLimit::check('dial_mutate', (string)$user['id'], 500, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
     $body          = json_decode(file_get_contents('php://input'), true) ?? [];
     $targetGroupId = (int)($body['group_id'] ?? 0);
     if (!$targetGroupId) {
@@ -135,6 +172,11 @@ if ($method === 'POST' && $sub !== null && ctype_digit($sub) && $action === 'dup
 // ── POST /api/dials — create ──────────────────────────────────────────────────
 if ($method === 'POST' && $sub === null) {
     CSRF::require();
+    // SEC-095
+    if (RateLimit::check('dial_mutate', (string)$user['id'], 500, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
     $body    = json_decode(file_get_contents('php://input'), true) ?? [];
     $groupId = (int)($body['group_id'] ?? 0);
     $title   = trim($body['title'] ?? '');
@@ -149,6 +191,11 @@ if ($method === 'POST' && $sub === null) {
 // ── PUT /api/dials/{id} — update title/url/notes OR move to group ─────────────
 if ($method === 'PUT' && $sub !== null && ctype_digit($sub)) {
     CSRF::require();
+    // SEC-095
+    if (RateLimit::check('dial_mutate', (string)$user['id'], 500, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
     $body = json_decode(file_get_contents('php://input'), true) ?? [];
 
     if (isset($body['group_id']) && !isset($body['url'])) {
@@ -171,6 +218,11 @@ if ($method === 'PUT' && $sub !== null && ctype_digit($sub)) {
 // ── DELETE /api/dials/{id} ────────────────────────────────────────────────────
 if ($method === 'DELETE' && $sub !== null && ctype_digit($sub)) {
     CSRF::require();
+    // SEC-095
+    if (RateLimit::check('dial_mutate', (string)$user['id'], 500, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
     $result = Dial::delete((int)$sub, $user['id']);
     http_response_code($result['ok'] ? 200 : 422);
     echo json_encode($result);

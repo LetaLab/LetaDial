@@ -18,21 +18,6 @@ class TOTP
     }
 
     /**
-     * Verify a 6-digit code against a secret, within the time window.
-     *
-     * SEC-080: this checks cryptographic correctness ONLY — it does NOT
-     * protect against replay (the same valid code accepted twice within
-     * its ~150s validity window). Any call site that gates authentication
-     * or a sensitive action MUST use verifyAndConsume() instead. This
-     * method stays public/stateless for any future non-authenticating use
-     * (e.g. a "does this code look right" preview with no user context).
-     */
-    public static function verify(string $secret, string $code): bool
-    {
-        return self::matchStep($secret, $code) !== null;
-    }
-
-    /**
      * Verify a code AND atomically mark its time-step as consumed for this
      * user, so the exact same code can never be accepted a second time.
      * (SEC-080 — closes the replay gap flagged in the 2026-07 audit.)
@@ -77,9 +62,12 @@ class TOTP
     }
 
     /**
-     * Shared matching primitive — identical cryptographic check verify()
-     * always did, just returns WHICH step matched (or null) instead of a
-     * plain bool, so callers can compare it against the replay guard.
+     * Shared cryptographic matching primitive — returns WHICH time step
+     * matched (or null), so the caller can compare it against the replay
+     * guard. (SEC-096: this used to also back a stateless verify()
+     * wrapper with no replay protection; that wrapper was removed once
+     * confirmed unused anywhere in the app, and verifyAndConsume() is now
+     * the only caller.)
      */
     private static function matchStep(string $secret, string $code): ?int
     {

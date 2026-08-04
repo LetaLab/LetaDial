@@ -13,6 +13,17 @@ class Password
     // the first 72 bytes).
     private const MAX_LENGTH = 128;
 
+    // BUG-010 (03.08.2026): bcrypt work factor. Raised 12 -> 15 (Andrzej's
+    // decision — deliberately higher than the 13/14 suggested, prioritizing
+    // security margin over shaving off roughly one extra second per login
+    // on this low-traffic personal install). Each +1 doubles hashing time;
+    // cost 15 costs roughly 2s per hash on typical 2026 server hardware —
+    // paid once per login/password-change, not on every request. See
+    // verifyAndRehash() below for how an existing lower-cost hash silently
+    // upgrades to this value the next time its owner logs in, with no
+    // forced password reset.
+    private const BCRYPT_COST = 15;
+
     /**
      * Validate password strength.
      * Returns array of error strings (empty = OK).
@@ -50,12 +61,58 @@ class Password
 
     public static function hash(string $password): string
     {
-        return password_hash($password, PASSWORD_BCRYPT, ['cost' => 12]);
+        return password_hash($password, PASSWORD_BCRYPT, ['cost' => self::BCRYPT_COST]);
     }
 
     public static function verify(string $password, string $hash): bool
     {
         return password_verify($password, $hash);
+    }
+
+    /**
+     * Verify a password and, if it matches but the stored hash was computed
+     * with a different bcrypt cost than today's BCRYPT_COST, transparently
+     * re-hash it and persist the new hash.
+     *
+     * BUG-010: without this, raising BCRYPT_COST in the future only
+     * affects brand-new hashes — every hash already stored in the DB
+     * would stay on its old, weaker cost forever, since nothing else
+     * would ever recompute it. The only moment the server legitimately
+     * holds the plaintext password at all is right here, during a
+     * successful password check, so this is the only place a silent
+     * upgrade can ever happen.
+     *
+     * Login itself is never put at risk by this: the boolean returned
+     * below only ever reflects whether $password matched $hash, exactly
+     * like verify(). If the opportunistic rehash write fails (e.g. a
+     * transient DB hiccup), that failure is logged and swallowed — it
+     * never turns a correct password into a rejected login. The hash
+     * simply stays on its old cost and gets another chance to upgrade
+     * on this user's next login.
+     *
+     * Deliberately NOT used by the password-change flow
+     * (api/settings.php) — there, the freshly-typed new password gets
+     * hashed and stored immediately afterwards regardless, so rehashing
+     * the OLD hash first would just be a wasted write.
+     */
+    public static function verifyAndRehash(string $password, string $hash, int $userId): bool
+    {
+        if (!self::verify($password, $hash)) {
+            return false;
+        }
+
+        if (password_needs_rehash($hash, PASSWORD_BCRYPT, ['cost' => self::BCRYPT_COST])) {
+            try {
+                DB::run(
+                    "UPDATE users SET password_hash = ? WHERE id = ?",
+                    [self::hash($password), $userId]
+                );
+            } catch (Throwable $e) {
+                error_log('[Password] opportunistic rehash failed for user ' . $userId . ': ' . $e->getMessage());
+            }
+        }
+
+        return true;
     }
 
     /**

@@ -64,7 +64,7 @@ if ($method === 'POST' && $action === 'git-pull') {
     $body     = json_decode(file_get_contents('php://input'), true) ?? [];
     $password = $body['password'] ?? '';
     $row      = DB::row("SELECT password_hash FROM users WHERE id = ?", [$user['id']]);
-    if ($password === '' || !$row || !Password::verify($password, $row['password_hash'])) {
+    if ($password === '' || !$row || !Password::verifyAndRehash($password, $row['password_hash'], (int)$user['id'])) {
         http_response_code(403);
         echo json_encode(['ok' => false, 'error' => 'Incorrect password. Re-enter your password to confirm the update.']); exit;
     }

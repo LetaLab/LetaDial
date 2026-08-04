@@ -11,13 +11,20 @@
  *   register()          → sesja 068: self-registration (if enabled)
  *
  * SEC-080: verify2FA() and enable2FA() both call TOTP::verifyAndConsume()
- *   (not TOTP::verify()) so a captured/replayed TOTP code cannot be used
- *   twice. See TOTP.php for the full rationale.
+ *   so a captured/replayed TOTP code cannot be used twice. See TOTP.php
+ *   for the full rationale. (SEC-096: the older, replay-unsafe
+ *   TOTP::verify() this comment used to contrast against was removed
+ *   entirely on 02.08.2026, once confirmed unused anywhere in the app.)
  *
  * CSRF consistency note:
  *   self::$sessionId is ALWAYS set to hash('sha256', raw_token) — the same
  *   value stored in the DB `sessions.id` column — so CSRF::token() produces
  *   identical results whether derived here or from the cookie directly.
+ *
+ * BUG-010: login() calls Password::verifyAndRehash() instead of a raw
+ *   password_verify() — on a correct password, a hash still on an older
+ *   bcrypt cost is transparently re-hashed to the current one. See
+ *   Password.php for the full rationale.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -46,7 +53,7 @@ class Auth
             [$login, $login]
         );
 
-        if (!$user || !password_verify($password, $user['password_hash'])) {
+        if (!$user || !Password::verifyAndRehash($password, $user['password_hash'], (int)$user['id'])) {
             DB::run("INSERT INTO login_history (user_id, login_attempt, ip, user_agent, status)
                      VALUES (?, ?, ?, ?, 'fail_password')",
                 [$user['id'] ?? null, $login, $ip, self::ua()]

@@ -37,6 +37,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$login) {
             $error = 'Please enter your login or email address.';
         } else {
+            // SEC-098: the response TEXT below was already identical either
+            // way ("Check your email", regardless of whether an account
+            // exists), but the TIME to produce it was not — the "account
+            // exists" branch does a DB write and, when SMTP is enabled, a
+            // full synchronous socket round-trip through Mailer::smtp()
+            // (real network I/O, tens of ms to a few seconds), while the
+            // "no such account" branch does nothing at all. That timing
+            // gap is itself an enumeration channel, same class of bug as
+            // SEC-097 in Auth::login(). $_sfp_t0 marks the start of the
+            // part of this branch whose duration depends on whether the
+            // account exists; equalizeTiming() below pads the faster path
+            // up to a fixed floor so both take at least the same minimum
+            // time. It can only ever ADD delay, never subtract — a
+            // genuinely slow SMTP send that exceeds the floor on its own
+            // is left alone.
+            $_sfp_t0 = microtime(true);
+
             // Look up user — support both login and email
             $user = DB::row(
                 "SELECT id, email, email_verified FROM users
@@ -59,6 +76,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (defined('SMTP_ENABLED') && SMTP_ENABLED) {
                     Mailer::sendPasswordReset($user['email'], $token);
                 }
+            }
+
+            // SEC-098: pad up to a fixed floor, comfortably above a typical
+            // local/relay SMTP round trip so the common case (the "exists"
+            // branch finishing faster than the floor) is fully equalized.
+            $_sfp_target = 1.2; // seconds
+            $_sfp_elapsed = microtime(true) - $_sfp_t0;
+            if ($_sfp_elapsed < $_sfp_target) {
+                usleep((int)(($_sfp_target - $_sfp_elapsed) * 1_000_000));
             }
 
             // Always show success — never reveal if account exists

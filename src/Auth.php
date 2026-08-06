@@ -25,6 +25,26 @@
  *   password_verify() — on a correct password, a hash still on an older
  *   bcrypt cost is transparently re-hashed to the current one. See
  *   Password.php for the full rationale.
+ *
+ * SEC-097: login() always spends one bcrypt verify, win or lose. Before
+ *   this fix, `!$user || !Password::verifyAndRehash(...)` short-circuited
+ *   on `!$user` for a login that does not exist in the DB, skipping the
+ *   ~2s (cost=15, see BUG-010) bcrypt call entirely — a non-existent login
+ *   returned in a few ms, a wrong password on a real login took ~2s. The
+ *   response TEXT was already identical either way ("Invalid login or
+ *   password"), but the TIMING alone was enough to enumerate valid
+ *   logins. Fix: verify against DUMMY_HASH (a fixed, unusable, pre-computed
+ *   hash — never a real credential) when no user is found, so both paths
+ *   pay the same constant bcrypt cost. Same pattern Django's
+ *   authenticate() uses for the same reason.
+ *
+ * BUG-012: login() truncates $login to users.login's own VARCHAR(50)
+ *   width before it is written into login_history.login_attempt (also
+ *   VARCHAR(50)) — see loginAttemptForHistory(). Without it, a login
+ *   value longer than 50 chars (login also matches against `email`,
+ *   VARCHAR(255), so this is reachable with a long email) hit an
+ *   unhandled PDOException under strict SQL mode instead of the normal
+ *   "Invalid login or password." response.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -34,6 +54,19 @@ class Auth
     // Public so CSRF.php can read the cookie name for direct derivation
     public  const COOKIE_SESSION  = 'dv_s';
     public  const COOKIE_REMEMBER = 'dv_r';
+
+    /**
+     * SEC-097: fixed decoy hash used ONLY to pay the same bcrypt cost as a
+     * real verify when the submitted login does not match any account.
+     * Not a secret and not a real credential — it exists purely so
+     * Password::verify() has something to spend cycles against. Generated
+     * once via password_hash('dummy-password-for-timing-attack-mitigation-
+     * never-matches', PASSWORD_BCRYPT, ['cost' => 15]) to match
+     * Password::BCRYPT_COST; if BCRYPT_COST ever changes again (see
+     * BUG-010), regenerate this constant to the new cost so the two paths
+     * stay balanced.
+     */
+    private const DUMMY_HASH = '$2y$15$N7E8msBbPqnQWwfk8p5JrOxz/YNPKi.d1MJ68jRmBd4As8i0xWLVW';
 
     private static ?array  $currentUser = null;
     private static bool    $userLoaded  = false;
@@ -53,10 +86,34 @@ class Auth
             [$login, $login]
         );
 
-        if (!$user || !Password::verifyAndRehash($password, $user['password_hash'], (int)$user['id'])) {
+        // SEC-097: always spend exactly one bcrypt verify at the same cost,
+        // whether $user was found or not. Previously `!$user || !Password::
+        // verifyAndRehash(...)` short-circuited on `!$user` and skipped the
+        // bcrypt call entirely for a login that doesn't exist — the error
+        // TEXT was already identical either way, but a non-existent login
+        // returned in a few ms while a wrong password on a real one took
+        // ~2s (BUG-010 raised BCRYPT_COST to 15), which alone is enough to
+        // enumerate valid logins. DUMMY_HASH is not a real credential; it
+        // exists only so this branch pays the same CPU cost.
+        if ($user) {
+            $passwordOk = Password::verifyAndRehash($password, $user['password_hash'], (int)$user['id']);
+        } else {
+            Password::verify($password, self::DUMMY_HASH);
+            $passwordOk = false;
+        }
+
+        // BUG-012: users.login and login_history.login_attempt are both
+        // VARCHAR(50), but $login is also matched against `email`
+        // (VARCHAR(255)) above, so it can arrive here longer than the
+        // history column allows. Truncate once, reuse for both INSERTs
+        // below — an untruncated $login hit an unhandled PDOException
+        // under strict SQL mode instead of the normal error response.
+        $loginForHistory = mb_substr($login, 0, 50);
+
+        if (!$user || !$passwordOk) {
             DB::run("INSERT INTO login_history (user_id, login_attempt, ip, user_agent, status)
                      VALUES (?, ?, ?, ?, 'fail_password')",
-                [$user['id'] ?? null, $login, $ip, self::ua()]
+                [$user['id'] ?? null, $loginForHistory, $ip, self::ua()]
             );
             return ['ok' => false, 'error' => 'Invalid login or password.'];
         }
@@ -69,7 +126,7 @@ class Auth
         DB::run("UPDATE users SET last_login = NOW() WHERE id = ?", [$user['id']]);
         DB::run("INSERT INTO login_history (user_id, login_attempt, ip, user_agent, status)
                  VALUES (?, ?, ?, ?, 'success')",
-            [$user['id'], $login, $ip, self::ua()]
+            [$user['id'], $loginForHistory, $ip, self::ua()]
         );
 
         self::setSessionCookie($raw_token);

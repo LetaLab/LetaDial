@@ -481,6 +481,13 @@ class Dial
 
     private static function _validUrl(string $url): bool
     {
+        // BUG-011: dials.url is VARCHAR(2048); filter_var(FILTER_VALIDATE_URL)
+        // has no built-in length cap, so an over-length URL used to pass
+        // validation here and hit an unhandled PDOException on INSERT/UPDATE
+        // under strict SQL mode instead of a clean "Invalid URL." response.
+        // Import::validateUrl() already had this same check — this brings
+        // create()/update() (UI + bookmarklet + direct API) in line with it.
+        if (strlen($url) > 2048) return false;
         if (!filter_var($url, FILTER_VALIDATE_URL)) return false;
         $scheme = strtolower(parse_url($url, PHP_URL_SCHEME) ?? '');
         return in_array($scheme, ['http', 'https'], true);

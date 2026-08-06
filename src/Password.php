@@ -5,13 +5,20 @@ defined('DIALVAULT_APP') or die('Direct access forbidden.');
 class Password
 {
     private const MIN_LENGTH = 12;
-    // BUG-009: bcrypt (password_hash with PASSWORD_BCRYPT) silently ignores
-    // any input beyond 72 bytes — a password longer than that would not
-    // actually contribute to strength even though the user might assume it
-    // does. This is a UX/input-hygiene limit, not a real DoS concern (bcrypt
-    // itself is not vulnerable to long-input DoS, since it only ever reads
-    // the first 72 bytes).
-    private const MAX_LENGTH = 128;
+    // BUG-009 / BUG-015: bcrypt (password_hash with PASSWORD_BCRYPT) silently
+    // ignores any input beyond 72 bytes — a password longer than that would
+    // not actually contribute to strength even though the user might assume
+    // it does. This is a UX/input-hygiene limit, not a real DoS concern
+    // (bcrypt itself is not vulnerable to long-input DoS, since it only ever
+    // reads the first 72 bytes).
+    //
+    // BUG-015: MAX_LENGTH was first set to 128 when this limit was added
+    // (BUG-009) — still above bcrypt's own 72-byte window, so two passwords
+    // that agree on the first 72 bytes and differ only after that would
+    // hash identically and both "work". Lowered to 72 so everything a user
+    // actually types is guaranteed to reach the hash, with no silent
+    // truncation left for bcrypt to perform on our behalf.
+    private const MAX_LENGTH = 72;
 
     // BUG-010 (03.08.2026): bcrypt work factor. Raised 12 -> 15 (Andrzej's
     // decision — deliberately higher than the 13/14 suggested, prioritizing

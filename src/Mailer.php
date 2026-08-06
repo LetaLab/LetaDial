@@ -156,6 +156,15 @@ class Mailer
         string $text,
         string $html
     ): bool {
+        // SEC-099: buildMessage() already calls sanitizeHeader() on $to,
+        // but that runs on its own local copy (PHP passes strings by
+        // value) — it never touched the $to used right here to build the
+        // literal "RCPT TO:<{$to}>" command below. Every current caller of
+        // Mailer::send*() already validates addresses with
+        // FILTER_VALIDATE_EMAIL upstream (which can't contain CR/LF), so
+        // this was not exploitable today — this makes smtp() safe on its
+        // own, independent of what any future caller passes in.
+        $to     = self::sanitizeHeader($to);
         $port   = (int)SMTP_PORT;
         $host   = SMTP_HOST;
         $prefix = ($port === 465) ? 'ssl://' : '';

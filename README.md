@@ -346,7 +346,12 @@ server {
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
     add_header X-XSS-Protection "0" always;
-    add_header Content-Security-Policy "default-src 'self' https: data: 'unsafe-inline'; img-src 'self' https: data: blob:" always;
+    # BUG-013: do NOT set Content-Security-Policy here. src/CSP.php sends
+    # a nonce-based CSP header per request (see PLAN_NAPRAWY_CSP.md) — a
+    # second, static CSP header from nginx would not be additive, it would
+    # just confuse anyone comparing this file against a live vhost. Both
+    # production vhosts already have this line commented out.
+    # add_header Content-Security-Policy "default-src 'self' https: data: 'unsafe-inline'; img-src 'self' https: data: blob:" always;
 
     root /var/www/html/LetaDial/;
     index index.php;

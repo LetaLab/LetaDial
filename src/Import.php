@@ -173,10 +173,20 @@ class Import
             "INSERT INTO dials (user_id, group_id, title, url, notes, position) VALUES (?, ?, ?, ?, ?, ?)"
         );
 
-        foreach ($rawDials as $d) {
+        foreach ($rawDials as $i => $d) {
             if ($existingCount + $created >= $limits['dials']) {
-                $skipped++;
-                continue;
+                // BUG-008: once the limit is reached it can never become
+                // un-reached later in this loop ($created only grows), so
+                // every entry from here on is going to be skipped anyway.
+                // The old `continue` re-ran this same check for each of
+                // the remaining entries in a (possibly large, up to the
+                // 10MB file-size cap) import instead of stopping — same
+                // final 'skipped' total either way, just reached without
+                // the wasted iterations. $i is 0-based (usort() above
+                // re-indexes numerically), so count($rawDials) - $i counts
+                // this entry plus everything still to come.
+                $skipped += count($rawDials) - $i;
+                break;
             }
 
             $url   = self::validateUrl($d['url'] ?? '');

@@ -1,6 +1,6 @@
 <?php
 /**
- * LetaDial — Settings API (sesja 058 + 066 + 071a + 071b + 072)
+ * LetaDial — Settings API (sesja 058 + 066 + 071a + 071b + 072 + SEC-101)
  *
  * POST /api/settings/password      — change password
  * POST /api/settings/backup-codes  — regenerate 2FA backup codes
@@ -16,6 +16,24 @@
  * POST /api/settings/sessions/delete-all — delete all OTHER sessions (keep current)
  * POST /api/settings/email              — initiate email change {new_email}
  * POST /api/settings/email/cancel       — cancel pending email change
+ *
+ * SEC-101: password/backup-codes/email already had their own strict,
+ * dedicated rate limits (brute-forceable codes, or a costly SMTP send).
+ * Every OTHER mutating action below — recent, sessions/delete,
+ * sessions/delete-all, email/cancel, theme, primary-color, theme-extras,
+ * dial-width — had none at all. Risk from any single one of these was
+ * already low (auth + CSRF both required, no secret being guessed, no
+ * external side effect), but "low risk" isn't "no rate limit" — every
+ * other mutating resource in the app (dials.php, groups.php) already
+ * shares one generous per-user ceiling across all of its write actions
+ * (SEC-095's 500/h dial_mutate / group_mutate). This brings the rest of
+ * settings_api.php in line with that same pattern via one shared
+ * 'settings_mutate' bucket, generous enough that no legitimate UI
+ * interaction (rapid theme/color testing, dragging the dial-width
+ * slider, session cleanup) will ever come close to it. The two read-only
+ * GET actions (backup-count, sessions) are unchanged — they have no
+ * side effect and no brute-force surface, consistent with every other
+ * authenticated GET endpoint in the app.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -154,6 +172,11 @@ if ($action === 'backup-codes') {
 
 // ── POST /api/settings/recent ─────────────────────────────────────────────────
 if ($action === 'recent') {
+    // SEC-101
+    if (RateLimit::check('settings_mutate', (string)$user['id'], 500, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
     $disabled = (bool)($body['disabled'] ?? false);
     DB::run("UPDATE users SET recent_disabled = ? WHERE id = ?", [(int)$disabled, $user['id']]);
     echo json_encode(['ok' => true, 'disabled' => $disabled]);
@@ -162,6 +185,11 @@ if ($action === 'recent') {
 
 // ── sesja 066: Sessions ───────────────────────────────────────────────────────
 if ($action === 'sessions' && $sub_action === 'delete') {
+    // SEC-101
+    if (RateLimit::check('settings_mutate', (string)$user['id'], 500, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
     $sessionId = trim($body['session_id'] ?? '');
     if (!$sessionId) { http_response_code(422); echo json_encode(['ok' => false, 'error' => 'session_id required.']); exit; }
     $sess = DB::row("SELECT id FROM sessions WHERE id = ? AND user_id = ?", [$sessionId, $user['id']]);
@@ -176,6 +204,11 @@ if ($action === 'sessions' && $sub_action === 'delete') {
 }
 
 if ($action === 'sessions' && $sub_action === 'delete-all') {
+    // SEC-101
+    if (RateLimit::check('settings_mutate', (string)$user['id'], 500, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
     $currentId = Auth::getSessionId();
     $count = DB::run("DELETE FROM sessions WHERE user_id = ? AND id != ?", [$user['id'], $currentId]);
     echo json_encode(['ok' => true, 'deleted' => $count]);
@@ -204,6 +237,11 @@ if ($action === 'email' && $sub_action === null) {
 }
 
 if ($action === 'email' && $sub_action === 'cancel') {
+    // SEC-101
+    if (RateLimit::check('settings_mutate', (string)$user['id'], 500, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
     DB::run("UPDATE users SET email_pending = NULL, email_change_token = NULL, email_change_expires = NULL WHERE id = ?", [$user['id']]);
     RateLimit::clear('settings_email', (string)$user['id']);
     echo json_encode(['ok' => true]);
@@ -212,6 +250,11 @@ if ($action === 'email' && $sub_action === 'cancel') {
 
 // ── POST /api/settings/theme (sesja 071a) ─────────────────────────────────────
 if ($action === 'theme') {
+    // SEC-101
+    if (RateLimit::check('settings_mutate', (string)$user['id'], 500, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
     $allowed = ['light', 'dark', 'midnight'];
     $theme   = trim($body['theme'] ?? '');
     if (!in_array($theme, $allowed, true)) {
@@ -225,6 +268,11 @@ if ($action === 'theme') {
 
 // ── POST /api/settings/primary-color (sesja 071b) ────────────────────────────
 if ($action === 'primary-color') {
+    // SEC-101
+    if (RateLimit::check('settings_mutate', (string)$user['id'], 500, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
     $allowedThemes = ['light', 'dark', 'midnight'];
     $theme = trim($body['theme'] ?? '');
     if (!in_array($theme, $allowedThemes, true)) {
@@ -255,6 +303,11 @@ if ($action === 'primary-color') {
 // null / "" → reset (NULL w DB)
 // Stored as JSON: {"bg":"#xxx","text":"#xxx"} in theme_X_extra column
 if ($action === 'theme-extras') {
+    // SEC-101
+    if (RateLimit::check('settings_mutate', (string)$user['id'], 500, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
     $allowedThemes = ['light', 'dark', 'midnight'];
     $theme = trim($body['theme'] ?? '');
     if (!in_array($theme, $allowedThemes, true)) {
@@ -294,6 +347,11 @@ if ($action === 'theme-extras') {
 // Body: {"width": 200}
 // Clamps to valid range 120–280 server-side.
 if ($action === 'dial-width') {
+    // SEC-101
+    if (RateLimit::check('settings_mutate', (string)$user['id'], 500, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
     $width = max(120, min(280, (int)($body['width'] ?? 175)));
     DB::run("UPDATE users SET dial_width = ? WHERE id = ?", [$width, $user['id']]);
     echo json_encode(['ok' => true, 'width' => $width]);

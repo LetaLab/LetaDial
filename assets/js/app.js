@@ -1745,10 +1745,39 @@ const LetaDial = (() => {
             document.getElementById('btn-export-mobile')?.addEventListener('click', () => { mobile_menu.close(); this.doExport(); });
             document.getElementById('btn-import-mobile')?.addEventListener('click', () => { mobile_menu.close(); this.showImport(); });
         },
-        doExport() {
-            const a = document.createElement('a'); a.href = '/api/export';
+        // SEC-102: /api/export is now POST + CSRF (was a plain GET). A native
+        // <a href="..."> can only ever issue a GET, so the download itself
+        // now goes through fetch() + Blob instead of a direct link click.
+        // Raw fetch() rather than the shared api.request() helper — that
+        // helper always calls res.json(), which would consume the response
+        // body before we can hand it to res.blob() for the file download.
+        // Same resulting file, same client-side filename as before — just a
+        // different transport underneath.
+        async doExport() {
+            let res;
+            try {
+                res = await fetch('/api/export', {
+                    method: 'POST',
+                    headers: { 'X-CSRF-Token': api.csrf() },
+                    credentials: 'same-origin',
+                });
+            } catch {
+                toast.error('Export failed: network error.');
+                return;
+            }
+            if (!res.ok) {
+                let msg = 'Export failed.';
+                try { const data = await res.json(); msg = data.error || msg; } catch {}
+                toast.error(msg);
+                return;
+            }
+            const blob = await res.blob();
+            const url  = URL.createObjectURL(blob);
+            const a    = document.createElement('a');
+            a.href     = url;
             a.download = 'letadial_export_' + new Date().toISOString().slice(0,10) + '.json';
             document.body.appendChild(a); a.click(); document.body.removeChild(a);
+            URL.revokeObjectURL(url);
         },
         showImport() {
             modal.show({

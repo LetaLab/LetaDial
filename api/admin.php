@@ -1,6 +1,6 @@
 <?php
 /**
- * LetaDial — Admin API (sesja 065 + 066 + 067 + 068 + 069)
+ * LetaDial — Admin API (sesja 065 + 066 + 067 + 068 + 069 + SEC-105)
  *
  * GET  /api/admin/blocked          — list blocked rate_limit entries
  * POST /api/admin/unblock          — unblock one entry  {key_hash, action}
@@ -15,7 +15,7 @@
  * GET  /api/admin/sessions              — list all active sessions [?user_id=N]
  * POST /api/admin/sessions/delete       — delete one session  {session_id}
  * POST /api/admin/sessions/delete-user  — delete all for user {user_id}
- * POST /api/admin/force-password        — force reset password {user_id, password}
+ * POST /api/admin/force-password        — force reset password {user_id, password, admin_password}
  *
  * sesja 067:
  * POST /api/admin/invite                — invite user {email, login}
@@ -25,10 +25,18 @@
  * POST /api/admin/registration          — set registration_enabled {enabled: bool}
  *
  * sesja 069:
- * POST /api/admin/create-user           — create user directly {login, email, password, role}
+ * POST /api/admin/create-user           — create user directly {login, email, password, role, admin_password}
  *
  * All endpoints: admin role required.
  * All POST endpoints: CSRF required.
+ *
+ * SEC-105: force-password and create-user additionally require
+ * `admin_password` — the CALLING admin's own current password, verified
+ * via Password::verifyAndRehash() before the action runs. Same step-up
+ * pattern update.php already uses for git-pull (SEC-079): both actions are
+ * at least as consequential (full account takeover, or minting an
+ * immediately-active account with an attacker-chosen role) — a
+ * stolen/hijacked admin session alone must not be enough to trigger them.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -188,6 +196,22 @@ if ($method === 'POST' && $action === 'force-password') {
         http_response_code(422);
         echo json_encode(['ok' => false, 'error' => 'user_id and password required.']); exit;
     }
+
+    // SEC-105: re-auth, same pattern as update.php's git-pull (SEC-079).
+    // A successful call here is a full takeover of ANY account in the
+    // system (Admin::forcePasswordReset() only checks $targetId !==
+    // $adminId, not the target's role) — at least as severe as git-pull's
+    // "RCE if origin repo is ever compromised", which already requires
+    // re-entering the admin's own password. A stolen/hijacked admin
+    // session alone must not be enough to trigger it.
+    $adminPassword = $body['admin_password'] ?? '';
+    $adminRow      = DB::row("SELECT password_hash FROM users WHERE id = ?", [$user['id']]);
+    if ($adminPassword === '' || !$adminRow
+        || !Password::verifyAndRehash($adminPassword, $adminRow['password_hash'], (int)$user['id'])) {
+        http_response_code(403);
+        echo json_encode(['ok' => false, 'error' => 'Incorrect password. Re-enter your password to confirm this action.']); exit;
+    }
+
     $result = Admin::forcePasswordReset($targetId, $password, $user['id']);
     http_response_code($result['ok'] ? 200 : 422);
     echo json_encode($result);
@@ -262,6 +286,20 @@ if ($method === 'POST' && $action === 'create-user') {
     if (!$login || !$email || !$password) {
         http_response_code(422);
         echo json_encode(['ok' => false, 'error' => 'Login, email and password are required.']); exit;
+    }
+
+    // SEC-105: re-auth, same pattern as force-password above and
+    // update.php's git-pull (SEC-079). This endpoint creates an
+    // IMMEDIATELY active account (email_verified = 1, no confirmation
+    // email) with an attacker-chosen role — including 'admin' — in a
+    // single request. A stolen/hijacked admin session alone must not be
+    // enough to mint a persistent backdoor account.
+    $adminPassword = $body['admin_password'] ?? '';
+    $adminRow      = DB::row("SELECT password_hash FROM users WHERE id = ?", [$user['id']]);
+    if ($adminPassword === '' || !$adminRow
+        || !Password::verifyAndRehash($adminPassword, $adminRow['password_hash'], (int)$user['id'])) {
+        http_response_code(403);
+        echo json_encode(['ok' => false, 'error' => 'Incorrect password. Re-enter your password to confirm this action.']); exit;
     }
 
     $result = Admin::createUser($login, $email, $password, $role, $user['id']);

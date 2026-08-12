@@ -21,6 +21,15 @@ $success = '';
 $step    = 'login';
 
 $partial = Auth::getPartialUser();
+// BUG-023: Auth::getUser() memoizes its result in static class fields
+// (self::$userLoaded / self::$currentUser). The Auth::isLoggedIn() call at
+// the top of this file already ran once and did not exit, so it is already
+// known to be false for the rest of this request — this second call below
+// always returns that same cached false, it is not a fresh, independent
+// check. Kept (rather than simplified to `if ($partial)`) because it
+// documents the real intent — "proceed only while still not logged in" —
+// which would matter again if this file's structure ever changes so the
+// two checks are no longer adjacent.
 if ($partial && !Auth::isLoggedIn()) {
     $step = $partial['totp_enabled'] ? 'totp' : 'setup';
     if ($step === 'setup') { header('Location: /setup-2fa'); exit; }

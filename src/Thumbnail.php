@@ -22,6 +22,11 @@
  *     applyImagickSafetyLimits() caps Imagick's memory/map resource usage
  *     — guards against decompression-bomb images (a small file whose
  *     header declares huge pixel dimensions)
+ *   - SEC-103: fetchFavicon() now caps its response size (MAX_FAVICON_BYTES)
+ *     like every other fetch in this class already does via safeFetchBody()
+ *   - BUG-018: processUpload() now unlinks its upload temp file on every
+ *     exit path via a finally block (cleanupTmp()), instead of relying
+ *     solely on PHP's post-request purge
  *
  * Storage: storage/thumbnails/u{userId}/{dialId}.webp
  * Served:  GET /api/thumbs/{dialId} — PHP checks auth, streams file
@@ -37,6 +42,12 @@ class Thumbnail
     private const QUALITY = 72;
     private const TIMEOUT = 5;
     private const BASE    = 'storage/thumbnails';
+    // SEC-103: fetchFavicon() had no response-size limit, unlike every other
+    // fetch in this class (all routed through safeFetchBody(), which always
+    // takes a $maxBytes). A favicon.ico response is typically well under
+    // 100KB — 1 MB is a generous ceiling that still bounds a single PHP-FPM
+    // worker's memory spike from a malicious/compromised favicon.ico host.
+    private const MAX_FAVICON_BYTES = 1024 * 1024;
     // SEC-090: reject images with a declared width/height above this BEFORE
     // Imagick fully decodes them (see applyImagickSafetyLimits() and the
     // pingImage()/pingImageBlob() calls in processUpload() /
@@ -142,35 +153,43 @@ class Thumbnail
 
     public static function processUpload(int $dialId, int $userId, string $tmpPath): bool
     {
-        if (!extension_loaded('imagick')) {
-            error_log('[Thumbnail] Imagick required for upload processing.');
-            return false;
-        }
-
-        if (!is_readable($tmpPath)) return false;
-        $fileSize = @filesize($tmpPath);
-        if (!$fileSize || $fileSize < 12 || $fileSize > 5 * 1024 * 1024) return false;
-
-        // 1. Magic bytes validation — read binary header, reject non-images
-        $fh = @fopen($tmpPath, 'rb');
-        if (!$fh) return false;
-        $header = fread($fh, 12);
-        fclose($fh);
-        if (!self::isValidUploadHeader($header)) {
-            error_log('[Thumbnail] Upload rejected: invalid image signature.');
-            return false;
-        }
-
-        // 2. Ensure output directory exists
-        $dir = self::absDir($userId);
-        if (!is_dir($dir) && !@mkdir($dir, 0755, true)) {
-            error_log("[Thumbnail] Cannot create dir: {$dir}");
-            return false;
-        }
-
-        $absPath = self::absPath($dialId, $userId);
-
+        // BUG-018: entire body wrapped in try/finally so cleanupTmp() below
+        // always runs on the way out — success, an early validation `return
+        // false`, or an Imagick exception — without needing to repeat the
+        // cleanup call before every individual early return. Moving the
+        // pre-existing early checks inside this try does not change their
+        // behaviour: none of them throw, they still `return false` exactly
+        // as before, the surrounding try/catch(ImagickException|Exception)
+        // only ever catches what Imagick itself can throw further down.
         try {
+            if (!extension_loaded('imagick')) {
+                error_log('[Thumbnail] Imagick required for upload processing.');
+                return false;
+            }
+
+            if (!is_readable($tmpPath)) return false;
+            $fileSize = @filesize($tmpPath);
+            if (!$fileSize || $fileSize < 12 || $fileSize > 5 * 1024 * 1024) return false;
+
+            // 1. Magic bytes validation — read binary header, reject non-images
+            $fh = @fopen($tmpPath, 'rb');
+            if (!$fh) return false;
+            $header = fread($fh, 12);
+            fclose($fh);
+            if (!self::isValidUploadHeader($header)) {
+                error_log('[Thumbnail] Upload rejected: invalid image signature.');
+                return false;
+            }
+
+            // 2. Ensure output directory exists
+            $dir = self::absDir($userId);
+            if (!is_dir($dir) && !@mkdir($dir, 0755, true)) {
+                error_log("[Thumbnail] Cannot create dir: {$dir}");
+                return false;
+            }
+
+            $absPath = self::absPath($dialId, $userId);
+
             $im = new \Imagick();
 
             // SEC-090: process-wide Imagick resource ceiling, applied before
@@ -253,6 +272,11 @@ class Thumbnail
         } catch (\Exception $e) {
             error_log('[Thumbnail] processUpload Exception: ' . $e->getMessage());
             return false;
+        } finally {
+            // BUG-018: the user's original upload never persists past this
+            // function returning, on ANY exit path — mirrors Avatar.php's
+            // existing "belt-and-suspenders" cleanupTmp() pattern.
+            self::cleanupTmp($tmpPath);
         }
     }
 
@@ -410,6 +434,20 @@ class Thumbnail
             substr($h, 0, 8) === "\x89PNG\r\n\x1A\n"                          ||  // PNG
             substr($h, 0, 6) === 'GIF87a' || substr($h, 0, 6) === 'GIF89a'   ||  // GIF
             (substr($h, 0, 4) === 'RIFF' && substr($h, 8, 4) === 'WEBP');         // WebP
+    }
+
+    /**
+     * BUG-018: explicitly unlink the upload temp file. PHP already deletes
+     * $_FILES tmp files once the request ends — this just closes the window
+     * sooner, the same "belt-and-suspenders" pattern already used by
+     * Avatar::cleanupTmp() / GroupIcon::cleanupTmp(). Called from
+     * processUpload()'s finally block, so it runs on every exit path.
+     */
+    private static function cleanupTmp(string $tmpPath): void
+    {
+        if (is_file($tmpPath) && str_starts_with($tmpPath, sys_get_temp_dir())) {
+            @unlink($tmpPath);
+        }
     }
 
     // ── OG image via Imagick ──────────────────────────────────────────────────
@@ -670,7 +708,7 @@ class Thumbnail
                 ];
             }
             $ctx  = stream_context_create($ctxOpts);
-            $data = @file_get_contents("{$scheme}://{$ip}/favicon.ico", false, $ctx);
+            $data = @file_get_contents("{$scheme}://{$ip}/favicon.ico", false, $ctx, 0, self::MAX_FAVICON_BYTES);
             if ($data && strlen($data) >= 8 && self::isImageData($data)) return $data;
         }
         return null;

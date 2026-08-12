@@ -1,10 +1,10 @@
 <?php
 /**
- * LetaDial — Admin Panel (sesja 065 + 066 + 067 + 068 + 069 + 074 + 078 + SEC-079)
+ * LetaDial — Admin Panel (sesja 065 + 066 + 067 + 068 + 069 + 074 + 078 + SEC-079 + SEC-105)
  *
  * Tabs:
  *   1. Blocked IPs    — rate_limits; unblock / export
- *   2. Users          — accounts; delete; force-reset password; invite (067); registration toggle (068); avatars (078)
+ *   2. Users          — accounts; delete; force-reset password (step-up auth, SEC-105); invite (067); registration toggle (068); avatars (078)
  *   3. Sessions       — all active sessions; delete single / all for user
  *   4. Login History  — recent auth attempts; filter by IP
  *   5. Update         — git check vs github.com/LetaLab/LetaDial + git pull (password re-auth required, SEC-079)
@@ -16,6 +16,12 @@
  * auth) before /api/update/git-pull is called — a stolen session cookie
  * alone is no longer enough to trigger a git pull. fix_permissions.sh
  * references removed (file no longer exists — see README → Permissions).
+ * SEC-105: the same step-up pattern now also guards Force Reset Password
+ * and Create User — both are at least as consequential as git-pull (full
+ * account takeover, or minting an immediately-active admin account). The
+ * reauth modal + promptReauth() introduced by SEC-079 is now generalized
+ * (accepts a per-caller message) and shared by all three flows instead of
+ * being git-pull-specific.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die();
@@ -551,11 +557,11 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8')
     </div>
 </div>
 
-<!-- Update Re-auth Modal (SEC-079) -->
+<!-- Re-auth Modal (SEC-079, generalized for SEC-105) -->
 <div class="confirm-overlay" id="reauth-overlay">
     <div class="confirm-box" style="max-width:400px">
         <h3>🔒 Confirm your password</h3>
-        <p style="margin-bottom:.75rem">
+        <p id="reauth-message" style="margin-bottom:.75rem">
             Updating pulls and runs new code from GitHub. Re-enter your
             password to confirm.
         </p>
@@ -945,12 +951,25 @@ document.getElementById('pw-reset-ok').addEventListener('click',async()=>{
     const pw=pwResetInput?.value||'';
     pwResetError.style.display='none';
     if(!pw){pwResetError.textContent='Please enter a new password.';pwResetError.style.display='';return;}
+
+    // SEC-105: step-up re-auth — resetting another user's password is a
+    // full account takeover if this session were ever hijacked, same class
+    // of risk as git-pull (SEC-079). Modal is hidden while asking and
+    // re-shown on cancel/failure so the admin's already-typed new password
+    // is not lost.
+    pwResetOverlay.classList.remove('show');
+    const adminPw=await promptReauth("Resetting another user's password requires confirming your own. Re-enter your password to continue.");
+    if(adminPw===null){ pwResetOverlay.classList.add('show'); return; }
+
     const btn=document.getElementById('pw-reset-ok');
     btn.disabled=true;btn.textContent='…';
-    const r=await api('POST','/api/admin/force-password',{user_id:userId,password:pw});
+    const r=await api('POST','/api/admin/force-password',{user_id:userId,password:pw,admin_password:adminPw});
     btn.disabled=false;btn.textContent='Reset Password';
-    if(!r.ok){pwResetError.textContent=r.error||'Could not reset password.';pwResetError.style.display='';return;}
-    pwResetOverlay.classList.remove('show');
+    if(!r.ok){
+        pwResetOverlay.classList.add('show');
+        pwResetError.textContent=r.error||'Could not reset password.';pwResetError.style.display='';
+        return;
+    }
     toast(`Password reset for "${r.login}". All their sessions invalidated.`,'success',5000);
     const r2=await api('GET','/api/admin/sessions');
     if(r2.ok){sessions=r2.sessions;renderSessions(sessions);}
@@ -1136,13 +1155,15 @@ async function doGitCheck(){
     }else{cl.style.display='none';}
     updateShow('update-available');
 }
-// ── Re-auth (SEC-079) ──────────────────────────────────────────────────────
+// ── Re-auth (SEC-079, generalized for SEC-105) ──────────────────────────────
 let _reauthResolve = null;
-function promptReauth(){
+function promptReauth(message){
     return new Promise(resolve=>{
         _reauthResolve=resolve;
         const pw=document.getElementById('reauth-password');
         const err=document.getElementById('reauth-error');
+        const msg=document.getElementById('reauth-message');
+        if(msg)msg.textContent=message||'This action requires confirming your password. Re-enter your password to continue.';
         if(pw)pw.value='';
         if(err)err.style.display='none';
         document.getElementById('reauth-overlay').classList.add('show');
@@ -1172,7 +1193,7 @@ document.getElementById('reauth-password')?.addEventListener('keydown',e=>{
 
 async function doGitPull(){
     if(!await cfm('Update LetaDial','This will run:\n  git pull origin main\n\nDo not close this page.'))return;
-    const password=await promptReauth();
+    const password=await promptReauth('Updating pulls and runs new code from GitHub. Re-enter your password to confirm.');
     if(password===null)return;
     updateShow('update-running');
     const r=await api('POST','/api/update/git-pull',{password});
@@ -1348,13 +1369,22 @@ document.getElementById('cu-ok').addEventListener('click', async () => {
         return;
     }
 
+    // SEC-105: step-up re-auth — this endpoint creates an immediately
+    // active account, with an attacker-chosen role (including 'admin'), in
+    // one request. Modal is hidden while asking and re-shown on
+    // cancel/failure so the already-typed fields above are not lost.
+    cuOverlay.classList.remove('show');
+    const adminPw = await promptReauth('Creating a new account requires confirming your own password. Re-enter your password to continue.');
+    if (adminPw === null) { cuOverlay.classList.add('show'); return; }
+
     const btn = document.getElementById('cu-ok');
     btn.disabled = true; btn.textContent = 'Creating…';
 
-    const r = await api('POST', '/api/admin/create-user', { login, email, password, role });
+    const r = await api('POST', '/api/admin/create-user', { login, email, password, role, admin_password: adminPw });
     btn.disabled = false; btn.textContent = 'Create another →';
 
     if (!r.ok) {
+        cuOverlay.classList.add('show');
         cuError.textContent = r.error || 'Could not create account.';
         cuError.style.display = '';
         btn.textContent = 'Create account →';

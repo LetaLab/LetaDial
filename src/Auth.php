@@ -45,6 +45,13 @@
  *   VARCHAR(255), so this is reachable with a long email) hit an
  *   unhandled PDOException under strict SQL mode instead of the normal
  *   "Invalid login or password." response.
+ *
+ * SEC-104: register() no longer reveals, via message text or response
+ *   timing, whether it was the login or the email address that collided
+ *   with an existing account — see REGISTER_TIMING_FLOOR and
+ *   equalizeRegisterTiming() below, and the docblock on register() itself.
+ *   Mirrors the SEC-098 fix in forgot-password.php for the same class of
+ *   account-enumeration problem.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -67,6 +74,19 @@ class Auth
      * stay balanced.
      */
     private const DUMMY_HASH = '$2y$15$N7E8msBbPqnQWwfk8p5JrOxz/YNPKi.d1MJ68jRmBd4As8i0xWLVW';
+
+    /**
+     * SEC-104: fixed floor (seconds) that register() pads BOTH the
+     * "login or email already taken" branch and the "account created"
+     * branch up to, via equalizeRegisterTiming() below — same
+     * $_sfp_target/usleep() pattern already used in forgot-password.php
+     * (SEC-098) for the identical class of problem. Set comfortably above
+     * Password::hash()'s own ~2s cost at BCRYPT_COST=15 (see BUG-010),
+     * since the "account created" branch always pays that cost and the
+     * "already taken" branch otherwise would not — without a floor at
+     * least that high, the floor itself would do nothing to close the gap.
+     */
+    private const REGISTER_TIMING_FLOOR = 2.5;
 
     private static ?array  $currentUser = null;
     private static bool    $userLoaded  = false;
@@ -158,6 +178,13 @@ class Auth
      * If SMTP is disabled: creates verified account immediately (no email needed).
      *
      * Rate limit: 5 registrations per IP per hour.
+     *
+     * SEC-104: the "login taken" / "email taken" / "account created" outcomes
+     * are deliberately indistinguishable from outside — one shared error
+     * message, one shared floor-padded response time (see
+     * REGISTER_TIMING_FLOOR / equalizeRegisterTiming() above) — so an
+     * anonymous visitor cannot use this endpoint to enumerate which logins
+     * or email addresses are already registered.
      */
     public static function register(
         string $login,
@@ -173,6 +200,11 @@ class Auth
         }
 
         // ── Validate login ────────────────────────────────────────────────────
+        // These early, format-only checks do not depend on whether any account
+        // already exists — a malformed login is rejected the same way whether
+        // or not "admin" happens to be taken — so they are intentionally OUTSIDE
+        // the SEC-104 timing equalization below, which only needs to cover the
+        // step that actually reveals account existence.
         if (!$login) {
             return ['ok' => false, 'error' => 'Login is required.'];
         }
@@ -195,18 +227,35 @@ class Auth
             return ['ok' => false, 'error' => 'Passwords do not match.'];
         }
 
-        // ── Check uniqueness ──────────────────────────────────────────────────
-        $loginTaken = DB::val("SELECT id FROM users WHERE login = ?", [$login]);
-        if ($loginTaken) {
-            return ['ok' => false, 'error' => 'This login is already taken.'];
-        }
+        // SEC-104: from here on, the request either reveals that an account
+        // already exists (collision) or creates one (success) — both branches
+        // below now share ONE generic error message and ONE floor-padded
+        // response time (equalizeRegisterTiming()), so neither the message
+        // text nor the timing lets an anonymous visitor learn whether a
+        // specific login or a specific email address is already registered.
+        $_reg_t0 = microtime(true);
 
-        $emailTaken = DB::val("SELECT id FROM users WHERE email = ?", [$email]);
-        if ($emailTaken) {
-            return ['ok' => false, 'error' => 'This email address is already registered.'];
+        // ── Check uniqueness ──────────────────────────────────────────────────
+        // Both queries always run, regardless of the other's result — keeping
+        // this symmetric (rather than short-circuiting once one is found
+        // taken) is what makes "which field collided" genuinely
+        // indistinguishable from query cost alone, on top of the timing floor.
+        $loginTaken = (bool)DB::val("SELECT id FROM users WHERE login = ?", [$login]);
+        $emailTaken = (bool)DB::val("SELECT id FROM users WHERE email = ?", [$email]);
+
+        if ($loginTaken || $emailTaken) {
+            self::equalizeRegisterTiming($_reg_t0);
+            return [
+                'ok'    => false,
+                'error' => 'Could not create account with these details. If you already have an account, try signing in instead.',
+            ];
         }
 
         // ── Enforce max users limit (optional) ────────────────────────────────
+        // Reveals only that the INSTANCE is full, never anything about a
+        // specific login/email — a different, non-per-account condition, so
+        // it is intentionally outside the SEC-104 timing/message equalization
+        // above.
         $maxUsers = (int)(DB::val("SELECT value FROM settings WHERE key_name = 'max_users'") ?? 0);
         if ($maxUsers > 0) {
             $userCount = (int)(DB::val("SELECT COUNT(*) FROM users") ?? 0);
@@ -232,7 +281,35 @@ class Auth
             Mailer::sendActivation($email, $activToken);
         }
 
+        // SEC-104: pad the success branch to the same floor as the
+        // "already taken" branch above (started at $_reg_t0). In practice
+        // Password::hash() at cost 15 alone already takes close to the
+        // floor (see BUG-010), so this is normally a small or no-op sleep —
+        // it exists to guarantee the floor holds even on unusually fast
+        // hardware, keeping both branches' timing consistent regardless of
+        // server speed.
+        self::equalizeRegisterTiming($_reg_t0);
+
         return ['ok' => true, 'auto_verified' => $autoVerified];
+    }
+
+    /**
+     * SEC-104: pad the elapsed time since $startTime up to
+     * REGISTER_TIMING_FLOOR. Shared by both branches of register() that
+     * follow the uniqueness check, so "login or email already taken" and
+     * "account created" take the same (floor-padded) amount of time —
+     * mirrors the $_sfp_target/usleep() pattern in forgot-password.php
+     * (SEC-098), which solves the identical problem for password reset.
+     * Can only ever ADD delay, never subtract — a genuinely slow bcrypt
+     * hash or DB round trip that already exceeds the floor on its own is
+     * left alone.
+     */
+    private static function equalizeRegisterTiming(float $startTime): void
+    {
+        $elapsed = microtime(true) - $startTime;
+        if ($elapsed < self::REGISTER_TIMING_FLOOR) {
+            usleep((int)((self::REGISTER_TIMING_FLOOR - $elapsed) * 1_000_000));
+        }
     }
 
     public static function verify2FA(string $code): array

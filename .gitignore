@@ -18,6 +18,18 @@ storage/sessions/*
 logs/*
 !logs/.gitkeep
 
+# OPSEC-01: prywatne configi per-host — zawieraja realny adres IP, uklad
+# sieci domowej i sciezki certyfikatow. Uzyj nginx_letadial_example.conf
+# (z placeholderami CHANGEME) jako wzorca do publikacji zamiast tych plikow.
+*.andrzejl.eu.txt
+*.letalab.eu.txt
+dashboard_andrzejl_eu.txt
+letadial_letalab_eu.txt
+
+# OPSEC-01: osobiste eksporty testowe — zawieraja realne domeny prywatne,
+# adresy wewnetrzne i nazwy uslug home-labowych.
+*_letadial_export_*.json
+
 # System
 .DS_Store
 Thumbs.db

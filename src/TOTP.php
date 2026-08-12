@@ -71,7 +71,11 @@ class TOTP
      */
     private static function matchStep(string $secret, string $code): ?int
     {
-        $code = preg_replace('/\s/', '', $code);
+        // BUG-024: preg_replace() can in theory return null on a catastrophic
+        // PCRE engine failure. Practically unreachable for this simple pattern
+        // on a short 6-digit code, but this sits on the 2FA verification path,
+        // so the one-line defensive guard is cheap insurance.
+        $code = preg_replace('/\s/', '', $code) ?? '';
         if (!preg_match('/^\d{6}$/', $code)) return null;
 
         $key  = self::base32Decode($secret);

@@ -101,7 +101,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($result['ok']) {
         $done         = true;
         $backup_codes = $result['backup_codes'];
-        $_SESSION['show_backup_codes'] = $backup_codes;
+        // BUG-017: no $_SESSION write here — session_start() is never called
+        // anywhere in this app (see the BUG-002 note above), so an array
+        // written to $_SESSION only ever exists in this one request's memory
+        // and nothing downstream ever reads it back. The real "Download .txt"
+        // mechanism is downloadBackupCodes() in the <script> below, which
+        // builds the file client-side from the already-rendered #backup-grid
+        // DOM via a Blob — no session, no server round-trip involved.
         RateLimit::clear('2fa', $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
     } else {
         $error = $result['error'];

@@ -798,7 +798,7 @@ const LetaDial = (() => {
                   <div class="style-preview">
                     <span class="style-preview-label">Preview:</span>
                     <div class="style-preview-tab" id="sm-preview-tab">
-                      <span class="tab-icon" id="sm-prev-emoji" style="${(group.icon && !hasCustomIcon) ? '' : 'display:none'}">${group.icon || ''}</span>
+                      <span class="tab-icon" id="sm-prev-emoji" style="${(group.icon && !hasCustomIcon) ? '' : 'display:none'}">${escHtml(group.icon || '')}</span>
                       <img class="tab-icon-img" id="sm-prev-img" src="${hasCustomIcon ? `/api/group_icons/${group.id}?t=${ts}` : ''}" style="${hasCustomIcon ? '' : 'display:none'}" alt="">
                       <span class="tab-name">${escHtml(group.name)}</span>
                       <span class="tab-count">0</span>

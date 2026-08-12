@@ -1,6 +1,6 @@
 <?php
 /**
- * LetaDial — Group Icon (sesja 052)
+ * LetaDial — Group Icon (sesja 052 + BUG-018 + BUG-020)
  *
  * Handles custom image icons for groups.
  * Stored as 32×32 WebP in storage/group_icons/u{userId}/{groupId}.webp
@@ -12,6 +12,13 @@
  *   - Always re-encoded to WebP regardless of input format
  *   - Even a WebP upload is decoded then re-encoded (no passthrough)
  *   - Accepts: JPEG, PNG, GIF, WebP — max 2 MB
+ *
+ * BUG-018: processUpload() now explicitly unlinks the upload temp file on
+ * every exit path (cleanupTmp()), instead of relying solely on PHP's
+ * post-request purge — mirrors Avatar.php's existing pattern.
+ * BUG-020: processUpload() now applies best-effort EXIF orientation
+ * correction (applyExifOrientation()) before re-encoding, so a phone photo
+ * used as a group icon does not come out sideways — mirrors Avatar.php.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -53,17 +60,30 @@ class GroupIcon
      * This approach is type-safe: PHP actually decodes the image;
      * if any byte is malformed or not a real image it fails here.
      *
+     * BUG-018: the upload temp file is now explicitly unlinked on every exit
+     * path via cleanupTmp() below, mirroring Avatar::processUpload()'s
+     * "belt-and-suspenders" pattern — PHP already purges $_FILES tmp files
+     * once the request ends, this just closes that window sooner.
+     *
+     * BUG-020: best-effort EXIF orientation correction (applyExifOrientation()
+     * below) is now applied to the decoded pixels before re-encoding, same as
+     * Avatar.php — a phone photo used as a group icon no longer comes out
+     * sideways after its orientation tag is stripped by the WebP re-encode.
+     *
      * @param string $tmpPath PHP temp file path ($_FILES['icon']['tmp_name'])
      */
     public static function processUpload(int $groupId, int $userId, string $tmpPath): bool
     {
         if (!file_exists($tmpPath)) return false;
-        if (filesize($tmpPath) > self::MAX_BYTES) return false;
-        if (!function_exists('imagecreatetruecolor') || !function_exists('imagewebp')) return false;
+        if (filesize($tmpPath) > self::MAX_BYTES) { self::cleanupTmp($tmpPath); return false; }
+        if (!function_exists('imagecreatetruecolor') || !function_exists('imagewebp')) {
+            self::cleanupTmp($tmpPath);
+            return false;
+        }
 
         // Read raw bytes
         $raw = file_get_contents($tmpPath);
-        if ($raw === false || strlen($raw) === 0) return false;
+        if ($raw === false || strlen($raw) === 0) { self::cleanupTmp($tmpPath); return false; }
 
         // SEC-090: getimagesizefromstring() only parses the image header —
         // it does NOT allocate a full decoded pixel buffer, so it stays
@@ -75,21 +95,28 @@ class GroupIcon
         $dims = @getimagesizefromstring($raw);
         if (!$dims || $dims[0] < 1 || $dims[1] < 1
             || $dims[0] > self::MAX_DIMENSION || $dims[1] > self::MAX_DIMENSION) {
+            self::cleanupTmp($tmpPath);
             return false;
         }
 
         // imagecreatefromstring decodes pixel data — fails on non-image bytes
         $src = @imagecreatefromstring($raw);
-        if ($src === false) return false;
+        if ($src === false) { self::cleanupTmp($tmpPath); return false; }
+
+        // BUG-020: best-effort EXIF orientation correction, applied to the
+        // decoded pixels BEFORE the resize below discards the source aspect
+        // ratio. Only meaningful for JPEG, only runs if ext-exif is loaded —
+        // never required for upload to work, purely cosmetic.
+        $src = self::applyExifOrientation($src, $tmpPath);
 
         $sw = imagesx($src);
         $sh = imagesy($src);
 
-        if ($sw === 0 || $sh === 0) { imagedestroy($src); return false; }
+        if ($sw === 0 || $sh === 0) { imagedestroy($src); self::cleanupTmp($tmpPath); return false; }
 
         // Create output canvas
         $dst = @imagecreatetruecolor(self::ICON_W, self::ICON_H);
-        if (!$dst) { imagedestroy($src); return false; }
+        if (!$dst) { imagedestroy($src); self::cleanupTmp($tmpPath); return false; }
 
         // White background — transparent PNGs/GIFs become white, not black
         $white = imagecolorallocate($dst, 255, 255, 255);
@@ -102,7 +129,7 @@ class GroupIcon
         // Ensure storage directory exists
         $dir = self::dir($userId);
         if (!is_dir($dir)) {
-            if (!@mkdir($dir, 0755, true)) { imagedestroy($dst); return false; }
+            if (!@mkdir($dir, 0755, true)) { imagedestroy($dst); self::cleanupTmp($tmpPath); return false; }
         }
 
         // Protect directory on first use
@@ -116,7 +143,7 @@ class GroupIcon
         $ok  = imagewebp($dst, $out, self::QUALITY);
         imagedestroy($dst);
 
-        if (!$ok) return false;
+        if (!$ok) { self::cleanupTmp($tmpPath); return false; }
 
         @chmod($out, 0644);
 
@@ -125,6 +152,9 @@ class GroupIcon
             "UPDATE groups_list SET icon_path = ? WHERE id = ? AND user_id = ?",
             [$out, $groupId, $userId]
         );
+
+        // BUG-018: the user's original upload never persists past this point.
+        self::cleanupTmp($tmpPath);
 
         return true;
     }
@@ -179,5 +209,52 @@ class GroupIcon
             "UPDATE groups_list SET icon_path = NULL WHERE id = ? AND user_id = ?",
             [$groupId, $userId]
         );
+    }
+
+    // ── Private helpers (BUG-018 / BUG-020) ──────────────────────────────────
+
+    /**
+     * BUG-018: explicitly unlink the upload temp file. PHP already deletes
+     * $_FILES tmp files once the request ends — this just closes the window
+     * sooner, the same "belt-and-suspenders" pattern already used by
+     * Avatar::cleanupTmp().
+     */
+    private static function cleanupTmp(string $tmpPath): void
+    {
+        if (is_file($tmpPath) && str_starts_with($tmpPath, sys_get_temp_dir())) {
+            @unlink($tmpPath);
+        }
+    }
+
+    /**
+     * BUG-020: best-effort EXIF orientation correction, copied from
+     * Avatar::applyExifOrientation(). Only meaningful for JPEG, only runs if
+     * ext-exif is loaded (optional — never required for group icon upload to
+     * work). Handles the three pure-rotation cases (3/6/8) that cover the
+     * overwhelming majority of real phone photos; the rare mirrored variants
+     * (2/4/5/7, mostly from flatbed scanners) are left as-is rather than risk
+     * a faulty transform — worst case is a cosmetic non-issue.
+     */
+    private static function applyExifOrientation(\GdImage $img, string $tmpPath): \GdImage
+    {
+        if (!function_exists('exif_read_data')) return $img;
+
+        $exif = @exif_read_data($tmpPath);
+        if (!$exif || empty($exif['Orientation'])) return $img;
+
+        $degrees = match ((int)$exif['Orientation']) {
+            3       => 180,
+            6       => -90,
+            8       => 90,
+            default => 0,   // 1 = normal; 2/4/5/7 = mirrored (rare) — left untouched
+        };
+
+        if ($degrees === 0) return $img;
+
+        $rotated = @imagerotate($img, $degrees, 0);
+        if (!$rotated instanceof \GdImage) return $img;
+
+        imagedestroy($img);
+        return $rotated;
     }
 }

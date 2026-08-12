@@ -123,6 +123,26 @@ class CSP
      * pre-CSP-plan behaviour). script-src protection is never affected by
      * any of this, on any browser, old or new.
      * ---------------------------------------------------------------------
+     *
+     * SEC-106 (11.08.2026): added object-src 'none', base-uri 'self',
+     * form-action 'self', frame-ancestors 'self'. None of these four are
+     * covered by default-src — each has its own spec-defined fallback that
+     * is effectively unrestricted when the directive is absent entirely, it
+     * is NOT inherited from default-src the way script-src/style-src/img-src
+     * are. Without them explicitly set, an attacker who got even one
+     * injection point past every other layer could still: load a legacy
+     * <object>/<embed> plugin (object-src), splice in a <base href="..."> to
+     * silently rewrite every relative URL on the page including this app's
+     * own nonce'd <script src="/assets/js/app.js"> (base-uri), redirect a
+     * legitimate <form> submission to an attacker origin (form-action), or
+     * have the whole app framed by a hostile site for clickjacking
+     * (frame-ancestors — the modern, CSP-native equivalent of the
+     * X-Frame-Options: SAMEORIGIN header nginx already sends; kept
+     * alongside it rather than instead of it, since header support is not
+     * perfectly identical across older clients). Verified via a full-project
+     * grep before adding these: no <object>/<embed>/<applet> anywhere, no
+     * <form action="..."> pointing off-origin, no legitimate <iframe> use —
+     * all four are pure hardening with no behaviour change for this app.
      */
     private static function policy(): string
     {
@@ -135,6 +155,10 @@ class CSP
             "style-src-elem 'self' 'nonce-{$n}'; " .
             "style-src-attr 'unsafe-inline'; " .
             "img-src 'self' https: data: blob:; " .
+            "object-src 'none'; " .
+            "base-uri 'self'; " .
+            "form-action 'self'; " .
+            "frame-ancestors 'self'; " .
             "report-uri /api/csp-report";
     }
 

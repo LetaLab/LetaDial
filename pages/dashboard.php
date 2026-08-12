@@ -174,10 +174,11 @@ foreach ($custom_extras as $_ctk => $_extra) {
 <?php
 // Dial width — add to inline CSS (zero-flash)
 $_inline_css[] = ":root{--dial-w:{$dial_width}px;}";
+// BUG-022: no longer wrapped in `if ($_inline_css)` — the line above always
+// appends an entry, so the array is unconditionally non-empty here and the
+// old check was dead code that never skipped the block.
 ?>
-<?php if ($_inline_css): ?>
 <style nonce="<?= CSP::nonce() ?>"><?= implode('', $_inline_css) ?></style>
-<?php endif; ?>
 <link rel="stylesheet" href="/assets/css/pages/dashboard.css">
 <script nonce="<?= CSP::nonce() ?>">
 (function(){

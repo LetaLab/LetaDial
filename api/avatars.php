@@ -1,10 +1,10 @@
 <?php
 /**
- * LetaDial — Avatar API (sesja 078)
+ * LetaDial — Avatar API (sesja 078 + SEC-109)
  *
  * GET    /api/avatars/{userId}   stream avatar WebP (auth required — any logged-in user)
  * POST   /api/avatars/upload     upload/replace OWN avatar (CSRF + rate limit)
- * DELETE /api/avatars            remove OWN avatar (CSRF)
+ * DELETE /api/avatars            remove OWN avatar (CSRF + rate limit)
  *
  * Accepted: JPEG, PNG, GIF, WebP — max 5 MB
  * Output:   128×128 WebP (GD re-encodes always — strips all metadata)
@@ -89,6 +89,18 @@ if ($method === 'POST' && $sub === 'upload') {
 // ── DELETE /api/avatars — remove OWN avatar ───────────────────────────────────
 if ($method === 'DELETE' && $sub === null) {
     CSRF::require();
+
+    // SEC-109: DELETE had no rate limit, unlike upload (20/h) on this same
+    // file. Real-world impact of hammering this endpoint is negligible
+    // (removing your own avatar has no attacker value beyond wasted DB/disk
+    // churn), but every other mutating endpoint in the app has some limit
+    // (SEC-095/SEC-101 pattern) — added here for that same consistency.
+    if (RateLimit::check('avatar_delete', (string)$user['id'], 30, 3600, 3600)) {
+        http_response_code(429);
+        header('Content-Type: application/json; charset=UTF-8');
+        echo json_encode(['error' => 'Too many requests. Try again later.']); exit;
+    }
+
     Avatar::delete($user['id']);
     header('Content-Type: application/json; charset=UTF-8');
     echo json_encode(['ok' => true]);

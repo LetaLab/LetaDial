@@ -124,10 +124,18 @@ function process_admin(string &$step): void {
         $errors[] = 'Invalid Application URL (must start with http:// or https://).';
 
     if (empty($errors)) {
+        // BUG-019: cost 15 to match Password::BCRYPT_COST (raised from 12 to 15
+        // by BUG-010, 03.08.2026). The Password class does not exist yet at
+        // install time, so the installer hashes by hand — previously it still
+        // used the old literal 12. Auth::login()'s opportunistic rehash (see
+        // Password::verifyAndRehash()) would have silently upgraded this hash
+        // to cost 15 on the admin's first login regardless, so this was never
+        // an active weakness — this just avoids depending on that self-healing
+        // step for the very first login.
         $_SESSION['idata']['admin'] = [
             'login'         => $login,
             'email'         => $email,
-            'password_hash' => password_hash($password, PASSWORD_BCRYPT, ['cost' => 12]),
+            'password_hash' => password_hash($password, PASSWORD_BCRYPT, ['cost' => 15]),
         ];
         $_SESSION['idata']['app'] = ['name' => $app_name ?: APP_BRAND, 'url' => $app_url];
         $step = 'email';
@@ -174,40 +182,44 @@ function process_install(string &$step): void {
         return;
     }
 
+    // BUG-016: process_install() is one big try/catch, and every reachable
+    // page in this app (index.php router, and install.php's own guard at
+    // the top of this file) treats "config.php exists" as the single source
+    // of truth for "installation done, do not run the installer again".
+    // Previously config.php was written mid-way (old step 5), BEFORE
+    // directory creation / .htaccess writes (old steps 6-7). If any of
+    // those later steps threw (e.g. mkdir() denied by permissions on some
+    // hosting setups) config.php was already on disk, so install.php's own
+    // guard blocked any further attempt — leaving the app in a state where
+    // the DB and admin account existed but storage/logs/settings did not,
+    // with no way to resume or restart through the installer itself.
+    //
+    // Fix (Option a from the audit — simplest, no behaviour change on the
+    // happy path): every step that can plausibly fail now runs BEFORE
+    // config.php is written, so config.php is written LAST. If anything
+    // above it throws, config.php was never created, install.php's guard
+    // stays open, and the whole installer can simply be run again from
+    // scratch. db_create_tables() (CREATE TABLE IF NOT EXISTS), the
+    // directory/`.htaccess` writes (is_dir()/file_exists() checked) and the
+    // settings seed (INSERT IGNORE) are all naturally idempotent, so
+    // re-running them on a retry is harmless. The one step that is not
+    // naturally idempotent is the admin INSERT — on a retry within the same
+    // installer session (same $_SESSION['idata']['admin']) it now runs
+    // immediately before config.php is written, so the only window left for
+    // "insert succeeded, then something after it failed, then a retry hits
+    // a duplicate login" is two random_bytes() calls and the config.php
+    // write itself — practically as close to zero as this refactor can get
+    // without changing the INSERT into a full upsert (a bigger change, not
+    // needed to satisfy the failure mode this fix targets).
     try {
         // 1. DB connection
         $db  = $d['db'];
         $pdo = db_connect($db['host'], $db['name'], $db['user'], $db['pass']);
 
-        // 2. Create all tables
+        // 2. Create all tables (idempotent: CREATE TABLE IF NOT EXISTS)
         db_create_tables($pdo);
 
-        // 3. Admin user
-        $admin     = $d['admin'];
-        $has_smtp  = !empty($d['smtp']);
-        $act_token = bin2hex(random_bytes(32));
-
-        $pdo->prepare(
-            "INSERT INTO users (login, email, password_hash, role, email_verified, activation_token, totp_required)
-             VALUES (?, ?, ?, 'admin', ?, ?, 1)"
-        )->execute([
-            $admin['login'],
-            $admin['email'],
-            $admin['password_hash'],
-            $has_smtp ? 0 : 1,
-            $has_smtp ? $act_token : null,
-        ]);
-
-        // 4. Generate security keys
-        $enc_key  = bin2hex(random_bytes(32));  // AES-256 for TOTP secrets
-        $hmac_key = bin2hex(random_bytes(32));  // HMAC for CSRF tokens
-
-        // 5. Write config.php
-        $cfg_path = __DIR__ . '/config.php';
-        file_put_contents($cfg_path, build_config($d['db'], $d['app'], $d['smtp'] ?? null, $enc_key, $hmac_key));
-        chmod($cfg_path, 0600);
-
-        // 6. Create directory structure
+        // 3. Create directory structure (idempotent: is_dir() checked)
         // BUG-006: storage/group_icons was missing — GroupIcon.php creates it
         // lazily on first use, but a fresh install should have the full
         // storage/ layout ready immediately, matching the current feature set.
@@ -220,7 +232,7 @@ function process_install(string &$step): void {
             if (!is_dir($path)) mkdir($path, 0755, true);
         }
 
-        // Protect sensitive directories with .htaccess
+        // 4. Protect sensitive directories with .htaccess (idempotent: file_exists() checked)
         // BUG-006: storage/avatars and storage/group_icons were missing here —
         // both classes create their own .htaccess lazily on first use, but a
         // fresh install should not depend on that. Note nginx does NOT read
@@ -240,7 +252,23 @@ function process_install(string &$step): void {
             if (!file_exists($p)) file_put_contents($p, $content);
         }
 
-        // 7. Default settings (full set — no separate migrate_001.sql needed)
+        // 5. Admin user
+        $admin     = $d['admin'];
+        $has_smtp  = !empty($d['smtp']);
+        $act_token = bin2hex(random_bytes(32));
+
+        $pdo->prepare(
+            "INSERT INTO users (login, email, password_hash, role, email_verified, activation_token, totp_required)
+             VALUES (?, ?, ?, 'admin', ?, ?, 1)"
+        )->execute([
+            $admin['login'],
+            $admin['email'],
+            $admin['password_hash'],
+            $has_smtp ? 0 : 1,
+            $has_smtp ? $act_token : null,
+        ]);
+
+        // 6. Default settings (idempotent: INSERT IGNORE — no separate migrate_001.sql needed)
         $stmt = $pdo->prepare("INSERT IGNORE INTO settings (key_name, value) VALUES (?, ?)");
         foreach ([
             ['app_name',               $d['app']['name']],
@@ -260,7 +288,20 @@ function process_install(string &$step): void {
             $stmt->execute([$k, $v]);
         }
 
-        // 8. Send activation email
+        // 7. Generate security keys
+        $enc_key  = bin2hex(random_bytes(32));  // AES-256 for TOTP secrets
+        $hmac_key = bin2hex(random_bytes(32));  // HMAC for CSRF tokens
+
+        // 8. Write config.php — LAST failure-prone step. Its existence is
+        // now a true "everything above succeeded" marker.
+        $cfg_path = __DIR__ . '/config.php';
+        file_put_contents($cfg_path, build_config($d['db'], $d['app'], $d['smtp'] ?? null, $enc_key, $hmac_key));
+        chmod($cfg_path, 0600);
+
+        // 9. Send activation email (smtp_send_activation() already wraps its
+        // own body in try/catch and returns false on failure — it cannot
+        // throw back into this outer try, so its position relative to the
+        // config.php write above does not affect the idempotency argument).
         $email_sent = false;
         if ($has_smtp) {
             $email_sent = smtp_send_activation(
@@ -272,7 +313,7 @@ function process_install(string &$step): void {
             );
         }
 
-        // 9. Store result and clean session
+        // 10. Store result and clean session
         $_SESSION['install_result'] = [
             'app_url'       => $d['app']['url'],
             'admin_login'   => $admin['login'],
@@ -282,7 +323,7 @@ function process_install(string &$step): void {
         ];
         unset($_SESSION['idata']);
 
-        // 10. Self-delete
+        // 11. Self-delete
         register_shutdown_function(fn() => @unlink(__FILE__));
 
         $step = 'success';

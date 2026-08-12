@@ -1,10 +1,10 @@
 <?php
 /**
- * LetaDial — Group Icon API (sesja 052)
+ * LetaDial — Group Icon API (sesja 052 + SEC-109)
  *
  * GET    /api/group_icons/{groupId}          stream icon (auth required)
  * POST   /api/group_icons/{groupId}/upload   upload custom icon (CSRF + rate limit)
- * DELETE /api/group_icons/{groupId}          remove icon (CSRF)
+ * DELETE /api/group_icons/{groupId}          remove icon (CSRF + rate limit)
  *
  * Accepted: JPEG, PNG, GIF, WebP — max 2 MB
  * Output:   32×32 WebP (GD re-encodes always — strips all metadata)
@@ -99,6 +99,18 @@ if ($method === 'POST' && $action === 'upload') {
 // ── DELETE /api/group_icons/{groupId} — remove icon ──────────────────────────
 if ($method === 'DELETE' && $action === null) {
     CSRF::require();
+
+    // SEC-109: DELETE had no rate limit, unlike upload (20/h) on this same
+    // file. Real-world impact of hammering this endpoint is negligible
+    // (removing your own icon has no attacker value beyond wasted DB/disk
+    // churn), but every other mutating endpoint in the app has some limit
+    // (SEC-095/SEC-101 pattern) — added here for that same consistency.
+    if (RateLimit::check('group_icon_delete', (string)$user['id'], 30, 3600, 3600)) {
+        http_response_code(429);
+        header('Content-Type: application/json; charset=UTF-8');
+        echo json_encode(['error' => 'Too many requests. Try again later.']); exit;
+    }
+
     GroupIcon::delete($groupId, $user['id']);
     header('Content-Type: application/json; charset=UTF-8');
     echo json_encode(['ok' => true]);

@@ -433,6 +433,10 @@ final class QRCode
 
     private static function maskCondition(int $mask, int $r, int $c): bool
     {
+        // BUG-021: explicit default branch. The only caller, bestMask(), loops
+        // `for ($mask = 0; $mask < 8; $mask++)`, so $mask is always 0-7 today —
+        // but without a default, any future caller or a changed loop bound would
+        // hit an unhandled \UnhandledMatchError instead of a readable error.
         return match ($mask) {
             0 => ($r + $c) % 2 === 0,
             1 => $r % 2 === 0,
@@ -442,6 +446,7 @@ final class QRCode
             5 => (($r * $c) % 2 + ($r * $c) % 3) === 0,
             6 => (($r * $c) % 2 + ($r * $c) % 3) % 2 === 0,
             7 => (($r + $c) % 2 + ($r * $c) % 3) % 2 === 0,
+            default => throw new \InvalidArgumentException("Invalid QR mask: {$mask} (must be 0-7)"),
         };
     }
 

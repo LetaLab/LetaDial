@@ -214,6 +214,11 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
 - GDPR: full data export (own dials, groups, settings as JSON)
 - GDPR: account self-deletion with cascade
 - i18n — English / Polish (array-based `lang/en.php` + `lang/pl.php`)
+- Login notification e-mails - sent on every successful login, toggleable per-user and instance-wide by the admin (see PROJECT_086.md)
+- Browser extension (Chrome / Edge / Firefox) - native equivalent of the LetaLink bookmarklet, specification pending (see PROJECT_087.md)
+- Full backup export/import - dials plus all thumbnails as a single ZIP file, for disaster recovery (see PROJECT_088.md)
+- CSP violation log viewer - view and download `logs/csp-violations.log` from Admin → Install Check (see PROJECT_089.md)
+- Weekly automatic export - rolling backup of your dials, last 10 downloadable from Settings (see PROJECT_090.md)
 
 ---
 
@@ -266,6 +271,8 @@ CREATE USER 'letadial_user'@'localhost' IDENTIFIED BY 'your_strong_password_here
 GRANT ALL PRIVILEGES ON letadial_db.* TO 'letadial_user'@'localhost';
 FLUSH PRIVILEGES;
 ```
+
+> **Tip:** Need a strong, high entropy password for `your_strong_password_here`? Try LetaLab's own [Ultra Secure Password Generator](https://passwords.letalab.eu/) - a server side password generator with maximum entropy. No tracking, generated passwords are never logged, TLS 1.3, HSTS.
 
 ### 2. Clone repository
 
@@ -637,6 +644,7 @@ cat <<'EOF' > /etc/logrotate.d/letadial
     sharedscripts
 }
 EOF
+chmod 644 /etc/logrotate.d/letadial
 ```
 
 Adjust the path and the `create` owner/group if your install differs -

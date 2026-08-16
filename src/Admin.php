@@ -16,6 +16,13 @@
  *      README → Permissions. installCheck() — dodano: wykrywanie katalogów
  *      world-writable, diagnostyka właściciela plików, weryfikacja
  *      git remote "origin" (musi być zawsze github.com/LetaLab/LetaDial).
+ * SEC-110: createUser() i inviteUser() — INSERT do users owinięty w
+ *      try/catch(PDOException). Poprzedzające go SELECT-owe sprawdzenia
+ *      unikalności login/email nie są atomowe z samym INSERT-em (ten sam
+ *      wyścig co w Auth::register() — pełne uzasadnienie w docblocku
+ *      Auth.php); bez catch-a `uq_login`/`uq_email` UNIQUE KEY (install.php)
+ *      zamieniał kolizję w nieobsłużony PDOException zamiast czytelnej
+ *      odpowiedzi błędu.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -178,13 +185,29 @@ class Admin
 
         $hash = Password::hash($password);
 
-        DB::run(
-            "INSERT INTO users
-                (login, email, password_hash, role, email_verified, activation_token,
-                 totp_required, created_at)
-             VALUES (?, ?, ?, ?, 1, NULL, ?, NOW())",
-            [$login, $email, $hash, $role, ($role === 'admin') ? 1 : 0]
-        );
+        // SEC-110: the two SELECT pre-checks above are not atomic with this
+        // INSERT — same class of race as Auth::register() (see its docblock
+        // for the full rationale). Lower real-world odds here, since this
+        // endpoint requires an authenticated admin rather than an anonymous
+        // visitor, but an admin double-clicking "Create user", or two admins
+        // acting at once, can still hit it. Without this catch, the
+        // uq_login/uq_email UNIQUE KEY (install.php) would turn that race
+        // into an uncaught PDOException instead of the normal error
+        // response.
+        try {
+            DB::run(
+                "INSERT INTO users
+                    (login, email, password_hash, role, email_verified, activation_token,
+                     totp_required, created_at)
+                 VALUES (?, ?, ?, ?, 1, NULL, ?, NOW())",
+                [$login, $email, $hash, $role, ($role === 'admin') ? 1 : 0]
+            );
+        } catch (PDOException $e) {
+            if ($e->getCode() === '23000') {
+                return ['ok' => false, 'error' => 'This login or email address was just taken by another request. Please try again.'];
+            }
+            throw $e; // any other DB error stays a real, loud failure
+        }
 
         $newUserId = (int)DB::lastId();
 
@@ -308,13 +331,25 @@ class Admin
 
         $dummyHash = '$2y$12$InvalidHashThatCanNeverMatchAnyRealPassword00000000000000';
 
-        DB::run(
-            "INSERT INTO users
-                (login, email, password_hash, role, email_verified, activation_token,
-                 totp_required, created_at)
-             VALUES (?, ?, ?, 'user', 0, ?, 0, NOW())",
-            [$login, $email, $dummyHash, $token]
-        );
+        // SEC-110: same non-atomic SELECT-then-INSERT race as createUser()
+        // above and Auth::register() — see Auth.php's docblock for the full
+        // rationale. Without this catch, the uq_login/uq_email UNIQUE KEY
+        // (install.php) would turn a concurrent collision into an uncaught
+        // PDOException instead of the normal error response.
+        try {
+            DB::run(
+                "INSERT INTO users
+                    (login, email, password_hash, role, email_verified, activation_token,
+                     totp_required, created_at)
+                 VALUES (?, ?, ?, 'user', 0, ?, 0, NOW())",
+                [$login, $email, $dummyHash, $token]
+            );
+        } catch (PDOException $e) {
+            if ($e->getCode() === '23000') {
+                return ['ok' => false, 'error' => 'This login or email address was just taken by another request. Please try again.'];
+            }
+            throw $e; // any other DB error stays a real, loud failure
+        }
 
         $newUserId = (int)DB::lastId();
 

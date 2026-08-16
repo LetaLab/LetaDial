@@ -5,6 +5,14 @@
  * GET /confirm-email?token=XXX
  * Validates the email change token and updates the user's email.
  * Invalidates all sessions after success (forces re-login with new email).
+ *
+ * SEC-110: the "apply the change" UPDATE is wrapped in try/catch(PDOException)
+ * — the $taken SELECT-based pre-check just above it is not atomic with this
+ * write, and email_pending itself carries no UNIQUE constraint, so two users
+ * confirming the same target address around the same time could otherwise hit
+ * the uq_email UNIQUE KEY as an uncaught exception instead of the normal
+ * "already taken" response. See the inline comment on that branch, and
+ * Auth.php's docblock for the same pattern applied to registration.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die();
@@ -45,20 +53,52 @@ if (!$token || !preg_match('/^[a-f0-9]{64}$/', $token)) {
             $error = 'This email address has already been taken by another account. '
                    . 'Please request a new email change from Settings.';
         } else {
-            // Apply the change
-            DB::run(
-                "UPDATE users
-                 SET email               = email_pending,
-                     email_pending       = NULL,
-                     email_change_token  = NULL,
-                     email_change_expires = NULL
-                 WHERE id = ?",
-                [$user['id']]
-            );
+            // Apply the change.
+            //
+            // SEC-110: the $taken SELECT immediately above is not atomic
+            // with this UPDATE. There is no UNIQUE constraint on
+            // email_pending (install.php) — only on the real `email` column
+            // — so two different users can each set the SAME email_pending
+            // and both still pass the $taken check above before either one
+            // has actually applied its change. Whichever one loses that
+            // narrow race hits the uq_email UNIQUE KEY here instead, which
+            // (DB.php sets PDO::ATTR_ERRMODE_EXCEPTION) would otherwise
+            // escape as an uncaught PDOException. Catch it and fall back to
+            // the exact same "already taken" outcome the $taken branch above
+            // already uses, rather than letting a losing confirmation click
+            // surface a raw error.
+            $duplicateOnApply = false;
+            try {
+                DB::run(
+                    "UPDATE users
+                     SET email               = email_pending,
+                         email_pending       = NULL,
+                         email_change_token  = NULL,
+                         email_change_expires = NULL
+                     WHERE id = ?",
+                    [$user['id']]
+                );
+            } catch (PDOException $e) {
+                if ($e->getCode() !== '23000') {
+                    throw $e; // any other DB error stays a real, loud failure
+                }
+                $duplicateOnApply = true;
+            }
 
-            // Invalidate all existing sessions — user must log in again with new email
-            Auth::logoutAllSessions($user['id']);
-            $done = true;
+            if ($duplicateOnApply) {
+                // Clear the pending change — it can no longer be applied.
+                DB::run(
+                    "UPDATE users SET email_pending = NULL, email_change_token = NULL,
+                     email_change_expires = NULL WHERE id = ?",
+                    [$user['id']]
+                );
+                $error = 'This email address has already been taken by another account. '
+                       . 'Please request a new email change from Settings.';
+            } else {
+                // Invalidate all existing sessions — user must log in again with new email
+                Auth::logoutAllSessions($user['id']);
+                $done = true;
+            }
         }
     }
 }

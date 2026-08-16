@@ -52,6 +52,17 @@
  *   equalizeRegisterTiming() below, and the docblock on register() itself.
  *   Mirrors the SEC-098 fix in forgot-password.php for the same class of
  *   account-enumeration problem.
+ *
+ * SEC-110: register()'s users INSERT is now wrapped in try/catch(PDOException).
+ *   The SELECT-based uniqueness pre-check a few lines above it is not atomic
+ *   with the INSERT — two near-simultaneous requests for the same login/email
+ *   can both pass that SELECT before either writes, a window SEC-104's own
+ *   timing floor makes wider, not narrower. Without the catch, the
+ *   uq_login/uq_email UNIQUE KEY (install.php) turned that race into an
+ *   uncaught PDOException instead of the normal, enumeration-safe error
+ *   response. See register()'s own inline comment for the full rationale;
+ *   the same pattern was applied to Admin::createUser()/inviteUser() and
+ *   confirm-email.php's "apply the change" branch in the same pass.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -270,11 +281,38 @@ class Auth
         $activToken    = $autoVerified ? null : bin2hex(random_bytes(32));
         $passwordHash  = Password::hash($password);
 
-        DB::run(
-            "INSERT INTO users (login, email, password_hash, role, email_verified, activation_token, created_at)
-             VALUES (?, ?, ?, 'user', ?, ?, NOW())",
-            [$login, $email, $passwordHash, $autoVerified ? 1 : 0, $activToken]
-        );
+        // SEC-110: the SELECT-based uniqueness check above and this INSERT are
+        // not atomic — two near-simultaneous requests with the same login/email
+        // can both pass the SELECT (neither has INSERTed yet) before either
+        // reaches this write, and SEC-104's own multi-second timing floor
+        // above widens that window rather than closing it. DB.php sets
+        // PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, so the uq_login/uq_email
+        // UNIQUE KEY (install.php, CREATE TABLE users) would otherwise turn
+        // that race into an uncaught PDOException instead of a clean JSON/HTML
+        // response — a stability regression with a side risk of an
+        // information leak if display_errors is ever on in production.
+        // Catch it and fall back to the exact same generic, enumeration-safe
+        // message + timing floor as the SELECT-based check above, so a losing
+        // concurrent request degrades gracefully instead of leaking a stack
+        // trace or a raw 500.
+        try {
+            DB::run(
+                "INSERT INTO users (login, email, password_hash, role, email_verified, activation_token, created_at)
+                 VALUES (?, ?, ?, 'user', ?, ?, NOW())",
+                [$login, $email, $passwordHash, $autoVerified ? 1 : 0, $activToken]
+            );
+        } catch (PDOException $e) {
+            if ($e->getCode() === '23000') {
+                // Duplicate login/email — collided with a concurrent request
+                // that won the race. Same message/timing as the pre-check.
+                self::equalizeRegisterTiming($_reg_t0);
+                return [
+                    'ok'    => false,
+                    'error' => 'Could not create account with these details. If you already have an account, try signing in instead.',
+                ];
+            }
+            throw $e; // any other DB error stays a real, loud failure
+        }
 
         // ── Send activation email ─────────────────────────────────────────────
         if (!$autoVerified && $activToken) {

@@ -402,6 +402,19 @@ server {
         return 404;
     }
 
+    # SEC-111: defense in depth — `git reset --hard origin/main` (Updater::gitPull())
+    # publishes every git-tracked file straight into the web root, including any
+    # .md documentation or .sh helper scripts that might ever end up committed.
+    # Nothing today intentionally serves these over HTTP; block them outright so a
+    # future stray commit can't turn into an accidental information leak or a
+    # servable shell script. README.md/LICENSE being reachable would be harmless
+    # (same text as the public GitHub repo either way), but this is a single,
+    # cheap rule rather than special-casing "which .md files are fine".
+    location ~* \.(md|sh)$ {
+        deny all;
+        return 404;
+    }
+
     location / {
         try_files $uri $uri/ /index.php?$args;
     }

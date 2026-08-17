@@ -6,7 +6,7 @@
  * POST /api/csp-report
  *   Body:    JSON raport naruszenia CSP, wysyłany SAMOCZYNNIE przez
  *            przeglądarkę, kiedy Content-Security-Policy(-Report-Only)
- *            (patrz src/CSP.php) zostanie naruszona.
+ *            (patrz src/csp_src.php) zostanie naruszona.
  *   Zwraca:  zawsze 204 No Content — przeglądarka i tak ignoruje treść
  *            i status odpowiedzi na te requesty; 204 to jawne
  *            potwierdzenie "przyjąłem, nic więcej nie oczekuję".

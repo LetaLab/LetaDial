@@ -6,7 +6,7 @@
  * Stored as 32×32 WebP in storage/group_icons/u{userId}/{groupId}.webp
  * ALL access via PHP — directory is deny-all in .htaccess.
  *
- * Security model (same as Thumbnail.php):
+ * Security model (same as thumbnail_src.php):
  *   - imagecreatefromstring() validates pixel data (type-safe, not MIME-based)
  *   - GD re-encodes only pixel data → strips ALL metadata/EXIF/embedded payloads
  *   - Always re-encoded to WebP regardless of input format
@@ -15,10 +15,10 @@
  *
  * BUG-018: processUpload() now explicitly unlinks the upload temp file on
  * every exit path (cleanupTmp()), instead of relying solely on PHP's
- * post-request purge — mirrors Avatar.php's existing pattern.
+ * post-request purge — mirrors avatar_src.php's existing pattern.
  * BUG-020: processUpload() now applies best-effort EXIF orientation
  * correction (applyExifOrientation()) before re-encoding, so a phone photo
- * used as a group icon does not come out sideways — mirrors Avatar.php.
+ * used as a group icon does not come out sideways — mirrors avatar_src.php.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -31,7 +31,7 @@ class GroupIcon
     private const MAX_BYTES = 2 * 1024 * 1024; // 2 MB
     // SEC-090: reject images with a declared width/height above this BEFORE
     // imagecreatefromstring() fully decodes them — same rationale as
-    // Avatar.php's MAX_DIMENSION (GD has no configurable internal resource
+    // avatar_src.php's MAX_DIMENSION (GD has no configurable internal resource
     // limit the way Imagick does, so the dimension pre-check IS the guard).
     private const MAX_DIMENSION = 8000;
 
@@ -67,7 +67,7 @@ class GroupIcon
      *
      * BUG-020: best-effort EXIF orientation correction (applyExifOrientation()
      * below) is now applied to the decoded pixels before re-encoding, same as
-     * Avatar.php — a phone photo used as a group icon no longer comes out
+     * avatar_src.php — a phone photo used as a group icon no longer comes out
      * sideways after its orientation tag is stripped by the WebP re-encode.
      *
      * @param string $tmpPath PHP temp file path ($_FILES['icon']['tmp_name'])
@@ -90,7 +90,7 @@ class GroupIcon
         // cheap even for a "decompression bomb" (a tiny compressed file
         // whose header declares huge dimensions). Reject oversized images
         // here, BEFORE imagecreatefromstring() below performs the actual
-        // full decode. See Avatar.php for the identical, more thoroughly
+        // full decode. See avatar_src.php for the identical, more thoroughly
         // commented version of this check.
         $dims = @getimagesizefromstring($raw);
         if (!$dims || $dims[0] < 1 || $dims[1] < 1

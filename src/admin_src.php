@@ -9,9 +9,9 @@
  * 068: Registration toggle (registration_enabled setting)
  * 069: Direct user creation (admin sets login + email + password + role immediately)
  * 071b: installCheck — 3 nowe kolumny theme_*_primary
- * 077: installCheck — dodano pages/bookmarklet.php do listy integralności plików
+ * 077: installCheck — dodano pages/bookmarklet_page.php do listy integralności plików
  * 078: getUsers() zwraca avatar_path; deleteUser() usuwa plik avatara;
- *      installCheck() — dodano src/Avatar.php + api/avatars.php do listy integralności
+ *      installCheck() — dodano src/avatar_src.php + api/avatar_api.php do listy integralności
  * SEC-079: fix_permissions.sh usunięty z repo i z listy integralności — patrz
  *      README → Permissions. installCheck() — dodano: wykrywanie katalogów
  *      world-writable, diagnostyka właściciela plików, weryfikacja
@@ -20,7 +20,7 @@
  *      try/catch(PDOException). Poprzedzające go SELECT-owe sprawdzenia
  *      unikalności login/email nie są atomowe z samym INSERT-em (ten sam
  *      wyścig co w Auth::register() — pełne uzasadnienie w docblocku
- *      Auth.php); bez catch-a `uq_login`/`uq_email` UNIQUE KEY (install.php)
+ *      auth_src.php); bez catch-a `uq_login`/`uq_email` UNIQUE KEY (install.php)
  *      zamieniał kolizję w nieobsłużony PDOException zamiast czytelnej
  *      odpowiedzi błędu.
  */
@@ -332,7 +332,7 @@ class Admin
         $dummyHash = '$2y$12$InvalidHashThatCanNeverMatchAnyRealPassword00000000000000';
 
         // SEC-110: same non-atomic SELECT-then-INSERT race as createUser()
-        // above and Auth::register() — see Auth.php's docblock for the full
+        // above and Auth::register() — see auth_src.php's docblock for the full
         // rationale. Without this catch, the uq_login/uq_email UNIQUE KEY
         // (install.php) would turn a concurrent collision into an uncaught
         // PDOException instead of the normal error response.
@@ -640,48 +640,56 @@ class Admin
         // ── File Integrity ────────────────────────────────────────────────────
         $keyFiles = [
             'index.php'                    => true,
-            'src/Auth.php'                 => true,
-            'src/DB.php'                   => true,
-            'src/CSRF.php'                 => true,
-            'src/CSP.php'                  => true,   // BUG-007 — was missing despite being loaded by index.php
-            'src/Dial.php'                 => true,
-            'src/Group.php'                => true,
-            'src/Thumbnail.php'            => true,
-            'src/Admin.php'                => true,
-            'src/Mailer.php'               => true,
-            'src/TOTP.php'                 => true,
-            'src/RateLimit.php'            => true,
-            'src/Password.php'             => true,
-            'src/Import.php'               => true,
-            'src/Export.php'               => true,
-            'src/Meta.php'                 => true,
-            'src/Updater.php'              => true,
-            'src/GroupIcon.php'            => true,
-            'src/Avatar.php'               => true,   // sesja 078
-            'pages/login.php'              => true,
-            'pages/dashboard.php'          => true,
-            'pages/setup-2fa.php'          => true,
-            'pages/logout.php'             => true,
-            'pages/activate.php'           => true,
-            'pages/admin.php'              => true,
-            'pages/settings.php'           => true,
-            'pages/forgot-password.php'    => true,
-            'pages/reset-password.php'     => true,
-            'pages/confirm-email.php'      => true,
-            'pages/setup-account.php'      => true,
-            'pages/bookmarklet.php'        => true,   // sesja 077
-            'api/dials.php'                => true,
-            'api/groups.php'               => true,
-            'api/thumbs.php'               => true,
-            'api/export.php'               => true,
-            'api/import.php'               => true,
-            'api/admin.php'                => true,
-            'api/settings.php'             => true,
-            'api/update.php'               => true,
-            'api/meta.php'                 => true,
-            'api/group_icons.php'          => true,
-            'api/avatars.php'              => true,   // sesja 078
-            'api/csp-report.php'           => true,   // BUG-007 — CSP-era file, was missing
+            // NAMING: every src/ class file below ends in _src.php, every
+            // pages/ template ends in _page.php, every api/ endpoint ends
+            // in _api.php — chosen so no two files anywhere in the project
+            // can ever collide on a case-insensitive filesystem (Windows/
+            // macOS), even though Linux would treat e.g. Admin.php and
+            // admin.php as two different files. Class names inside these
+            // files are UNCHANGED (still Auth, Admin, CSRF, ... ) — only
+            // the filenames moved.
+            'src/auth_src.php'             => true,
+            'src/db_src.php'               => true,
+            'src/csrf_src.php'             => true,
+            'src/csp_src.php'              => true,   // BUG-007 — was missing despite being loaded by index.php
+            'src/dial_src.php'             => true,
+            'src/group_src.php'            => true,
+            'src/thumbnail_src.php'        => true,
+            'src/admin_src.php'            => true,
+            'src/mailer_src.php'           => true,
+            'src/totp_src.php'             => true,
+            'src/rate_limit_src.php'       => true,
+            'src/password_src.php'         => true,
+            'src/import_src.php'           => true,
+            'src/export_src.php'           => true,
+            'src/meta_src.php'             => true,
+            'src/updater_src.php'          => true,
+            'src/group_icon_src.php'       => true,
+            'src/avatar_src.php'           => true,   // sesja 078
+            'pages/login_page.php'         => true,
+            'pages/dashboard_page.php'     => true,
+            'pages/setup_2fa_page.php'     => true,
+            'pages/logout_page.php'        => true,
+            'pages/activate_page.php'      => true,
+            'pages/admin_page.php'         => true,
+            'pages/settings_page.php'      => true,
+            'pages/forgot_password_page.php'  => true,
+            'pages/reset_password_page.php'   => true,
+            'pages/confirm_email_page.php' => true,
+            'pages/setup_account_page.php' => true,
+            'pages/bookmarklet_page.php'   => true,   // sesja 077
+            'api/dial_api.php'             => true,
+            'api/group_api.php'            => true,
+            'api/thumbnail_api.php'        => true,
+            'api/export_api.php'           => true,
+            'api/import_api.php'           => true,
+            'api/admin_api.php'            => true,
+            'api/settings_api.php'         => true,
+            'api/updater_api.php'          => true,
+            'api/meta_api.php'             => true,
+            'api/group_icon_api.php'       => true,
+            'api/avatar_api.php'           => true,   // sesja 078
+            'api/csp_report_api.php'       => true,   // BUG-007 — CSP-era file, was missing
             'assets/css/app.css'           => true,
             'assets/css/design-system.css' => true,
             'assets/js/app.js'             => true,

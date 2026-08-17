@@ -98,7 +98,7 @@ class Password
      * on this user's next login.
      *
      * Deliberately NOT used by the password-change flow
-     * (api/settings.php) — there, the freshly-typed new password gets
+     * (api/settings_api.php) — there, the freshly-typed new password gets
      * hashed and stored immediately afterwards regardless, so rehashing
      * the OLD hash first would just be a wasted write.
      */

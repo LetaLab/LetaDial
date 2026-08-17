@@ -22,8 +22,8 @@ defined('DIALVAULT_APP') or die();
 //     the bottom of this file), a client-side function that builds the
 //     .txt file straight from the already-rendered #backup-grid DOM via a
 //     Blob — no session, no network round-trip, and it works correctly
-//     today. settings.php's backup-code regeneration uses the identical
-//     client-side pattern (downloadCodes() in pages/settings.php).
+//     today. settings_page.php's backup-code regeneration uses the identical
+//     client-side pattern (downloadCodes() in pages/settings_page.php).
 //   - Given the rest of the app deliberately avoids native PHP sessions
 //     everywhere else (DB-backed sessions table instead), reintroducing
 //     session_start() here just to serve a code path nothing calls was not

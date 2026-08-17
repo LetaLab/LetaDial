@@ -11,8 +11,8 @@ defined('DIALVAULT_APP') or die('Direct access forbidden.');
 class Dial
 {
     private const MAX_NOTES  = 500;
-    // BUG-003: dials.title is VARCHAR(100) — Group::create(), Import.php and
-    // Meta.php all enforce this same limit in PHP, but create()/update() did
+    // BUG-003: dials.title is VARCHAR(100) — Group::create(), import_src.php and
+    // meta_src.php all enforce this same limit in PHP, but create()/update() did
     // not, relying only on the client-side maxlength="100" attribute (trivially
     // bypassed via direct API/bookmarklet calls) and risking a hard DB error
     // under STRICT_TRANS_TABLES instead of a clean validation truncation.

@@ -6,7 +6,7 @@
  * nagłówek Content-Security-Policy, generowany PHP-em zamiast nginx.
  *
  * Faza obecna: Report-Only + Enforcing, RÓWNOLEGLE. Report-Only nic nie
- * blokuje, tylko raportuje (patrz api/csp-report.php) — zostaje wysyłany
+ * blokuje, tylko raportuje (patrz api/csp_report_api.php) — zostaje wysyłany
  * jako canary, decyzja czy zdjąć go na stałe to osobny, wciąż otwarty
  * Krok 7 (patrz plan, sekcja "Otwarte pytania" #2 - ta zmiana go NIE
  * rozstrzyga). Enforcing NAPRAWDĘ blokuje: każdy inline `<script>` bez
@@ -166,7 +166,7 @@ class CSP
      * Wysyła nagłówek Content-Security-Policy-Report-Only dla bieżącego
      * requestu. Wywołać raz, na starcie routera (index.php), przed
      * jakimkolwiek outputem — analogicznie do pre-warmu CSRF::token()
-     * w login.php / forgot-password.php / reset-password.php / setup-account.php.
+     * w login_page.php / forgot_password_page.php / reset_password_page.php / setup_account_page.php.
      * Z definicji CSP: ten nagłówek NIC nie blokuje, tylko raportuje.
      *
      * headers_sent() guard: w normalnym przepływie (wywołanie zaraz po

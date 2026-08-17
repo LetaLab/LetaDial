@@ -6,7 +6,7 @@
  * Returns: ['title' => '...', 'description' => '...', 'og_image' => '...']
  *
  * Security:
- *   - SSRF: blocks private/loopback/reserved IPs (same as Thumbnail.php)
+ *   - SSRF: blocks private/loopback/reserved IPs (same as thumbnail_src.php)
  *   - SEC-086/SEC-087: resolves the host ONCE per hop and connects directly
  *     to that validated IP (see resolvePinned()) instead of letting PHP's
  *     stream wrapper re-resolve the hostname independently at connect time.
@@ -17,7 +17,7 @@
  *   - Timeout: 5s connect + read
  *   - Size limit: reads max 65536 bytes — <head> is always enough
  *   - Charset: auto-detected from Content-Type header or <meta charset>
- *   - Rate limit: enforced by the API endpoint (api/meta.php), not here
+ *   - Rate limit: enforced by the API endpoint (api/meta_api.php), not here
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');

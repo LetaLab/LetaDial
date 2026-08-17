@@ -12,7 +12,7 @@
  * confirming the same target address around the same time could otherwise hit
  * the uq_email UNIQUE KEY as an uncaught exception instead of the normal
  * "already taken" response. See the inline comment on that branch, and
- * Auth.php's docblock for the same pattern applied to registration.
+ * auth_src.php's docblock for the same pattern applied to registration.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die();
@@ -62,7 +62,7 @@ if (!$token || !preg_match('/^[a-f0-9]{64}$/', $token)) {
             // and both still pass the $taken check above before either one
             // has actually applied its change. Whichever one loses that
             // narrow race hits the uq_email UNIQUE KEY here instead, which
-            // (DB.php sets PDO::ATTR_ERRMODE_EXCEPTION) would otherwise
+            // (db_src.php sets PDO::ATTR_ERRMODE_EXCEPTION) would otherwise
             // escape as an uncaught PDOException. Catch it and fall back to
             // the exact same "already taken" outcome the $taken branch above
             // already uses, rather than letting a losing confirmation click

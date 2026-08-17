@@ -30,7 +30,7 @@
  *
  * Storage: storage/thumbnails/u{userId}/{dialId}.webp
  * Served:  GET /api/thumbs/{dialId} — PHP checks auth, streams file
- * API:     api/thumbs.php (NOT api/thumbnail.php — Windows case collision)
+ * API:     api/thumbnail_api.php
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -274,7 +274,7 @@ class Thumbnail
             return false;
         } finally {
             // BUG-018: the user's original upload never persists past this
-            // function returning, on ANY exit path — mirrors Avatar.php's
+            // function returning, on ANY exit path — mirrors avatar_src.php's
             // existing "belt-and-suspenders" cleanupTmp() pattern.
             self::cleanupTmp($tmpPath);
         }

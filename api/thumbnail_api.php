@@ -1,9 +1,14 @@
 <?php
 /**
- * LetaDial — Thumbnail API (thumbs.php)
+ * LetaDial — Thumbnail API (thumbnail_api.php)
  * ======================================
- * Renamed from thumbnail.php to avoid Windows filename case conflict
- * with src/Thumbnail.php (Windows treats them as the same file).
+ * Named after src/thumbnail_src.php's class (Thumbnail), matching the
+ * project-wide rule: every src/ class file ends in _src.php, every
+ * pages/ template ends in _page.php, every api/ endpoint ends in
+ * _api.php, and files about the same topic share the same stem
+ * (thumbnail_src.php / thumbnail_api.php). This is unrelated to the
+ * public URL, which stays /api/thumbs/... unchanged — the URL-to-file
+ * mapping lives in index.php's $api_routes table, not in this filename.
  *
  * GET  /api/thumbs/{dialId}          stream thumbnail image (auth required)
  * POST /api/thumbs/{dialId}          refresh/regenerate thumbnail (CSRF + rate limit)

@@ -8,7 +8,7 @@
  *
  * Changes from v1.0 (DialVault):
  *  - Branding: LetaDial
- *  - dials table: matches Dial.php (thumb_path, thumb_updated_at, click_count, last_click, notes)
+ *  - dials table: matches src/dial_src.php (thumb_path, thumb_updated_at, click_count, last_click, notes)
  *  - groups_list: icon, color, icon_path columns included
  *  - rate_limits: key_plain column included
  *  - sessions: includes totp_verified, pending_totp (previously in migrate_001)
@@ -220,7 +220,7 @@ function process_install(string &$step): void {
         db_create_tables($pdo);
 
         // 3. Create directory structure (idempotent: is_dir() checked)
-        // BUG-006: storage/group_icons was missing — GroupIcon.php creates it
+        // BUG-006: storage/group_icons was missing — group_icon_src.php creates it
         // lazily on first use, but a fresh install should have the full
         // storage/ layout ready immediately, matching the current feature set.
         $dirs = [
@@ -434,7 +434,7 @@ function db_create_tables(PDO $pdo): void {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
 
         // ── Dials ─────────────────────────────────────────────────────────────
-        // Schema matches src/Dial.php exactly (thumb_path, thumb_updated_at, click_count, last_click, pinned)
+        // Schema matches src/dial_src.php exactly (thumb_path, thumb_updated_at, click_count, last_click, pinned)
         "CREATE TABLE IF NOT EXISTS dials (
             id               INT UNSIGNED  AUTO_INCREMENT PRIMARY KEY,
             user_id          INT UNSIGNED  NOT NULL,

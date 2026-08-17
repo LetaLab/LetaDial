@@ -18,7 +18,7 @@
  * gitPull():
  *   Wykonuje git fetch origin main + git reset --hard origin/main
  *   (lokalne zmiany są nadpisywane bez pytania). Wymaga potwierdzenia
- *   aktualnym hasłem admina (re-auth) — patrz api/update.php.
+ *   aktualnym hasłem admina (re-auth) — patrz api/updater_api.php.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');

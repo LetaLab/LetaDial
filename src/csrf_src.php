@@ -23,7 +23,7 @@
  *   HTML forms:  <?= CSRF::field() ?>
  *   API header:  X-CSRF-Token: <token>  (value from LETADIAL_BOOT.csrfToken)
  *   Validation:  CSRF::require()
- *   Pre-warm:    $_ = CSRF::token();    ← add at top of login.php (before HTML)
+ *   Pre-warm:    $_ = CSRF::token();    ← add at top of login_page.php (before HTML)
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');

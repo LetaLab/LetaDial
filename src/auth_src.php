@@ -11,7 +11,7 @@
  *   register()          → sesja 068: self-registration (if enabled)
  *
  * SEC-080: verify2FA() and enable2FA() both call TOTP::verifyAndConsume()
- *   so a captured/replayed TOTP code cannot be used twice. See TOTP.php
+ *   so a captured/replayed TOTP code cannot be used twice. See totp_src.php
  *   for the full rationale. (SEC-096: the older, replay-unsafe
  *   TOTP::verify() this comment used to contrast against was removed
  *   entirely on 02.08.2026, once confirmed unused anywhere in the app.)
@@ -24,7 +24,7 @@
  * BUG-010: login() calls Password::verifyAndRehash() instead of a raw
  *   password_verify() — on a correct password, a hash still on an older
  *   bcrypt cost is transparently re-hashed to the current one. See
- *   Password.php for the full rationale.
+ *   password_src.php for the full rationale.
  *
  * SEC-097: login() always spends one bcrypt verify, win or lose. Before
  *   this fix, `!$user || !Password::verifyAndRehash(...)` short-circuited
@@ -50,7 +50,7 @@
  *   timing, whether it was the login or the email address that collided
  *   with an existing account — see REGISTER_TIMING_FLOOR and
  *   equalizeRegisterTiming() below, and the docblock on register() itself.
- *   Mirrors the SEC-098 fix in forgot-password.php for the same class of
+ *   Mirrors the SEC-098 fix in forgot_password_page.php for the same class of
  *   account-enumeration problem.
  *
  * SEC-110: register()'s users INSERT is now wrapped in try/catch(PDOException).
@@ -62,14 +62,14 @@
  *   uncaught PDOException instead of the normal, enumeration-safe error
  *   response. See register()'s own inline comment for the full rationale;
  *   the same pattern was applied to Admin::createUser()/inviteUser() and
- *   confirm-email.php's "apply the change" branch in the same pass.
+ *   confirm_email_page.php's "apply the change" branch in the same pass.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
 
 class Auth
 {
-    // Public so CSRF.php can read the cookie name for direct derivation
+    // Public so csrf_src.php can read the cookie name for direct derivation
     public  const COOKIE_SESSION  = 'dv_s';
     public  const COOKIE_REMEMBER = 'dv_r';
 
@@ -90,7 +90,7 @@ class Auth
      * SEC-104: fixed floor (seconds) that register() pads BOTH the
      * "login or email already taken" branch and the "account created"
      * branch up to, via equalizeRegisterTiming() below — same
-     * $_sfp_target/usleep() pattern already used in forgot-password.php
+     * $_sfp_target/usleep() pattern already used in forgot_password_page.php
      * (SEC-098) for the identical class of problem. Set comfortably above
      * Password::hash()'s own ~2s cost at BCRYPT_COST=15 (see BUG-010),
      * since the "account created" branch always pays that cost and the
@@ -285,7 +285,7 @@ class Auth
         // not atomic — two near-simultaneous requests with the same login/email
         // can both pass the SELECT (neither has INSERTed yet) before either
         // reaches this write, and SEC-104's own multi-second timing floor
-        // above widens that window rather than closing it. DB.php sets
+        // above widens that window rather than closing it. db_src.php sets
         // PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, so the uq_login/uq_email
         // UNIQUE KEY (install.php, CREATE TABLE users) would otherwise turn
         // that race into an uncaught PDOException instead of a clean JSON/HTML
@@ -336,7 +336,7 @@ class Auth
      * REGISTER_TIMING_FLOOR. Shared by both branches of register() that
      * follow the uniqueness check, so "login or email already taken" and
      * "account created" take the same (floor-padded) amount of time —
-     * mirrors the $_sfp_target/usleep() pattern in forgot-password.php
+     * mirrors the $_sfp_target/usleep() pattern in forgot_password_page.php
      * (SEC-098), which solves the identical problem for password reset.
      * Can only ever ADD delay, never subtract — a genuinely slow bcrypt
      * hash or DB round trip that already exceeds the floor on its own is
@@ -370,7 +370,7 @@ class Auth
         // SEC-092: consolidated onto TOTP::useBackupCode() — the one
         // implementation of this check that already normalizes case
         // (strtoupper) before comparing. This call site and the one in
-        // api/settings.php (backup-codes regeneration) previously
+        // api/settings_api.php (backup-codes regeneration) previously
         // duplicated the same loop WITHOUT that normalization, so a
         // correct backup code typed in lowercase (e.g. copied by hand
         // from a printed sheet) was wrongly rejected as "Invalid code"

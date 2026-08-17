@@ -5,9 +5,9 @@
  * Handles user avatar upload, processing, serving and deletion.
  * Storage: storage/avatars/u{userId}.webp
  * Served:  GET /api/avatars/{userId} — PHP checks auth, streams file
- * API:     api/avatars.php
+ * API:     api/avatar_api.php
  *
- * Security model (same trust boundary as GroupIcon.php / Thumbnail.php):
+ * Security model (same trust boundary as group_icon_src.php / thumbnail_src.php):
  *   1. Magic-bytes pre-check — rejects non-image files before GD ever sees them
  *      (cheap fast-fail; not the real gate, just saves a wasted decode attempt).
  *   2. imagecreatefromstring() — the PRIMARY security gate. It actually decodes
@@ -157,7 +157,7 @@ class Avatar
         }
 
         // 4. Center-crop to square — top-biased (faces/logos tend to sit
-        //    in the upper portion of a photo, same heuristic as Thumbnail.php)
+        //    in the upper portion of a photo, same heuristic as thumbnail_src.php)
         if ($sw !== $sh) {
             $cropSize = min($sw, $sh);
             $cropX    = (int)(($sw - $cropSize) / 2);

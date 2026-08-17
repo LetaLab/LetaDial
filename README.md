@@ -353,7 +353,7 @@ server {
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
     add_header X-XSS-Protection "0" always;
-    # BUG-013: do NOT set Content-Security-Policy here. src/CSP.php sends
+    # BUG-013: do NOT set Content-Security-Policy here. src/csp_src.php sends
     # a nonce-based CSP header per request (see PLAN_NAPRAWY_CSP.md) — a
     # second, static CSP header from nginx would not be additive, it would
     # just confuse anyone comparing this file against a live vhost. Both
@@ -572,10 +572,10 @@ write_htaccess "$APP_DIR/logs/.htaccess"                "$DENY_ALL"
 
 # ── 6. Remove misplaced src/ files from api/ ─────────────────────────────
 API_SRC_FILES=(
-    Auth.php CSRF.php CSP.php DB.php Mailer.php Password.php
-    QRCode.php RateLimit.php TOTP.php
-    Group.php Dial.php Thumbnail.php GroupIcon.php Avatar.php
-    Meta.php Updater.php Import.php Export.php Admin.php
+    auth_src.php csrf_src.php csp_src.php db_src.php mailer_src.php password_src.php
+    qr_code_src.php rate_limit_src.php totp_src.php
+    group_src.php dial_src.php thumbnail_src.php group_icon_src.php avatar_src.php
+    meta_src.php updater_src.php import_src.php export_src.php admin_src.php
 )
 REMOVED_FROM_API=0
 for f in "${API_SRC_FILES[@]}"; do
@@ -681,13 +681,13 @@ here on.
 ## Directory structure
 
 ```text
-api/           HTTP endpoints (routed by index.php)
+api/           HTTP endpoints (routed by index.php), each file named {name}_api.php
 assets/        CSS, JS, icons, manifest
   css/         design-system.css + app.css
   js/          app.js
   icons/       favicon, PWA icons
-pages/         HTML page templates
-src/           PHP classes (Auth, Dial, Group, CSRF, ...)
+pages/         HTML page templates, each file named {name}_page.php
+src/           PHP classes (Auth, Dial, Group, CSRF, ...), each file named {name}_src.php
 storage/       User data - NOT web-accessible (protect with nginx!)
   thumbnails/  Dial thumbnails (WebP)
   group_icons/ Group custom icons (WebP)

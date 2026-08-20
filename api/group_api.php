@@ -11,7 +11,7 @@
  * POST   /api/groups/reorder      — reorder        {ids: [1,2,3,...]}
  *
  * SEC-095: every mutating endpoint below shares one 'group_mutate' rate
- * limit bucket: 500 requests/hour per user. Separate bucket from dials.php's
+ * limit bucket: 500 requests/hour per user. Separate bucket from dial_api.php's
  * 'dial_mutate' so a burst of group renames does not eat into your budget
  * for adding dials, or vice versa.
  */

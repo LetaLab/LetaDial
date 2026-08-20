@@ -2,6 +2,16 @@
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die();
 
+// VI.3: no-store — this page is the ONE place the TOTP secret and the 10
+// one-time backup codes are ever shown in plaintext; both are already
+// non-reproducible after this request (backup codes are stored bcrypt-hashed,
+// see auth_src.php::enable2FA()). Without this header, a browser's
+// back/forward cache (bfcache) could restore this exact rendered page later
+// on a shared/public machine, without any new request the server could
+// block on — the same bfcache rationale as dashboard_page.php/admin_page.php.
+header('Cache-Control: no-store, no-cache, must-revalidate, private');
+header('Pragma: no-cache');
+
 // BUG-002 (audit finding, corrected on re-verification): this file used to
 // have a `?download_codes=1` GET handler here that read
 // $_SESSION['show_backup_codes'] and streamed a .txt attachment. It was

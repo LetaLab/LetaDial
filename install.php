@@ -469,11 +469,21 @@ function db_create_tables(PDO $pdo): void {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
 
         // ── Rate Limits ───────────────────────────────────────────────────────
+        // SEC-112: attempts is SMALLINT UNSIGNED (0-65535), not TINYINT
+        // UNSIGNED (0-255). Several RateLimit::check() call sites use
+        // maxAttempts=500 (SEC-095/SEC-101 dial_mutate / group_mutate /
+        // settings_mutate buckets) — under TINYINT, the 256th write in a
+        // window overflowed the column and threw an unhandled PDOException
+        // (MySQL error 1264, "Out of range value"), turning the ONE
+        // mechanism meant to protect an endpoint from abuse into a 500
+        // error for every request once the count passed 255, instead of a
+        // clean 429. SMALLINT comfortably exceeds every maxAttempts value
+        // used anywhere in the app today, with headroom for future ones.
         "CREATE TABLE IF NOT EXISTS rate_limits (
             id           INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
             key_hash     CHAR(64)     NOT NULL COMMENT 'SHA-256(key+action)',
             action       VARCHAR(50)  NOT NULL,
-            attempts     TINYINT UNSIGNED NOT NULL DEFAULT 1,
+            attempts     SMALLINT UNSIGNED NOT NULL DEFAULT 1,
             window_start DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
             key_plain    VARCHAR(255) DEFAULT NULL,
             UNIQUE KEY uq_key_action (key_hash, action)

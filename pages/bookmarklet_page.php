@@ -13,6 +13,11 @@
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die();
 
+// VI.3: no-store — same bfcache rationale as dashboard_page.php/admin_page.php;
+// this popup embeds this user's CSRF token and full groups list inline.
+header('Cache-Control: no-store, no-cache, must-revalidate, private');
+header('Pragma: no-cache');
+
 $user        = Auth::getUser();
 $app_name    = htmlspecialchars(APP_NAME, ENT_QUOTES, 'UTF-8');
 $icon_url    = htmlspecialchars(APP_URL . '/assets/icons/icon-192.png', ENT_QUOTES, 'UTF-8');

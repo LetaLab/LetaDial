@@ -88,15 +88,42 @@ class RateLimit
         // "row doesn't exist yet" branch. Column names referenced (not
         // wrapped in VALUES()) inside ON DUPLICATE KEY UPDATE refer to the
         // row's current stored value, per MySQL semantics.
-        DB::run(
-            "INSERT INTO rate_limits (key_hash, action, attempts, window_start, key_plain)
-             VALUES (?, ?, 1, NOW(), ?)
-             ON DUPLICATE KEY UPDATE
-                attempts     = IF(window_start < DATE_SUB(NOW(), INTERVAL ? SECOND), 1, attempts + 1),
-                window_start = IF(window_start < DATE_SUB(NOW(), INTERVAL ? SECOND), NOW(), window_start),
-                key_plain    = VALUES(key_plain)",
-            [$hash, $action, $plain, $windowSec, $windowSec]
-        );
+        //
+        // SEC-112: the write itself is now wrapped in try/catch(PDOException)
+        // as a defense-in-depth backstop, independent of the `attempts`
+        // column's type. The primary fix is install.php's schema — attempts
+        // is now SMALLINT UNSIGNED (0-65535), comfortably above every
+        // maxAttempts value used anywhere in the app — but this method has
+        // no way to know, at runtime, whether it is running against an
+        // up-to-date schema or an older, not-yet-migrated TINYINT column on
+        // some install that hasn't applied the migration yet. Before this
+        // catch, ANY unexpected write failure here (an out-of-range value,
+        // or any other future DB error) propagated as an unhandled
+        // PDOException all the way to the router, since db_src.php sets
+        // PDO::ATTR_ERRMODE_EXCEPTION and nothing here ever caught anything.
+        // That turned the ONE mechanism specifically built to protect an
+        // endpoint from abuse (SEC-095/SEC-101) into a self-inflicted 500
+        // error for every subsequent request once a single write failed —
+        // the opposite of its purpose. Any write failure here now fails
+        // CLOSED (treated as "over the limit", i.e. blocked) rather than
+        // failing open or crashing the request: safe specifically for a
+        // rate limiter, since blocking one legitimate request during a rare
+        // DB hiccup costs far less than letting an attacker's request
+        // through un-throttled, or than surfacing a raw error to the caller.
+        try {
+            DB::run(
+                "INSERT INTO rate_limits (key_hash, action, attempts, window_start, key_plain)
+                 VALUES (?, ?, 1, NOW(), ?)
+                 ON DUPLICATE KEY UPDATE
+                    attempts     = IF(window_start < DATE_SUB(NOW(), INTERVAL ? SECOND), 1, attempts + 1),
+                    window_start = IF(window_start < DATE_SUB(NOW(), INTERVAL ? SECOND), NOW(), window_start),
+                    key_plain    = VALUES(key_plain)",
+                [$hash, $action, $plain, $windowSec, $windowSec]
+            );
+        } catch (PDOException $e) {
+            error_log('[RateLimit] check() write failed for action=' . $action . ': ' . $e->getMessage());
+            return true; // fail closed — block this request rather than let it through unthrottled
+        }
 
         // Read back the now-authoritative attempts count. Safe as a separate
         // statement here because the write above is already atomic — this

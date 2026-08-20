@@ -17,6 +17,11 @@
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die();
 
+// VI.3: no-store — same bfcache rationale as dashboard_page.php/admin_page.php;
+// this page embeds this user's CSRF token and theme/color preferences inline.
+header('Cache-Control: no-store, no-cache, must-revalidate, private');
+header('Pragma: no-cache');
+
 $user = Auth::requireLogin();
 
 $needs_2fa_setup = ($user['totp_required'] && !$user['totp_enabled'])

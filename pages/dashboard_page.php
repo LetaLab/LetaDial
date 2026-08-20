@@ -9,6 +9,15 @@
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die();
 
+// VI.3: no-store — this page embeds this user's full groups/dials list
+// (window.LETADIAL_BOOT) directly in inline JSON. Without this, a
+// browser's back/forward cache (bfcache) can restore the fully-rendered
+// page after sign-out on a shared/public machine, without any new request
+// the server could block on. Sent as early as possible, before any other
+// header or output.
+header('Cache-Control: no-store, no-cache, must-revalidate, private');
+header('Pragma: no-cache');
+
 $user = Auth::requireLogin();
 
 // Admin MUST have 2FA

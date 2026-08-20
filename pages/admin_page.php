@@ -26,6 +26,15 @@
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die();
 
+// VI.3: no-store — this page embeds EVERY user, every active session (IP +
+// user agent) and the full login history directly in inline JSON. Without
+// this, a browser's back/forward cache (bfcache) can restore the fully
+// rendered admin panel after sign-out on a shared/public machine, without
+// any new request the server could block on. Sent as early as possible,
+// before any other header or output.
+header('Cache-Control: no-store, no-cache, must-revalidate, private');
+header('Pragma: no-cache');
+
 $user = Auth::requireAdmin();
 
 $app_name   = htmlspecialchars(APP_NAME, ENT_QUOTES, 'UTF-8');
@@ -59,7 +68,7 @@ $login_rl_win = 300;
 $registration_enabled = Admin::getRegistrationEnabled();
 $registration_json    = $registration_enabled ? 'true' : 'false';
 
-// ── sesja 074: Custom Colors per-theme (mirror of dashboard.php) ─────────────
+// ── sesja 074: Custom Colors per-theme (mirror of dashboard_page.php) ────────
 $_valid_hex = '/^#[0-9A-Fa-f]{6}$/i';
 $custom_colors = [
     'light'    => (preg_match($_valid_hex, $user['theme_light_primary']    ?? '') ? strtolower($user['theme_light_primary'])    : null),
@@ -72,7 +81,7 @@ foreach (['light', 'dark', 'midnight'] as $_ctk) {
     $custom_extras[$_ctk] = ($raw && is_string($raw)) ? json_decode($raw, true) : null;
 }
 
-// PHP color helpers — _adm_ prefix avoids conflicts with dashboard.php helpers
+// PHP color helpers — _adm_ prefix avoids conflicts with dashboard_page.php helpers
 function _adm_hexToRgb(string $hex): array {
     return [hexdec(substr($hex,1,2)), hexdec(substr($hex,3,2)), hexdec(substr($hex,5,2))];
 }

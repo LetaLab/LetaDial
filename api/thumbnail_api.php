@@ -69,6 +69,7 @@ if ($method === 'POST' && $action === 'upload') {
 
     $err = $_FILES['thumb']['error'] ?? UPLOAD_ERR_NO_FILE;
     $tmp = $_FILES['thumb']['tmp_name'] ?? '';
+    $sz  = $_FILES['thumb']['size'] ?? 0;
 
     if ($err !== UPLOAD_ERR_OK || !$tmp) {
         $errMsg = match($err) {
@@ -79,6 +80,19 @@ if ($method === 'POST' && $action === 'upload') {
         http_response_code(400);
         header('Content-Type: application/json; charset=UTF-8');
         echo json_encode(['error' => $errMsg]); exit;
+    }
+
+    // BUG-028: explicit pre-check, matching avatar_api.php / group_icon_api.php
+    // — this endpoint was the one upload route without one. Not a new
+    // security boundary: Thumbnail::processUpload() already rejects an
+    // oversized file safely on its own (filesize() check before any Imagick
+    // read touches the bytes) — this only upgrades a large file from a
+    // generic 422 "processing failed" to the same clear "File too large"
+    // message the other two upload endpoints already give.
+    if ($sz > 5 * 1024 * 1024) {
+        http_response_code(422);
+        header('Content-Type: application/json; charset=UTF-8');
+        echo json_encode(['error' => 'File too large (max 5 MB).']); exit;
     }
 
     $ok = Thumbnail::processUpload($dialId, $user['id'], $tmp);

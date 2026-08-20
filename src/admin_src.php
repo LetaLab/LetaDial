@@ -658,6 +658,7 @@ class Admin
             'src/admin_src.php'            => true,
             'src/mailer_src.php'           => true,
             'src/totp_src.php'             => true,
+            'src/qr_code_src.php'          => true,   // BUG-025 — used by setup_2fa_page.php, was missing
             'src/rate_limit_src.php'       => true,
             'src/password_src.php'         => true,
             'src/import_src.php'           => true,
@@ -678,6 +679,7 @@ class Admin
             'pages/confirm_email_page.php' => true,
             'pages/setup_account_page.php' => true,
             'pages/bookmarklet_page.php'   => true,   // sesja 077
+            'pages/not_found_page.php'     => true,   // BUG-025 — 404 handler, was missing
             'api/dial_api.php'             => true,
             'api/group_api.php'            => true,
             'api/thumbnail_api.php'        => true,

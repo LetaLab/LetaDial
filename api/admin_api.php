@@ -33,7 +33,7 @@
  * SEC-105: force-password and create-user additionally require
  * `admin_password` — the CALLING admin's own current password, verified
  * via Password::verifyAndRehash() before the action runs. Same step-up
- * pattern update.php already uses for git-pull (SEC-079): both actions are
+ * pattern updater_api.php already uses for git-pull (SEC-079): both actions are
  * at least as consequential (full account takeover, or minting an
  * immediately-active account with an attacker-chosen role) — a
  * stolen/hijacked admin session alone must not be enough to trigger them.
@@ -197,7 +197,7 @@ if ($method === 'POST' && $action === 'force-password') {
         echo json_encode(['ok' => false, 'error' => 'user_id and password required.']); exit;
     }
 
-    // SEC-105: re-auth, same pattern as update.php's git-pull (SEC-079).
+    // SEC-105: re-auth, same pattern as updater_api.php's git-pull (SEC-079).
     // A successful call here is a full takeover of ANY account in the
     // system (Admin::forcePasswordReset() only checks $targetId !==
     // $adminId, not the target's role) — at least as severe as git-pull's
@@ -289,7 +289,7 @@ if ($method === 'POST' && $action === 'create-user') {
     }
 
     // SEC-105: re-auth, same pattern as force-password above and
-    // update.php's git-pull (SEC-079). This endpoint creates an
+    // updater_api.php's git-pull (SEC-079). This endpoint creates an
     // IMMEDIATELY active account (email_verified = 1, no confirmation
     // email) with an attacker-chosen role — including 'admin' — in a
     // single request. A stolen/hijacked admin session alone must not be

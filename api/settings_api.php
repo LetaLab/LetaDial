@@ -24,7 +24,7 @@
  * dial-width — had none at all. Risk from any single one of these was
  * already low (auth + CSRF both required, no secret being guessed, no
  * external side effect), but "low risk" isn't "no rate limit" — every
- * other mutating resource in the app (dials.php, groups.php) already
+ * other mutating resource in the app (dial_api.php, group_api.php) already
  * shares one generous per-user ceiling across all of its write actions
  * (SEC-095's 500/h dial_mutate / group_mutate). This brings the rest of
  * settings_api.php in line with that same pattern via one shared

@@ -21,10 +21,19 @@ logs/*
 # OPSEC-01: prywatne configi per-host — zawieraja realny adres IP, uklad
 # sieci domowej i sciezki certyfikatow. Uzyj nginx_letadial_example.conf
 # (z placeholderami CHANGEME) jako wzorca do publikacji zamiast tych plikow.
-*.andrzejl.eu.txt
-*.letalab.eu.txt
-dashboard_andrzejl_eu.txt
-letadial_letalab_eu.txt
+# OPSEC-02: poprzednia wersja tej reguly mieszala dwa niekompletne style —
+# dwa wzorce z kropka (*.andrzejl.eu.txt / *.letalab.eu.txt) i dwie
+# DOKLADNE nazwy plikow (dashboard_andrzejl_eu.txt / letadial_letalab_eu.txt).
+# Trzeci plik z ta sama konwencja co-hosta (letadial_andrzejl_eu.txt) nie
+# pasowal do zadnego z tych czterech wzorcow i NIE byl ignorowany — mogl
+# trafic do publicznego repo razem z realnym IP/siecia/sciezkami certyfikatow.
+# Zastapione czterema wzorcami-glob, kazdy odporny na oba warianty nazewnictwa
+# (kropka LUB podkreslnik) dla obu hostow, wiec przyszly plik per-host o
+# analogicznej nazwie jest ignorowany automatycznie, bez recznego dopisywania.
+*andrzejl_eu.txt
+*andrzejl.eu.txt
+*letalab_eu.txt
+*letalab.eu.txt
 
 # OPSEC-01: osobiste eksporty testowe — zawieraja realne domeny prywatne,
 # adresy wewnetrzne i nazwy uslug home-labowych.

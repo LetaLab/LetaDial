@@ -37,6 +37,21 @@
  * at least as consequential (full account takeover, or minting an
  * immediately-active account with an attacker-chosen role) — a
  * stolen/hijacked admin session alone must not be enough to trigger them.
+ *
+ * SEC-113: unblock, unblock-all, delete-user, sessions/delete,
+ * sessions/delete-user and the registration toggle previously had CSRF +
+ * the admin role check but NO rate limit at all — every other mutating
+ * action in this file already has one (force-password/invite/create-user
+ * below, plus the SEC-095/SEC-101 pattern used across dial_api.php,
+ * group_api.php, settings_api.php). Worst case with a stolen/hijacked
+ * admin session: an unthrottled loop over delete-user could erase every
+ * account in the instance in seconds, with nothing to slow it down beyond
+ * the CSRF token the attacker already holds. All six now share one
+ * 'admin_mutate' bucket (200/h/admin) — generous enough that no normal
+ * admin workflow will ever notice it, tight enough to turn "instant mass
+ * deletion" into "throttled, noticeable, and logged as repeated 429s."
+ * delete-user is not additionally covered by SEC-105's re-auth step —
+ * that remains a separate, still-open decision (see SEC_AND_BUG_ANIH_PLAN.md).
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -69,6 +84,11 @@ if ($method === 'GET' && $action === 'blocked') {
 // ── POST /api/admin/unblock ───────────────────────────────────────────────────
 if ($method === 'POST' && $action === 'unblock') {
     CSRF::require();
+    // SEC-113
+    if (RateLimit::check('admin_mutate', (string)$user['id'], 200, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
     $body    = json_decode(file_get_contents('php://input'), true) ?? [];
     $keyHash = trim($body['key_hash'] ?? '');
     $act     = trim($body['action']   ?? '');
@@ -83,6 +103,11 @@ if ($method === 'POST' && $action === 'unblock') {
 // ── POST /api/admin/unblock-all ──────────────────────────────────────────────
 if ($method === 'POST' && $action === 'unblock-all') {
     CSRF::require();
+    // SEC-113
+    if (RateLimit::check('admin_mutate', (string)$user['id'], 200, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
     $body     = json_decode(file_get_contents('php://input'), true) ?? [];
     $keyPlain = trim($body['key_plain'] ?? '');
     if (!$keyPlain) {
@@ -102,6 +127,11 @@ if ($method === 'GET' && $action === 'users') {
 // ── POST /api/admin/delete-user ───────────────────────────────────────────────
 if ($method === 'POST' && $action === 'delete-user') {
     CSRF::require();
+    // SEC-113
+    if (RateLimit::check('admin_mutate', (string)$user['id'], 200, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
     $body   = json_decode(file_get_contents('php://input'), true) ?? [];
     $userId = (int)($body['user_id'] ?? 0);
     if (!$userId) {
@@ -156,6 +186,11 @@ if ($method === 'GET' && $action === 'sessions' && $sub_action === null) {
 
 if ($method === 'POST' && $action === 'sessions' && $sub_action === 'delete') {
     CSRF::require();
+    // SEC-113
+    if (RateLimit::check('admin_mutate', (string)$user['id'], 200, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
     $body      = json_decode(file_get_contents('php://input'), true) ?? [];
     $sessionId = trim($body['session_id'] ?? '');
     if (!$sessionId) {
@@ -173,6 +208,11 @@ if ($method === 'POST' && $action === 'sessions' && $sub_action === 'delete') {
 
 if ($method === 'POST' && $action === 'sessions' && $sub_action === 'delete-user') {
     CSRF::require();
+    // SEC-113
+    if (RateLimit::check('admin_mutate', (string)$user['id'], 200, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
     $body   = json_decode(file_get_contents('php://input'), true) ?? [];
     $userId = (int)($body['user_id'] ?? 0);
     if (!$userId) {
@@ -255,6 +295,11 @@ if ($method === 'GET' && $action === 'registration') {
 
 if ($method === 'POST' && $action === 'registration') {
     CSRF::require();
+    // SEC-113
+    if (RateLimit::check('admin_mutate', (string)$user['id'], 200, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
     $body    = json_decode(file_get_contents('php://input'), true) ?? [];
     if (!array_key_exists('enabled', $body)) {
         http_response_code(422);

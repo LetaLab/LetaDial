@@ -112,6 +112,26 @@ class Auth
             return ['ok' => false, 'error' => 'Too many login attempts. Please wait 10 minutes.'];
         }
 
+        // INFO-B (24.08.2026): per-account limit, independent of the
+        // attacker's source IP. The 'login' bucket above is keyed by IP
+        // only, so an attack spread across many IPs against ONE target
+        // account was not bounded at all — 10 attempts/IP times an
+        // unlimited number of IPs. Keyed by the lowercased, trimmed
+        // SUBMITTED login string, not by a resolved user ID or any DB
+        // lookup result — this runs identically whether or not that
+        // string turns out to match a real account, which is what keeps
+        // SEC-097's enumeration-safe timing/behaviour below fully intact
+        // (a non-existent login gets its own harmless bucket; a real one
+        // gets genuinely throttled no matter how many IPs are used).
+        // Looser than the per-IP limit (20 vs 10, 15 min vs 5 min window)
+        // since a legitimate person switching between phone/laptop/work
+        // devices can plausibly rack up more failed attempts across
+        // different IPs than from any single one of them.
+        $loginKey = mb_strtolower(trim($login));
+        if ($loginKey !== '' && RateLimit::check('login_account', $loginKey, 20, 900, 900)) {
+            return ['ok' => false, 'error' => 'Too many login attempts for this account. Please wait 15 minutes.'];
+        }
+
         $user = DB::row(
             "SELECT * FROM users WHERE (login = ? OR email = ?) AND email_verified = 1 LIMIT 1",
             [$login, $login]
@@ -150,6 +170,7 @@ class Auth
         }
 
         RateLimit::clear('login', $ip);
+        RateLimit::clear('login_account', $loginKey);
 
         $totp_verified = ($user['totp_enabled'] ? 0 : 1);
         $raw_token     = self::createSession($user['id'], $totp_verified);

@@ -89,40 +89,63 @@ class Dial
         );
         if (!$group) return ['ok' => false, 'error' => 'Group not found.'];
 
-        // SEC-084: max_dials_per_user was enforced in duplicate()/bulkDuplicate()
-        // but not here — the plain "Add dial" form/bookmarklet/API path had no
-        // ceiling at all. Same check, same pattern, same error message as the
-        // other two call sites for consistency.
-        // SEC-095: fallback raised 500 -> 5000. The DB value in `settings`
-        // (seeded by install.php, editable directly in the DB) is what
-        // actually governs existing installs. This literal is only used
-        // if that row is ever missing.
-        $maxDials = (int)(DB::val(
-            "SELECT value FROM settings WHERE key_name = 'max_dials_per_user'"
-        ) ?? 5000);
-        $currentCount = (int)(DB::val(
-            'SELECT COUNT(*) FROM dials WHERE user_id = ?',
-            [$userId]
-        ) ?? 0);
-        if ($currentCount >= $maxDials) {
-            return ['ok' => false, 'error' => "Dial limit reached (max {$maxDials})."];
+        // INFO-F (24.08.2026): the count-check-then-insert below is not
+        // atomic — two near-simultaneous requests for the same user could
+        // both pass COUNT(*) before either INSERTs, letting that user end
+        // up a handful of dials over their own configured limit. Zero
+        // cross-user impact and zero security risk either way (the only
+        // person affected is the one who triggered it, and only by a small
+        // margin), but Andrzej asked for it closed anyway. GET_LOCK() is
+        // MySQL's own advisory-lock primitive, scoped per-user via the key
+        // below — no schema change needed, and unlike a row-level
+        // `SELECT ... FOR UPDATE`, it works even when the user has zero
+        // existing dials to lock against. 5s timeout: long enough for any
+        // realistic concurrent request, short enough to fail fast instead
+        // of hanging if something upstream ever leaks a lock.
+        $lockKey = 'letadial_dial_create_u' . $userId;
+        $gotLock = (bool)DB::val('SELECT GET_LOCK(?, 5)', [$lockKey]);
+        if (!$gotLock) {
+            return ['ok' => false, 'error' => 'Server busy, please try again.'];
         }
 
-        $pos = (int)(DB::val(
-            'SELECT COALESCE(MAX(position), -1) FROM dials WHERE user_id = ? AND group_id = ?',
-            [$userId, $groupId]
-        ) ?? -1) + 1;
+        try {
+            // SEC-084: max_dials_per_user was enforced in duplicate()/bulkDuplicate()
+            // but not here — the plain "Add dial" form/bookmarklet/API path had no
+            // ceiling at all. Same check, same pattern, same error message as the
+            // other two call sites for consistency.
+            // SEC-095: fallback raised 500 -> 5000. The DB value in `settings`
+            // (seeded by install.php, editable directly in the DB) is what
+            // actually governs existing installs. This literal is only used
+            // if that row is ever missing.
+            $maxDials = (int)(DB::val(
+                "SELECT value FROM settings WHERE key_name = 'max_dials_per_user'"
+            ) ?? 5000);
+            $currentCount = (int)(DB::val(
+                'SELECT COUNT(*) FROM dials WHERE user_id = ?',
+                [$userId]
+            ) ?? 0);
+            if ($currentCount >= $maxDials) {
+                return ['ok' => false, 'error' => "Dial limit reached (max {$maxDials})."];
+            }
 
-        $title = self::_cleanTitle($title !== '' ? $title : self::_titleFromUrl($url));
-        $notes = self::_cleanNotes($notes);
+            $pos = (int)(DB::val(
+                'SELECT COALESCE(MAX(position), -1) FROM dials WHERE user_id = ? AND group_id = ?',
+                [$userId, $groupId]
+            ) ?? -1) + 1;
 
-        DB::run(
-            'INSERT INTO dials (user_id, group_id, title, url, notes, position, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [$userId, $groupId, $title, $url, $notes ?: null, $pos, date('Y-m-d H:i:s')]
-        );
+            $title = self::_cleanTitle($title !== '' ? $title : self::_titleFromUrl($url));
+            $notes = self::_cleanNotes($notes);
 
-        return ['ok' => true, 'id' => (int)DB::lastId()];
+            DB::run(
+                'INSERT INTO dials (user_id, group_id, title, url, notes, position, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)',
+                [$userId, $groupId, $title, $url, $notes ?: null, $pos, date('Y-m-d H:i:s')]
+            );
+
+            return ['ok' => true, 'id' => (int)DB::lastId()];
+        } finally {
+            DB::val('SELECT RELEASE_LOCK(?)', [$lockKey]);
+        }
     }
 
     // ── Pin / Unpin ───────────────────────────────────────────────────────────
@@ -162,30 +185,43 @@ class Dial
             return ['ok' => false, 'error' => 'Target group not found.'];
         }
 
-        // SEC-095: fallback raised 500 → 5000, see create() above for rationale.
-        $maxDials = (int)(DB::val(
-            "SELECT value FROM settings WHERE key_name = 'max_dials_per_user'"
-        ) ?? 5000);
-        $currentCount = (int)(DB::val(
-            'SELECT COUNT(*) FROM dials WHERE user_id = ?',
-            [$userId]
-        ) ?? 0);
-        if ($currentCount >= $maxDials) {
-            return ['ok' => false, 'error' => "Dial limit reached (max {$maxDials})."];
+        // INFO-F (24.08.2026): same count-check-then-insert race as
+        // create() above, same fix — see that method's comment for the
+        // full rationale.
+        $lockKey = 'letadial_dial_create_u' . $userId;
+        $gotLock = (bool)DB::val('SELECT GET_LOCK(?, 5)', [$lockKey]);
+        if (!$gotLock) {
+            return ['ok' => false, 'error' => 'Server busy, please try again.'];
         }
 
-        $pos = (int)(DB::val(
-            'SELECT COALESCE(MAX(position), -1) FROM dials WHERE user_id = ? AND group_id = ?',
-            [$userId, $targetGroupId]
-        ) ?? -1) + 1;
+        try {
+            // SEC-095: fallback raised 500 → 5000, see create() above for rationale.
+            $maxDials = (int)(DB::val(
+                "SELECT value FROM settings WHERE key_name = 'max_dials_per_user'"
+            ) ?? 5000);
+            $currentCount = (int)(DB::val(
+                'SELECT COUNT(*) FROM dials WHERE user_id = ?',
+                [$userId]
+            ) ?? 0);
+            if ($currentCount >= $maxDials) {
+                return ['ok' => false, 'error' => "Dial limit reached (max {$maxDials})."];
+            }
 
-        DB::run(
-            'INSERT INTO dials (user_id, group_id, title, url, notes, position, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [$userId, $targetGroupId, $dial['title'], $dial['url'], $dial['notes'] ?: null, $pos, date('Y-m-d H:i:s')]
-        );
+            $pos = (int)(DB::val(
+                'SELECT COALESCE(MAX(position), -1) FROM dials WHERE user_id = ? AND group_id = ?',
+                [$userId, $targetGroupId]
+            ) ?? -1) + 1;
 
-        return ['ok' => true, 'id' => (int)DB::lastId()];
+            DB::run(
+                'INSERT INTO dials (user_id, group_id, title, url, notes, position, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)',
+                [$userId, $targetGroupId, $dial['title'], $dial['url'], $dial['notes'] ?: null, $pos, date('Y-m-d H:i:s')]
+            );
+
+            return ['ok' => true, 'id' => (int)DB::lastId()];
+        } finally {
+            DB::val('SELECT RELEASE_LOCK(?)', [$lockKey]);
+        }
     }
 
     // ── Bulk Delete ───────────────────────────────────────────────────────────
@@ -284,52 +320,68 @@ class Dial
         );
         if (!$group) return ['ok' => false, 'error' => 'Target group not found.'];
 
-        // SEC-095: fallback raised 500 → 5000, see create() above for rationale.
-        $maxDials = (int)(DB::val(
-            "SELECT value FROM settings WHERE key_name = 'max_dials_per_user'"
-        ) ?? 5000);
-        $currentCount = (int)(DB::val(
-            'SELECT COUNT(*) FROM dials WHERE user_id = ?',
-            [$userId]
-        ) ?? 0);
-
-        if ($currentCount >= $maxDials) {
-            return ['ok' => false, 'error' => "Dial limit reached (max {$maxDials})."];
+        // INFO-F (24.08.2026): same count-check-then-insert race as
+        // create()/duplicate() above, closed the same way. The existing
+        // `$currentCount + $created >= $maxDials` check inside the loop
+        // below already bounds a single request's OWN batch correctly —
+        // this lock additionally closes the race between TWO separate,
+        // concurrent bulk-duplicate requests for the same user.
+        $lockKey = 'letadial_dial_create_u' . $userId;
+        $gotLock = (bool)DB::val('SELECT GET_LOCK(?, 5)', [$lockKey]);
+        if (!$gotLock) {
+            return ['ok' => false, 'error' => 'Server busy, please try again.'];
         }
 
-        $ids = array_unique(array_map('intval', $ids));
-        $ph  = implode(',', array_fill(0, count($ids), '?'));
+        try {
+            // SEC-095: fallback raised 500 → 5000, see create() above for rationale.
+            $maxDials = (int)(DB::val(
+                "SELECT value FROM settings WHERE key_name = 'max_dials_per_user'"
+            ) ?? 5000);
+            $currentCount = (int)(DB::val(
+                'SELECT COUNT(*) FROM dials WHERE user_id = ?',
+                [$userId]
+            ) ?? 0);
 
-        $dials = DB::rows(
-            "SELECT id, title, url, notes FROM dials WHERE id IN ({$ph}) AND user_id = ?
-             ORDER BY position ASC, id ASC",
-            [...$ids, $userId]
-        );
+            if ($currentCount >= $maxDials) {
+                return ['ok' => false, 'error' => "Dial limit reached (max {$maxDials})."];
+            }
 
-        if (empty($dials)) return ['ok' => false, 'error' => 'No valid dials found.'];
+            $ids = array_unique(array_map('intval', $ids));
+            $ph  = implode(',', array_fill(0, count($ids), '?'));
 
-        $maxPos = (int)(DB::val(
-            'SELECT COALESCE(MAX(position), -1) FROM dials WHERE user_id = ? AND group_id = ?',
-            [$userId, $targetGroupId]
-        ) ?? -1);
+            $dials = DB::rows(
+                "SELECT id, title, url, notes FROM dials WHERE id IN ({$ph}) AND user_id = ?
+                 ORDER BY position ASC, id ASC",
+                [...$ids, $userId]
+            );
 
-        $created = 0;
-        $newIds  = [];
-        $pdo     = DB::get();
-        $stmt    = $pdo->prepare(
-            'INSERT INTO dials (user_id, group_id, title, url, notes, position, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)'
-        );
+            if (empty($dials)) return ['ok' => false, 'error' => 'No valid dials found.'];
 
-        foreach ($dials as $d) {
-            if ($currentCount + $created >= $maxDials) break;
-            $maxPos++;
-            $stmt->execute([$userId, $targetGroupId, $d['title'], $d['url'], $d['notes'] ?: null, $maxPos, date('Y-m-d H:i:s')]);
-            $newIds[] = (int)$pdo->lastInsertId();
-            $created++;
+            $maxPos = (int)(DB::val(
+                'SELECT COALESCE(MAX(position), -1) FROM dials WHERE user_id = ? AND group_id = ?',
+                [$userId, $targetGroupId]
+            ) ?? -1);
+
+            $created = 0;
+            $newIds  = [];
+            $pdo     = DB::get();
+            $stmt    = $pdo->prepare(
+                'INSERT INTO dials (user_id, group_id, title, url, notes, position, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)'
+            );
+
+            foreach ($dials as $d) {
+                if ($currentCount + $created >= $maxDials) break;
+                $maxPos++;
+                $stmt->execute([$userId, $targetGroupId, $d['title'], $d['url'], $d['notes'] ?: null, $maxPos, date('Y-m-d H:i:s')]);
+                $newIds[] = (int)$pdo->lastInsertId();
+                $created++;
+            }
+
+            return ['ok' => true, 'duplicated' => $created, 'ids' => $newIds];
+        } finally {
+            DB::val('SELECT RELEASE_LOCK(?)', [$lockKey]);
         }
-
-        return ['ok' => true, 'duplicated' => $created, 'ids' => $newIds];
     }
 
     // ── Update ────────────────────────────────────────────────────────────────

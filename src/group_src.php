@@ -83,10 +83,30 @@ class Group
             [$userId]
         ) ?? -1);
 
-        DB::run(
-            "INSERT INTO groups_list (user_id, name, position) VALUES (?, ?, ?)",
-            [$userId, $name, $maxPos + 1]
-        );
+        // INFO-C (24.08.2026): the $exists SELECT above and this INSERT are
+        // not atomic — two near-simultaneous requests for the SAME name
+        // (double-click, two open tabs) could both pass the SELECT before
+        // either INSERTs, producing a real duplicate the check above was
+        // meant to prevent. Zero cross-user impact and zero data loss
+        // either way (worst case was always just a cosmetic duplicate
+        // name), but install.php now also carries a real
+        // `UNIQUE KEY uq_user_name (user_id, name)` constraint, and the
+        // INSERT is caught here the same way SEC-110/SEC-111 already catch
+        // this exact class of race elsewhere (auth_src.php::register(),
+        // Admin::createUser()/inviteUser()) — the loser of the race gets
+        // the identical clean error message below instead of an uncaught
+        // PDOException.
+        try {
+            DB::run(
+                "INSERT INTO groups_list (user_id, name, position) VALUES (?, ?, ?)",
+                [$userId, $name, $maxPos + 1]
+            );
+        } catch (PDOException $e) {
+            if ($e->getCode() === '23000') {
+                return ['ok' => false, 'error' => 'A group with this name already exists.'];
+            }
+            throw $e; // any other DB error stays a real, loud failure
+        }
 
         return ['ok' => true, 'id' => (int)DB::lastId()];
     }
@@ -111,10 +131,22 @@ class Group
         );
         if ($exists) return ['ok' => false, 'error' => 'Another group already has this name.'];
 
-        DB::run(
-            "UPDATE groups_list SET name = ? WHERE id = ? AND user_id = ?",
-            [$newName, $groupId, $userId]
-        );
+        // INFO-C (24.08.2026): same check-then-write race as create() above,
+        // and the new UNIQUE KEY uq_user_name (install.php) applies to this
+        // UPDATE just as much as to an INSERT — without this try/catch,
+        // adding that constraint would have introduced a NEW uncaught
+        // PDOException risk here that did not exist before this fix.
+        try {
+            DB::run(
+                "UPDATE groups_list SET name = ? WHERE id = ? AND user_id = ?",
+                [$newName, $groupId, $userId]
+            );
+        } catch (PDOException $e) {
+            if ($e->getCode() === '23000') {
+                return ['ok' => false, 'error' => 'Another group already has this name.'];
+            }
+            throw $e;
+        }
         return ['ok' => true];
     }
 

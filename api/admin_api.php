@@ -50,8 +50,18 @@
  * 'admin_mutate' bucket (200/h/admin) — generous enough that no normal
  * admin workflow will ever notice it, tight enough to turn "instant mass
  * deletion" into "throttled, noticeable, and logged as repeated 429s."
- * delete-user is not additionally covered by SEC-105's re-auth step —
- * that remains a separate, still-open decision (see SEC_AND_BUG_ANIH_PLAN.md).
+ * delete-user additionally requires SEC-105's re-auth step as of
+ * 24.08.2026 (see immediately below) — the two together mean a stolen
+ * session alone can neither loop the action nor trigger it even once
+ * without the account owner's own current password.
+ *
+ * SEC-113 extension (24.08.2026, per Andrzej): delete-user now ALSO
+ * requires `admin_password`, identical to force-password/create-user
+ * below. Deleting an account is irreversible and cascades every dial,
+ * group, session, avatar and thumbnail that user owns (Admin::deleteUser())
+ * — at least as consequential as those two actions, so it gets the same
+ * step-up guarantee: a stolen/hijacked admin session alone is not enough,
+ * the request must also carry the calling admin's own current password.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -138,11 +148,26 @@ if ($method === 'POST' && $action === 'delete-user') {
         http_response_code(422);
         echo json_encode(['ok' => false, 'error' => 'user_id required.']); exit;
     }
+
+    // SEC-113 extension (24.08.2026, per Andrzej): re-auth, same pattern as
+    // force-password/create-user below. Deleting an account is irreversible
+    // and cascades every dial/group/session/avatar/thumbnail that user
+    // owns — a stolen/hijacked admin session alone must not be enough to
+    // trigger it.
+    $adminPassword = $body['admin_password'] ?? '';
+    $adminRow      = DB::row("SELECT password_hash FROM users WHERE id = ?", [$user['id']]);
+    if ($adminPassword === '' || !$adminRow
+        || !Password::verifyAndRehash($adminPassword, $adminRow['password_hash'], (int)$user['id'])) {
+        http_response_code(403);
+        echo json_encode(['ok' => false, 'error' => 'Incorrect password. Re-enter your password to confirm this action.']); exit;
+    }
+
     $result = Admin::deleteUser($userId, $user['id']);
     http_response_code($result['ok'] ? 200 : 422);
     echo json_encode($result);
     exit;
 }
+
 
 // ── GET /api/admin/login-history ──────────────────────────────────────────────
 if ($method === 'GET' && $action === 'login-history') {

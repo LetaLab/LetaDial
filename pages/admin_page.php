@@ -1,10 +1,10 @@
 <?php
 /**
- * LetaDial — Admin Panel (sesja 065 + 066 + 067 + 068 + 069 + 074 + 078 + SEC-079 + SEC-105)
+ * LetaDial — Admin Panel (sesja 065 + 066 + 067 + 068 + 069 + 074 + 078 + SEC-079 + SEC-105 + SEC-113)
  *
  * Tabs:
  *   1. Blocked IPs    — rate_limits; unblock / export
- *   2. Users          — accounts; delete; force-reset password (step-up auth, SEC-105); invite (067); registration toggle (068); avatars (078)
+ *   2. Users          — accounts; delete (rate limit + step-up auth, SEC-113); force-reset password (step-up auth, SEC-105); invite (067); registration toggle (068); avatars (078)
  *   3. Sessions       — all active sessions; delete single / all for user
  *   4. Login History  — recent auth attempts; filter by IP
  *   5. Update         — git check vs github.com/LetaLab/LetaDial + git pull (password re-auth required, SEC-079)
@@ -22,6 +22,10 @@
  * reauth modal + promptReauth() introduced by SEC-079 is now generalized
  * (accepts a per-caller message) and shared by all three flows instead of
  * being git-pull-specific.
+ * SEC-113 (24.08.2026): delete-user now goes through the SAME generic
+ * promptReauth() modal as force-password/create-user — deleting an
+ * account is irreversible and at least as consequential as those two.
+ * No new modal was needed; doDeleteUser() just calls the existing one.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die();
@@ -908,7 +912,14 @@ function renderUsers(data) {
 }
 async function doDeleteUser(userId,login) {
     if(!await cfm('Delete account',`Permanently delete "${login}"?\n\nAll groups, dials, sessions, avatar and thumbnails will be removed.\nCannot be undone.`))return;
-    const r=await api('POST','/api/admin/delete-user',{user_id:userId});
+
+    // SEC-113 extension (24.08.2026): re-auth required, same pattern as
+    // force-password/create-user (SEC-105). Reuses the existing generic
+    // reauth-overlay/promptReauth() - no new modal needed.
+    const adminPw = await promptReauth(`Deleting "${login}" is permanent and requires confirming your own password. Re-enter your password to continue.`);
+    if (adminPw === null) return;
+
+    const r=await api('POST','/api/admin/delete-user',{user_id:userId, admin_password:adminPw});
     if(!r.ok){toast(r.error||'Could not delete.','error');return;}
     toast(`Account "${r.login}" deleted.`,'success');
     users=users.filter(u=>parseInt(u.id)!==userId);renderUsers(users);

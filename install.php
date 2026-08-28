@@ -430,7 +430,8 @@ function db_create_tables(PDO $pdo): void {
             color      VARCHAR(7)   DEFAULT NULL,
             icon_path  VARCHAR(255) DEFAULT NULL,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-            INDEX idx_user (user_id)
+            INDEX idx_user (user_id),
+            UNIQUE KEY uq_user_name (user_id, name)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
 
         // ── Dials ─────────────────────────────────────────────────────────────

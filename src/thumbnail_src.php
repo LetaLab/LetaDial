@@ -749,7 +749,23 @@ class Thumbnail
         $favDrawn = false;
 
         if ($faviconData) {
-            $fav = @imagecreatefromstring($faviconData);
+            // SEC-118: same getimagesizefromstring() pre-check as the other
+            // four decode paths in this class (SEC-090's docblock names
+            // processUpload()/generateFromOgImage() here, plus Avatar and
+            // GroupIcon's own upload handlers) - this was the one function
+            // that hardening pass missed. SEC-103 already caps the DOWNLOAD
+            // at MAX_FAVICON_BYTES (1 MB), but that only bounds the
+            // compressed size on the wire; it does nothing to stop a small,
+            // valid-looking image file whose header declares an
+            // implausibly large pixel size from allocating a huge amount of
+            // memory once fully decoded. getimagesizefromstring() only reads
+            // the header, so it stays cheap regardless of what the body
+            // eventually would decode to.
+            $favDims = @getimagesizefromstring($faviconData);
+            $favSafe = $favDims
+                && $favDims[0] >= 1 && $favDims[1] >= 1
+                && $favDims[0] <= self::MAX_DIMENSION && $favDims[1] <= self::MAX_DIMENSION;
+            $fav = $favSafe ? @imagecreatefromstring($faviconData) : false;
             if ($fav) {
                 $size = 40;
                 $dx = (int)((self::WIDTH  - $size) / 2);

@@ -55,7 +55,10 @@ if (!$token || !preg_match('/^[a-f0-9]{64}$/', $token)) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $token_valid && $user) {
     CSRF::require();
 
-    if (RateLimit::check('setup_account', $token, 5, 3600, 3600)) {
+    // SEC-117: $sensitive=true - $token is the raw, still-valid setup/invite
+    // secret itself. It must never land in rate_limits.key_plain, which
+    // Admin::getBlocked()/exportBlocked() can display/export to any admin.
+    if (RateLimit::check('setup_account', $token, 5, 3600, 3600, true)) {
         $error = 'Too many attempts. Please ask your administrator to send a new invitation.';
     } else {
         $new     = $_POST['password']        ?? '';

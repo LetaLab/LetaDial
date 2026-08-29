@@ -189,6 +189,15 @@ class Import
                 break;
             }
 
+            // BUG-029: a hand-edited or malformed import file can contain a
+            // non-array entry in the dials list (a bare string, number, or
+            // null). Every ?? read below would otherwise trigger a PHP
+            // "illegal offset" warning on such an entry instead of cleanly
+            // skipping it - harmless (validateUrl('') already rejects it
+            // either way), but noisy in the logs and inconsistent with how
+            // the surrounding structure is validated at the array level.
+            if (!is_array($d)) { $skipped++; continue; }
+
             $url   = self::validateUrl($d['url'] ?? '');
             $title = self::cleanStr($d['title'] ?? '', self::MAX_TITLE);
             $notes = self::cleanStr($d['notes'] ?? '', self::MAX_NOTES);

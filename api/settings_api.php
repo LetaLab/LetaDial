@@ -221,6 +221,27 @@ if ($action === 'email' && $sub_action === null) {
         http_response_code(429);
         echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again in an hour.']); exit;
     }
+
+    // SEC-116: step-up re-auth, same pattern as POST /api/settings/password
+    // above and the admin actions in admin_api.php (SEC-105). Without this,
+    // a hijacked session alone (no knowledge of the password at all) was
+    // enough to point the account's email at an address the attacker
+    // controls, confirm it via that inbox, then use /forgot-password to set
+    // a brand new password - a full, irreversible account takeover that
+    // never required the attacker to know the current password. Every other
+    // sensitive self-service action already required proof of the password
+    // (or a 2FA code); this was the one gap.
+    $currentPassword = $body['current_password'] ?? '';
+    if ($currentPassword === '') {
+        http_response_code(422);
+        echo json_encode(['ok' => false, 'error' => 'Please enter your current password to confirm this change.']); exit;
+    }
+    $authRow = DB::row("SELECT password_hash FROM users WHERE id = ?", [$user['id']]);
+    if (!$authRow || !Password::verifyAndRehash($currentPassword, $authRow['password_hash'], (int)$user['id'])) {
+        http_response_code(422);
+        echo json_encode(['ok' => false, 'error' => 'Current password is incorrect.']); exit;
+    }
+
     $newEmail = strtolower(trim($body['new_email'] ?? ''));
     if (!$newEmail) { http_response_code(422); echo json_encode(['ok' => false, 'error' => 'New email address is required.']); exit; }
     if (!filter_var($newEmail, FILTER_VALIDATE_EMAIL)) { http_response_code(422); echo json_encode(['ok' => false, 'error' => 'Invalid email address format.']); exit; }

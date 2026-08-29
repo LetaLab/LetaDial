@@ -30,15 +30,30 @@ class RateLimit
      *
      * Note: blockSec >= windowSec in all callers.
      */
+    /**
+     * SEC-117: $sensitive marks calls where $key is itself a secret bearer
+     * credential (a password-reset or account-setup token), not an IP or a
+     * user ID. key_plain exists ONLY for admin-facing display
+     * (Admin::getBlocked() / Admin::exportBlocked()) - it is never read by
+     * the throttling logic itself, which always matches on key_hash. Before
+     * this flag, reset_password_page.php and setup_account_page.php passed
+     * the raw, still-valid token straight into key_plain, where it became
+     * visible (and CSV/JSON-exportable) to any admin who lowered the
+     * "min attempts" filter to 1 - defeating the whole point of a
+     * single-use secret token. When $sensitive is true, key_plain is stored
+     * as NULL instead; the rate limit itself is completely unaffected since
+     * key_hash is computed from the full, untouched $key either way.
+     */
     public static function check(
         string $action,
         string $key,
         int    $maxAttempts,
         int    $windowSec,
-        int    $blockSec
+        int    $blockSec,
+        bool   $sensitive = false
     ): bool {
         $hash  = hash('sha256', $key);
-        $plain = mb_substr($key, 0, 255);
+        $plain = $sensitive ? null : mb_substr($key, 0, 255);
 
         // Purge expired entries for THIS action only (older than its own blockSec).
         //

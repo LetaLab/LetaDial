@@ -238,7 +238,11 @@ function process_install(string &$step): void {
         // fresh install should not depend on that. Note nginx does NOT read
         // .htaccess at all (see SEC-085 / README "Security notes") — the real
         // protection on nginx installs is the `location ^~ /storage/` block.
-        $deny_all  = "Options -Indexes\nOrder deny,allow\nDeny from all\n";
+        // SEC-121: dual Apache 2.2/2.4+ syntax - see avatar_src.php /
+        // group_icon_src.php for the matching runtime-generated copies of
+        // this same content and the full rationale (Order/Deny alone is
+        // silently ignored on Apache 2.4+ without mod_access_compat).
+        $deny_all  = "Options -Indexes\n<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\n    Order deny,allow\n    Deny from all\n</IfModule>\n";
         $no_php    = "Options -Indexes\nphp_flag engine off\n";
         foreach ([
             'storage/.htaccess'             => $deny_all,

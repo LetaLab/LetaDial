@@ -162,7 +162,21 @@ class TOTP
         return [$plain, $hashed];
     }
 
-    /** Verify and consume a backup code for a user */
+    /**
+     * Verify and consume a backup code for a user.
+     *
+     * SEC-120: the actual consumption is now atomic - `AND used = 0` is part
+     * of the UPDATE's own WHERE clause, not a separate SELECT taken on
+     * faith. Previously the SELECT above and the UPDATE below were two
+     * independent steps with no guard in between: two concurrent requests
+     * carrying the SAME still-unused backup code could both pass
+     * password_verify() (both read used=0 before either had written
+     * anything) and both return true, letting a single-use code be
+     * consumed twice. This mirrors the atomic pattern verifyAndConsume()
+     * already uses for TOTP codes (SEC-080) - the WHERE condition IS the
+     * check, so at most one of two racing requests can ever flip a given
+     * row from unused to used.
+     */
     public static function useBackupCode(int $userId, string $code): bool
     {
         $code = strtoupper(preg_replace('/\s/', '', $code));
@@ -173,11 +187,15 @@ class TOTP
         );
         foreach ($rows as $row) {
             if (password_verify($code, $row['code_hash'])) {
-                DB::run(
-                    "UPDATE totp_backup_codes SET used = 1, used_at = NOW() WHERE id = ?",
+                $affected = DB::run(
+                    "UPDATE totp_backup_codes SET used = 1, used_at = NOW() WHERE id = ? AND used = 0",
                     [$row['id']]
                 );
-                return true;
+                // affected === 0 means a concurrent request already consumed
+                // this exact row between our SELECT and this UPDATE - that
+                // is a lost race, not a valid use, so this request reports
+                // failure rather than granting access on a technicality.
+                return $affected > 0;
             }
         }
         return false;

@@ -39,6 +39,16 @@ logs/*
 # adresy wewnetrzne i nazwy uslug home-labowych.
 *_letadial_export_*.json
 
+# SEC-119: LetaDial_Permissions.sh (root-executed permission/cleanup script)
+# must never be tracked in this repo — its whole security model (see its own
+# header comment and README.md -> Permissions) depends on it living OUTSIDE
+# the git-tracked, auto-updatable app directory, so a compromised origin can
+# never modify a script that later runs as root. The canonical copy to
+# deploy lives embedded as a heredoc inside README.md, not as a standalone
+# repo file. Covers both the current name and its pre-rename form.
+LetaDial_Permissions.sh
+fix_permissions.sh
+
 # System
 .DS_Store
 Thumbs.db

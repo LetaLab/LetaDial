@@ -216,7 +216,9 @@ class Avatar
         }
         $htaccess = $dir . '/.htaccess';
         if (!file_exists($htaccess)) {
-            @file_put_contents($htaccess, "Options -Indexes\nOrder deny,allow\nDeny from all\n");
+            // SEC-121: dual Apache 2.2/2.4+ syntax - see group_icon_src.php
+            // for the identical fix and full rationale.
+            @file_put_contents($htaccess, "Options -Indexes\n<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\n    Order deny,allow\n    Deny from all\n</IfModule>\n");
         }
 
         // 7. Write — output path built from integer userId only, never from

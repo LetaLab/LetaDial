@@ -135,7 +135,12 @@ class GroupIcon
         // Protect directory on first use
         $htaccess = $dir . '/../.htaccess';
         if (!file_exists($htaccess)) {
-            @file_put_contents($htaccess, "Options -Indexes\nOrder deny,allow\nDeny from all\n");
+            // SEC-121: dual Apache 2.2/2.4+ syntax - `Order`/`Deny` alone is
+            // silently ignored on Apache 2.4+ without mod_access_compat
+            // loaded, leaving this directory fully browsable over HTTP with
+            // no startup error to notice it by. No effect on nginx, which
+            // never reads .htaccess (see nginx_letadial_example.conf).
+            @file_put_contents($htaccess, "Options -Indexes\n<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\n    Order deny,allow\n    Deny from all\n</IfModule>\n");
         }
 
         // Save as WebP

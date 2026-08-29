@@ -45,7 +45,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $token_valid && $user) {
     CSRF::require();
 
     // Rate limit per token (protects against brute-force if token was partially leaked)
-    if (RateLimit::check('reset_pw', $token, 5, 3600, 3600)) {
+    // SEC-117: $sensitive=true - $token is the raw, still-valid reset secret
+    // itself. It must never land in rate_limits.key_plain, which Admin::
+    // getBlocked()/exportBlocked() can display/export to any admin.
+    if (RateLimit::check('reset_pw', $token, 5, 3600, 3600, true)) {
         $error = 'Too many attempts. Please request a new reset link.';
     } else {
         $new     = $_POST['password']        ?? '';

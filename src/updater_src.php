@@ -259,10 +259,24 @@ class Updater
         // Defense in depth — LetaDial_Permissions.sh (independent root cron,
         // outside git) also removes it on its own schedule, but closing the
         // window here costs nothing and needs no exec().
-        $installPhp = $dir . '/install.php';
-        if (file_exists($installPhp)) {
-            @unlink($installPhp);
-            $pullOut .= "\n[LetaDial] install.php removed after git pull.";
+        //
+        // SEC-119: LetaDial_Permissions.sh itself is added to this same
+        // cleanup. Its entire security model (see its own header comment
+        // and README.md -> Permissions) depends on it living OUTSIDE this
+        // git-tracked, auto-updatable directory — a copy restored here by
+        // `git reset --hard` is exactly the "compromised origin can modify
+        // a root-executed script" scenario SEC-079 already eliminated for
+        // fix_permissions.sh's old exec() call; leaving a same-named file
+        // sitting next to index.php makes it easy for an admin to run it
+        // in place by mistake instead of the real /usr/sbin/ copy. This does
+        // NOT touch that real, correctly-installed copy — $dir is always
+        // this app's own directory, never /usr/sbin.
+        foreach (['install.php', 'LetaDial_Permissions.sh'] as $dangerousFile) {
+            $path = $dir . '/' . $dangerousFile;
+            if (file_exists($path)) {
+                @unlink($path);
+                $pullOut .= "\n[LetaDial] {$dangerousFile} removed after git pull.";
+            }
         }
 
         return [

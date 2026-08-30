@@ -140,9 +140,22 @@ $pw_rules = Password::jsRules();
             session cookies required for authentication are considered strictly necessary
             and are permitted without consent - but we want you to know they exist.
         </p>
+        <!-- BUG-030: the button below clears local browser storage, but it
+             cannot remove the strictly-necessary session cookie by design
+             (HttpOnly cookies are unreachable from JavaScript on purpose -
+             that is what keeps them safe from theft via a malicious
+             script). This note exists so the button below does not imply
+             it removes something it structurally cannot touch. -->
+        <p style="font-size:.75rem;color:var(--text-faint)">
+            Note: the button below clears local browser storage and any
+            other, non-essential cookies. The one strictly necessary
+            session cookie cannot be removed from JavaScript by design
+            (see above) - it simply expires on its own if you never sign
+            in with it.
+        </p>
         <div class="cookie-buttons">
             <button type="button" class="cbtn" id="btn-accept-cookies">Accept cookies</button>
-            <button type="button" class="cbtn" id="btn-decline-cookies">Decline cookies and get me out of here</button>
+            <button type="button" class="cbtn" id="btn-decline-cookies">Clear browser data and leave</button>
         </div>
     </div>
 </div>

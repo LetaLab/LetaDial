@@ -53,6 +53,15 @@ if ($method === 'POST' && $sub === 'reorder') {
     }
     $body = json_decode(file_get_contents('php://input'), true) ?? [];
     $ids  = array_map('intval', $body['ids'] ?? []);
+    // SEC-127: cap the size of a client-supplied ID array before it is
+    // used to build queries/updates - bounded in practice already by
+    // post_max_size and a user's own group count, but a single request
+    // has no legitimate reason to carry an unbounded array. Mirrors the
+    // identical check added to dial_api.php's bulk/reorder endpoints.
+    if (count($ids) > 1000) {
+        http_response_code(422);
+        echo json_encode(['ok' => false, 'error' => 'Too many IDs in one request (max 1000).']); exit;
+    }
     echo json_encode(Group::reorder($user['id'], $ids));
     exit;
 }

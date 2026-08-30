@@ -79,9 +79,15 @@ class Admin
         if ($format === 'csv') {
             $out = "ip_or_key,action,attempts,window_start\n";
             foreach ($rows as $r) {
+                // SEC-122: key_plain can contain arbitrary attacker text
+                // (see sanitizeCsvField() docblock below) - neutralize
+                // before writing to CSV, not just before writing to the
+                // DB. exportBlocked() (unlike getBlocked()) has no minimum
+                // attempts filter, so a single failed request already
+                // appears here.
                 $out .= implode(',', [
-                    '"' . str_replace('"', '""', $r['key_plain'] ?? '') . '"',
-                    '"' . str_replace('"', '""', $r['action']) . '"',
+                    '"' . str_replace('"', '""', self::sanitizeCsvField($r['key_plain'])) . '"',
+                    '"' . str_replace('"', '""', self::sanitizeCsvField($r['action']))    . '"',
                     (int)$r['attempts'],
                     '"' . ($r['window_start'] ?? '') . '"',
                 ]) . "\n";
@@ -90,6 +96,42 @@ class Admin
         }
 
         return json_encode($rows, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+    }
+
+    /**
+     * SEC-122: neutralize a leading formula/DDE trigger character before a
+     * value is written into a CSV cell. Spreadsheet applications (Excel,
+     * LibreOffice, Google Sheets) treat a cell starting with =, +, -, @,
+     * or a leading TAB/CR as a formula to evaluate, not as literal text.
+     *
+     * key_plain for the 'login_account' rate limit bucket (see
+     * Auth::login() in auth_src.php) stores the raw, attacker-controlled
+     * 'login' field from an anonymous, unauthenticated POST /login attempt
+     * - a single failed attempt is enough to write an arbitrary string
+     * here, and unlike getBlocked() (used by the HTML table, filtered to
+     * $min attempts), exportBlocked() has no minimum-attempts filter, so
+     * the value is exported on the very first attempt. An admin opening
+     * the resulting CSV in a spreadsheet application would have that
+     * formula evaluate on their own machine.
+     *
+     * Prefixing a single quote forces every major spreadsheet application
+     * to render the value as plain text instead of evaluating it, without
+     * changing what the cell visibly displays (the leading quote is not
+     * shown).
+     *
+     * Deliberately NOT applied at write time (RateLimit::check()) or to
+     * the JSON export: admins legitimately need to see the exact login
+     * string being attacked in both places (unlike the SEC-117 case,
+     * which hides genuine secrets from key_plain entirely), and JSON has
+     * no formula-evaluation semantics to protect against.
+     */
+    private static function sanitizeCsvField(?string $value): string
+    {
+        $value = (string)($value ?? '');
+        if ($value !== '' && preg_match('/^[=+\-@\t\r]/', $value)) {
+            $value = "'" . $value;
+        }
+        return $value;
     }
 
     // ── Users ─────────────────────────────────────────────────────────────────

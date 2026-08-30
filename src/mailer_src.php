@@ -231,6 +231,15 @@ class Mailer
         string $to, string $subject, string $text, string $html, string $domain
     ): string {
         $to = self::sanitizeHeader($to);
+        // SEC-125: defense in depth. Every current caller only ever builds
+        // $subject from a static string literal or from APP_NAME (an
+        // admin-set constant) - never from request/user-controlled data -
+        // so this is not exploitable today. $to already gets this exact
+        // treatment for the identical reason (SEC-099); leaving $subject
+        // unsanitized was a latent SMTP header-injection trap for any
+        // future caller that ever interpolates user-controlled text into
+        // it without going through Mailer's own sanitization first.
+        $subject = self::sanitizeHeader($subject);
         $date   = date('r');
         $msg_id = '<' . bin2hex(random_bytes(8)) . '@' . $domain . '>';
 

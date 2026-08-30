@@ -35,6 +35,22 @@ class Updater
         return realpath(__DIR__ . '/..') ?: dirname(__DIR__);
     }
 
+    /**
+     * Run a git subcommand against this app's own directory.
+     *
+     * SEC-126: $cmd is concatenated into the exec() string WITHOUT its own
+     * escapeshellarg() - only $dir gets that treatment. Safe today because
+     * every call site in this class (and the sibling
+     * Admin::gitRemoteOriginUrl(), which builds its own separate exec()
+     * string) passes a fixed string literal only ('rev-parse HEAD',
+     * 'fetch origin main', 'reset --hard origin/main',
+     * 'remote get-url origin') - never anything built from request data.
+     * This is a private method: $cmd MUST stay a hardcoded literal at
+     * every call site, forever. Never build $cmd from a branch name, tag,
+     * ref, or any other value that traces back to an HTTP request or
+     * database row - that would reopen command injection through this
+     * one function.
+     */
     private static function git(string $cmd): array
     {
         $dir     = escapeshellarg(self::appDir());

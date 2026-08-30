@@ -149,6 +149,23 @@ if ($method === 'POST' && $action === 'delete-user') {
         echo json_encode(['ok' => false, 'error' => 'user_id required.']); exit;
     }
 
+    // SEC-124: dedicated, tight bucket guarding the admin_password re-auth
+    // check below, matching force-password's admin_force_pw (10/h) and
+    // create-user's admin_create_user (20/h). Until now, delete-user's
+    // re-auth relied only on the general-purpose admin_mutate bucket
+    // above (200/h, shared across six unrelated actions: unblock,
+    // unblock-all, delete-user, sessions/delete, sessions/delete-user,
+    // registration toggle) to bound repeated wrong-password guesses
+    // against a hijacked admin session - 20x looser than the other two
+    // equally-sensitive re-auth checks, for an action (irreversible
+    // account deletion) that is at least as consequential as either of
+    // them. Checked unconditionally here, before the password itself is
+    // even read, mirroring force-password's placement below.
+    if (RateLimit::check('admin_delete_user', (string)$user['id'], 10, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again in an hour.']); exit;
+    }
+
     // SEC-113 extension (24.08.2026, per Andrzej): re-auth, same pattern as
     // force-password/create-user below. Deleting an account is irreversible
     // and cascades every dial/group/session/avatar/thumbnail that user

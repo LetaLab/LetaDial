@@ -242,11 +242,23 @@ function process_install(string &$step): void {
         // group_icon_src.php for the matching runtime-generated copies of
         // this same content and the full rationale (Order/Deny alone is
         // silently ignored on Apache 2.4+ without mod_access_compat).
+        // SEC-123: thumbnails/ used to get a weaker NO_PHP-only variant
+        // (disables PHP execution but still allows a direct file GET)
+        // instead of DENY_ALL like every other storage/ subdirectory.
+        // Thumbnail::serve() (GET /api/thumbs/{dialId}) is the only
+        // intended, authenticated access path, and the client never reads
+        // a thumbnail by direct storage URL - so the weaker variant
+        // protected nothing on purpose. On nginx deployments this was
+        // always moot (location ^~ /storage/ { deny all; } blocks the
+        // whole tree regardless of .htaccess content), but on Apache
+        // deployments (which this installer explicitly supports) it
+        // allowed unauthenticated direct access to any dial's thumbnail
+        // image via its small, sequential /storage/thumbnails/u{userId}/{dialId}.webp
+        // path. The now-unused $no_php variant is removed below.
         $deny_all  = "Options -Indexes\n<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\n    Order deny,allow\n    Deny from all\n</IfModule>\n";
-        $no_php    = "Options -Indexes\nphp_flag engine off\n";
         foreach ([
             'storage/.htaccess'             => $deny_all,
-            'storage/thumbnails/.htaccess'  => $no_php,
+            'storage/thumbnails/.htaccess'  => $deny_all,
             'storage/sessions/.htaccess'    => $deny_all,
             'storage/avatars/.htaccess'     => $deny_all,
             'storage/group_icons/.htaccess' => $deny_all,
@@ -555,6 +567,11 @@ function build_config(array $db, array $app, ?array $smtp, string $enc, string $
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
 
 // ── Database ──────────────────────────────────────────────────────────────────
+// SEC-128: DB_HOST should stay 'localhost' (as generated below) unless the
+// network path to a remote database host is otherwise secured (VPN,
+// private network, or TLS) - src/db_src.php's PDO connection does not
+// enable MySQL TLS by default, so credentials and query data would
+// otherwise travel unencrypted between this app and a remote DB_HOST.
 define('DB_HOST',    '{$db_host}');
 define('DB_NAME',    '{$db_name}');
 define('DB_USER',    '{$db_user}');

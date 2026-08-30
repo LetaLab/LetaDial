@@ -66,6 +66,14 @@ if ($method === 'POST' && $sub === 'reorder') {
     $body    = json_decode(file_get_contents('php://input'), true) ?? [];
     $groupId = (int)($body['group_id'] ?? 0);
     $ids     = array_map('intval', (array)($body['ids'] ?? []));
+    // SEC-127: cap the size of a client-supplied ID array before it is
+    // used to build queries/updates - bounded in practice already by
+    // post_max_size and a user's own dial count, but a single request has
+    // no legitimate reason to carry an unbounded array.
+    if (count($ids) > 1000) {
+        http_response_code(422);
+        echo json_encode(['ok' => false, 'error' => 'Too many IDs in one request (max 1000).']); exit;
+    }
     echo json_encode(Dial::reorder($user['id'], $groupId, $ids));
     exit;
 }
@@ -80,6 +88,11 @@ if ($method === 'POST' && $sub === 'bulk-delete') {
     }
     $body = json_decode(file_get_contents('php://input'), true) ?? [];
     $ids  = (array)($body['ids'] ?? []);
+    // SEC-127: see the identical check in the reorder endpoint above.
+    if (count($ids) > 1000) {
+        http_response_code(422);
+        echo json_encode(['ok' => false, 'error' => 'Too many IDs in one request (max 1000).']); exit;
+    }
     $result = Dial::bulkDelete($ids, $user['id']);
     http_response_code($result['ok'] ? 200 : 422);
     echo json_encode($result);
@@ -97,6 +110,11 @@ if ($method === 'POST' && $sub === 'bulk-move') {
     $body          = json_decode(file_get_contents('php://input'), true) ?? [];
     $ids           = (array)($body['ids'] ?? []);
     $targetGroupId = (int)($body['group_id'] ?? 0);
+    // SEC-127: see the identical check in the reorder endpoint above.
+    if (count($ids) > 1000) {
+        http_response_code(422);
+        echo json_encode(['ok' => false, 'error' => 'Too many IDs in one request (max 1000).']); exit;
+    }
     if (!$targetGroupId) {
         http_response_code(422);
         echo json_encode(['ok' => false, 'error' => 'group_id required.']); exit;
@@ -118,6 +136,11 @@ if ($method === 'POST' && $sub === 'bulk-duplicate') {
     $body          = json_decode(file_get_contents('php://input'), true) ?? [];
     $ids           = (array)($body['ids'] ?? []);
     $targetGroupId = (int)($body['group_id'] ?? 0);
+    // SEC-127: see the identical check in the reorder endpoint above.
+    if (count($ids) > 1000) {
+        http_response_code(422);
+        echo json_encode(['ok' => false, 'error' => 'Too many IDs in one request (max 1000).']); exit;
+    }
     if (!$targetGroupId) {
         http_response_code(422);
         echo json_encode(['ok' => false, 'error' => 'group_id required.']); exit;

@@ -1103,6 +1103,11 @@ const LetaDial = (() => {
                     api.post(`/api/dials/${dial.id}/click`, {}).catch(() => {});
                     // Refresh recent cache so time updates on next visit
                     if (this._cache[RECENT_GROUP_ID]) delete this._cache[RECENT_GROUP_ID];
+                    // BUG-031: also invalidate the dial's own group (and 'all')
+                    // so a "🔥 Popular" (click_count) sort reflects the fresh
+                    // count on next visit to that group, not just Recent.
+                    if (this._cache[dial.group_id]) delete this._cache[dial.group_id];
+                    if (this._cache['all']) delete this._cache['all'];
                 }
             });
             card.addEventListener('auxclick', e => {

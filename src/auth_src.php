@@ -377,13 +377,40 @@ class Auth
         if (!$user) return ['ok' => false, 'error' => 'Session expired. Log in again.'];
 
         $ip = self::ip();
-        if (RateLimit::check('2fa', $ip, 5, 300, 600)) {
+        // SEC-129 (01.09.2026): windowSec raised 300 -> 600 to match
+        // blockSec, consistent with every other bucket in this app (login,
+        // login_account, settings_mutate, dial_mutate, ... all have
+        // windowSec === blockSec). This was the one bucket where they
+        // diverged: RateLimit::check()'s own reset cycle is driven by
+        // windowSec, not blockSec, so the actual throttle was silently
+        // resetting every 5 minutes even though the message below always
+        // said 10. Matching them fixes that inconsistency and, as a side
+        // effect, halves the per-IP attempt rate available to an attacker.
+        if (RateLimit::check('2fa', $ip, 5, 600, 600)) {
             return ['ok' => false, 'error' => 'Too many 2FA attempts. Wait 10 minutes.'];
+        }
+
+        // SEC-129 (01.09.2026): account-scoped bucket, mirrors login_account
+        // (INFO-B) - without this, a distributed-IP attacker who already
+        // has the account's password (phishing, credential reuse from an
+        // unrelated breach - NOT guessed via this app's own, well-protected
+        // login()) could replay the one session cookie obtained from a
+        // single successful password login across many source IPs, staying
+        // under the per-IP bucket above on every one of them, and brute-force
+        // the 6-digit TOTP code (only ~139,000 attempts needed on average
+        // for a 50% chance, given the small keyspace - see SEC_AND_BUG_ANIH_PLAN.md
+        // SEC-129 for the full derivation). Deliberately tighter than
+        // login_account's 20/900/900: TOTP's keyspace is far smaller than
+        // password entropy, so a wider allowance here would still leave a
+        // meaningful residual risk.
+        if (RateLimit::check('2fa_account', (string)$user['id'], 10, 900, 900)) {
+            return ['ok' => false, 'error' => 'Too many 2FA attempts for this account. Please wait 15 minutes.'];
         }
 
         $secret_enc = $user['totp_secret'] ?? '';
         if ($secret_enc && TOTP::verifyAndConsume(TOTP::decrypt($secret_enc), $code, $user['id'])) {
             RateLimit::clear('2fa', $ip);
+            RateLimit::clear('2fa_account', (string)$user['id']);
             DB::run("UPDATE sessions SET totp_verified = 1 WHERE id = ?", [self::$sessionId]);
             return ['ok' => true];
         }
@@ -398,6 +425,7 @@ class Auth
         // here even though TOTP::useBackupCode() itself would accept it.
         if (TOTP::useBackupCode($user['id'], $code)) {
             RateLimit::clear('2fa', $ip);
+            RateLimit::clear('2fa_account', (string)$user['id']);
             DB::run("UPDATE sessions SET totp_verified = 1 WHERE id = ?", [self::$sessionId]);
             return ['ok' => true, 'used_backup' => true];
         }
@@ -545,6 +573,23 @@ class Auth
     private static function createSession(int $userId, int $totpVerified = 0): string
     {
         $lifetime = (int)(DB::val("SELECT value FROM settings WHERE key_name = 'session_lifetime'") ?? SESSION_TTL);
+
+        // SEC-129 (01.09.2026): a session pending 2FA verification must not
+        // inherit the full, potentially 30-day session_lifetime. TOTP has a
+        // far smaller keyspace than a password (1,000,000 six-digit codes,
+        // 5 valid at any instant - see TOTP::WINDOW), so a long-lived pending
+        // session turns a single, externally-compromised password into a
+        // patient, weeks-long brute-force window against the second factor,
+        // replayable from any number of source IPs via the one session
+        // cookie. A legitimate user completes 2FA within seconds of entering
+        // their password, so 15 minutes is generous for that case while
+        // closing the extended window for an attacker who only has one
+        // successful password login. Verified 2FA sessions are unaffected -
+        // this branch only ever shortens the PENDING state.
+        if (!$totpVerified) {
+            $lifetime = min($lifetime, 900); // 15 minutes
+        }
+
         $token    = bin2hex(random_bytes(32));
         $id       = hash('sha256', $token);
         $expires  = date('Y-m-d H:i:s', time() + $lifetime);

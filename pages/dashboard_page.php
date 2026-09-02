@@ -351,8 +351,13 @@ document.querySelectorAll('.topbar-avatar-img, .mobile-menu-avatar-img').forEach
             const dismissed = localStorage.getItem(DISMISS_KEY);
             if (dismissed === data.latest) return;
             const notes = data.notes ? ` — ${data.notes}` : '';
+            // SEC-130 (01.09.2026): data.latest (the GitHub release tag name)
+            // was the one value in this statement NOT run through escHtml(),
+            // inconsistent with notes/url/current right next to it - closes
+            // a second-order XSS if the release process for the configured
+            // GITHUB_REPO were ever compromised.
             bannerText.innerHTML =
-                `<strong>LetaDial ${data.latest} is available</strong>${escHtml(notes)} &nbsp;` +
+                `<strong>LetaDial ${escHtml(data.latest)} is available</strong>${escHtml(notes)} &nbsp;` +
                 `<a href="${escHtml(data.url)}" target="_blank" rel="noopener noreferrer">View release →</a>` +
                 `<span style="color:var(--text-faint);font-size:.8em;margin-left:.5rem">(current: ${escHtml(data.current)})</span>`;
             banner.classList.add('show');

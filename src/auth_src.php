@@ -108,7 +108,17 @@ class Auth
     public static function login(string $login, string $password, bool $remember = false): array
     {
         $ip = self::ip();
-        if (RateLimit::check('login', $ip, 10, 300, 600)) {
+        // SEC-131 (04.09.2026): windowSec raised 300 -> 600 to match
+        // blockSec. Exact same class of bug already fixed for the '2fa'
+        // bucket in SEC-129(c) below: RateLimit::check()'s actual
+        // counter-reset is driven by windowSec, not blockSec (see
+        // rate_limit_src.php), so this bucket was silently resetting
+        // every 5 minutes even though the message here always said 10.
+        // 'login' was the one bucket the SEC-129(c) comment (verify2FA()
+        // below) incorrectly assumed was already consistent - it was
+        // not. Effective per-IP throughput was double what the message
+        // implies (10 attempts / 5 min = up to 120/h, not 60/h).
+        if (RateLimit::check('login', $ip, 10, 600, 600)) {
             return ['ok' => false, 'error' => 'Too many login attempts. Please wait 10 minutes.'];
         }
 
@@ -181,7 +191,7 @@ class Auth
             [$user['id'], $loginForHistory, $ip, self::ua()]
         );
 
-        self::setSessionCookie($raw_token);
+        self::setSessionCookie($raw_token, $totp_verified);
 
         if ($remember) {
             self::createRememberToken($user['id']);
@@ -616,9 +626,29 @@ class Auth
         return $row;
     }
 
-    private static function setSessionCookie(string $rawToken): void
+    /**
+     * SEC-132 (04.09.2026): now takes $totpVerified so the cookie's own
+     * 'expires' attribute mirrors the same cap createSession() already
+     * applies (SEC-129a, above) to the underlying DB session row while
+     * 2FA is still pending. Previously this function always used the
+     * full session_lifetime regardless of totp_verified, so a
+     * pending-2FA session's cookie claimed up to 30 days even though the
+     * DB row behind it - the actual source of truth checked by
+     * loadSession() below - expired after 15 minutes. Not an exploitable
+     * bypass either way (the DB has always been authoritative, a token
+     * presented after its DB row expires is rejected regardless of what
+     * the cookie itself claims), just an inconsistency between what the
+     * cookie says and what is actually still valid. Default 0 (capped)
+     * matches createSession()'s own default, so any future call site
+     * that forgets to pass this argument fails safe (short-lived cookie)
+     * rather than silently reintroducing this same gap.
+     */
+    private static function setSessionCookie(string $rawToken, int $totpVerified = 0): void
     {
         $lifetime = (int)(DB::val("SELECT value FROM settings WHERE key_name = 'session_lifetime'") ?? SESSION_TTL);
+        if (!$totpVerified) {
+            $lifetime = min($lifetime, 900); // 15 minutes - mirrors createSession()'s SEC-129(a) cap
+        }
         $secure   = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
         setcookie(self::COOKIE_SESSION, $rawToken, [
             'expires'  => time() + $lifetime,
@@ -708,7 +738,7 @@ class Auth
         $totp_verified = ($user['totp_enabled'] ? 0 : 1);
         $raw_token     = self::createSession($user['id'], $totp_verified);
 
-        self::setSessionCookie($raw_token);
+        self::setSessionCookie($raw_token, $totp_verified);
         self::createRememberToken($user['id']);
 
         self::$sessionId = hash('sha256', $raw_token);

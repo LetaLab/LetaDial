@@ -518,6 +518,7 @@ class Admin
             ['users',       'avatar_path',              'VARCHAR — sesja 078 avatar'],
             ['users',       'reset_token',              'VARCHAR — password reset'],
             ['users',       'reset_expires',            'DATETIME — password reset expiry'],
+            ['users',       'activation_expires',       'DATETIME - SEC-135 activation token expiry'],
             ['users',       'recent_disabled',          'TINYINT — sesja 064'],
             ['users',       'theme',                    'VARCHAR — sesja 071a midnight theme'],
             ['users',       'theme_light_primary',      'VARCHAR(7) — sesja 071b custom color'],

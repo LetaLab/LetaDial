@@ -385,6 +385,7 @@ function db_create_tables(PDO $pdo): void {
             totp_required    TINYINT(1)       NOT NULL DEFAULT 0,
             email_verified   TINYINT(1)       NOT NULL DEFAULT 0,
             activation_token VARCHAR(64)      DEFAULT NULL,
+            activation_expires DATETIME       DEFAULT NULL COMMENT 'SEC-135: self-registration activation token expiry',
             reset_token      VARCHAR(64)      DEFAULT NULL,
             reset_expires    DATETIME         DEFAULT NULL,
             avatar_path      VARCHAR(255)     DEFAULT NULL,

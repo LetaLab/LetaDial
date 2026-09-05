@@ -35,4 +35,19 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 CSRF::require();
 
+// SEC-133: this was the one mutating-style (POST) endpoint in the whole app
+// with zero rate limit at all - every other write/costly per-user action
+// already has its own bucket (see rate_limit_src.php callers across the
+// project), and its own natural counterpart, import, already had one
+// (RateLimit::check('import', ..., 10, 3600, 3600) in import_api.php).
+// 30/hour is generous enough that no legitimate use (testing a backup,
+// re-downloading after clearing a browser download) will ever come close,
+// while still bounding a tight loop against this endpoint on a low-traffic
+// personal install with a small PHP-FPM worker pool.
+if (RateLimit::check('export', (string)$user['id'], 30, 3600, 3600)) {
+    http_response_code(429);
+    header('Content-Type: application/json; charset=UTF-8');
+    echo json_encode(['error' => 'Too many export requests. Try again later.']); exit;
+}
+
 Export::download($user['id']);

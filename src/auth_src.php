@@ -63,6 +63,16 @@
  *   response. See register()'s own inline comment for the full rationale;
  *   the same pattern was applied to Admin::createUser()/inviteUser() and
  *   confirm_email_page.php's "apply the change" branch in the same pass.
+ *
+ * SEC-135: register() now also computes activation_expires (48h) alongside
+ *   activation_token. Before this, self-registration's activation token was
+ *   the only one of the app's four single-use secret tokens with no
+ *   time-based expiry at all (reset_token/reset_expires and
+ *   email_change_token/email_change_expires both have one; the invite/
+ *   setup-account token is bounded by created_at). See activate_page.php for
+ *   the matching read-side check, which grandfathers existing NULL
+ *   activation_expires rows (accounts created before this column existed)
+ *   as never-expiring, so this cannot retroactively lock anyone out.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -310,6 +320,15 @@ class Auth
         $smtpEnabled   = defined('SMTP_ENABLED') && SMTP_ENABLED;
         $autoVerified  = !$smtpEnabled;
         $activToken    = $autoVerified ? null : bin2hex(random_bytes(32));
+        // SEC-135: activation_token used to be the only one of the four
+        // single-use secret tokens in this app with no time-based expiry at
+        // all (reset_token/reset_expires and email_change_token/
+        // email_change_expires both have one; the invite/setup-account token
+        // is bounded by created_at). 48h mirrors the invite flow's own
+        // window. See activate_page.php for the matching read-side check and
+        // its grandfather clause for accounts created before this column
+        // existed.
+        $activExpires  = $autoVerified ? null : date('Y-m-d H:i:s', time() + 172800);
         $passwordHash  = Password::hash($password);
 
         // SEC-110: the SELECT-based uniqueness check above and this INSERT are
@@ -328,9 +347,9 @@ class Auth
         // trace or a raw 500.
         try {
             DB::run(
-                "INSERT INTO users (login, email, password_hash, role, email_verified, activation_token, created_at)
-                 VALUES (?, ?, ?, 'user', ?, ?, NOW())",
-                [$login, $email, $passwordHash, $autoVerified ? 1 : 0, $activToken]
+                "INSERT INTO users (login, email, password_hash, role, email_verified, activation_token, activation_expires, created_at)
+                 VALUES (?, ?, ?, 'user', ?, ?, ?, NOW())",
+                [$login, $email, $passwordHash, $autoVerified ? 1 : 0, $activToken, $activExpires]
             );
         } catch (PDOException $e) {
             if ($e->getCode() === '23000') {

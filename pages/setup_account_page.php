@@ -26,6 +26,16 @@
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die();
 
+// SEC-134: no-store - mirrors dashboard_page.php/admin_page.php/settings_page.php/
+// setup_2fa_page.php/bookmarklet_page.php (VI.3) and activate_page.php /
+// confirm_email_page.php / reset_password_page.php (SEC-134). This page embeds a
+// still-valid, single-use invite/setup token plus a working CSRF field in
+// rendered HTML - without this header a browser's back/forward cache (bfcache)
+// could replay a stale render of this exact form on a shared/public machine
+// after the token has already been consumed or expired server-side.
+header('Cache-Control: no-store, no-cache, must-revalidate, private');
+header('Pragma: no-cache');
+
 if (Auth::isLoggedIn()) { header('Location: /'); exit; }
 
 $_csrf_prewarm = CSRF::token();

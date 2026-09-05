@@ -22,6 +22,15 @@
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die();
 
+// SEC-134: no-store - mirrors dashboard_page.php/admin_page.php/settings_page.php/
+// setup_2fa_page.php/bookmarklet_page.php (VI.3). This page embeds a still-valid,
+// single-use activation token plus a working CSRF field in rendered HTML - without
+// this header a browser's back/forward cache (bfcache) could replay a stale render
+// of this exact confirm form on a shared/public machine after the token has
+// already been consumed or expired server-side.
+header('Cache-Control: no-store, no-cache, must-revalidate, private');
+header('Pragma: no-cache');
+
 // Pre-warm CSRF before any HTML output — mirrors reset_password_page.php /
 // forgot_password_page.php / setup_account_page.php for the same pre-auth,
 // no-DB-session context.
@@ -35,14 +44,28 @@ if (!$token || !preg_match('/^[a-f0-9]{64}$/', $token)) {
 }
 
 // Look up token
+//
+// SEC-135: added "AND (activation_expires IS NULL OR activation_expires > NOW())".
+// activation_token used to be the only one of the four single-use secret tokens
+// in the app (reset_token/reset_expires, email_change_token/email_change_expires,
+// setup-account's created_at-based 24h window, and this one) with no time-based
+// expiry at all. The IS NULL branch is a deliberate grandfather clause: on an
+// existing install, every row created before this column was added will read
+// NULL until it is either activated (token consumed) or the row is otherwise
+// touched - without it, deploying this change would silently and retroactively
+// invalidate every pending, not-yet-activated self-registration created before
+// today. New registrations (Auth::register(), after this change) always populate
+// a real 48h expiry.
 $user = DB::row(
     "SELECT id, login, email_verified FROM users
-     WHERE activation_token = ? LIMIT 1",
+     WHERE activation_token = ?
+       AND (activation_expires IS NULL OR activation_expires > NOW())
+     LIMIT 1",
     [$token]
 );
 
 if (!$user) {
-    die(activatePage('error', 'This activation link is invalid or has already been used.'));
+    die(activatePage('error', 'This activation link is invalid, has expired, or has already been used.'));
 }
 
 if ($user['email_verified']) {

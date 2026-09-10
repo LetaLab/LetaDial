@@ -137,7 +137,7 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
 - AES-256-GCM encrypted TOTP secrets in database
 - Bcrypt passwords (`cost=15`, auto-salted)
 - POST-only logout (GET `/logout` redirects without action)
-- Rate limiting on: login, 2FA, forgot password, thumbnail refresh, import, invite, registration
+- Rate limiting on: login (per-IP and per-account), 2FA (per-IP and per-account), forgot password, thumbnail refresh, import, export, invite, registration, and per-resource write limits on dials/groups/settings/admin actions (`dial_mutate`, `group_mutate`, `settings_mutate`, `admin_mutate`)
 - SSRF protection on thumbnail fetch: DNS resolve + private/reserved range block
 - URL scheme whitelist (`http`/`https` only — blocks `ftp://`, `file://`, `javascript:`, etc.)
 - EXIF/metadata stripping on all uploaded images (GD re-encode)
@@ -441,6 +441,58 @@ server {
 > **php-fpm socket path:** adjust `fastcgi_pass` to match your PHP version, e.g.:
 > - Ubuntu 24.04 + PHP 8.3: `unix:/run/php/php8.3-fpm.sock`
 > - Alpine/generic: `unix:/run/php-fpm/php-fpm.sock`
+
+### 4b. Configure Apache (alternative to nginx)
+
+> **Note:** nginx is this project's primary, most thoroughly exercised deployment target (see the config above). The rules below give Apache the same two things nginx's config provides: front-controller routing to `index.php`, and the `storage/`/`logs/` protection nginx enforces via `location` blocks. Unlike nginx, Apache **does** read `.htaccess`, so this protection lives there instead.
+
+Requires `mod_rewrite` and `mod_headers` enabled (`a2enmod rewrite headers`), and `AllowOverride All` (or at least `AllowOverride FileInfo Indexes Limit`) for the vhost's document root, or these `.htaccess` files are silently ignored.
+
+Create `/var/www/html/LetaDial/.htaccess`:
+
+```apacheconf
+# Front controller, equivalent of nginx's try_files $uri $uri/ /index.php?$args;
+RewriteEngine On
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [QSA,L]
+
+# Same security headers as the nginx config above
+<IfModule mod_headers.c>
+    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    Header always set X-XSS-Protection "0"
+</IfModule>
+
+# Block dotfiles (.git, .env, .htaccess itself, etc.)
+<FilesMatch "^\.">
+    Require all denied
+</FilesMatch>
+
+# Block sensitive file extensions
+<FilesMatch "\.(ini|log|conf|bak|sql|swp|dist|yml|md|sh)$">
+    Require all denied
+</FilesMatch>
+
+Options -Indexes
+```
+
+Then create the same deny-all `.htaccess` in **every** one of these directories (identical content in each, this is the same block `install.php`/`LetaDial_Permissions.sh` already write automatically for `storage/*`, reproduced here for `logs/` and for the root `storage/` directory itself, which nginx protects with one `location ^~ /storage/` block but Apache needs per-directory since these live under the document root):
+
+```apacheconf
+Options -Indexes
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>
+<IfModule !mod_authz_core.c>
+    Order deny,allow
+    Deny from all
+</IfModule>
+```
+
+into: `storage/.htaccess`, `storage/thumbnails/.htaccess`, `storage/sessions/.htaccess`, `storage/avatars/.htaccess`, `storage/group_icons/.htaccess`, `logs/.htaccess`. `install.php` and `LetaDial_Permissions.sh` already create these automatically on install/each run, this manual step is only needed if you are hand-configuring a server before running the installer, or verifying an existing install.
 
 ### 5. Run installer
 

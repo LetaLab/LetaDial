@@ -2,6 +2,10 @@
 /**
  * LetaDial — Import
  * Sesja 054: notes field imported when present
+ * Sesja 07.09.2026 (BUG-032): host-derived fallback title now capped via
+ * cleanStr()/MAX_TITLE, matching dial_src.php; per-row execute() wrapped in
+ * try/catch(PDOException) so one bad row is skipped instead of aborting
+ * the whole import uncaught.
  *
  * Supports two formats:
  *   A) LetaDial JSON  {"version":"1.x","app":"LetaDial","groups":[...],"dials":[...]}
@@ -211,15 +215,46 @@ class Import
             if (isset($existingUrls[$groupId][$url])) { $skipped++; continue; }
 
             if (!$title) {
+                // BUG-032 (sesja 07.09.2026): the host-derived fallback title
+                // used to skip cleanStr()/MAX_TITLE entirely, unlike the
+                // primary $title assignment a few lines above and unlike the
+                // equivalent fallback in dial_src.php's create()/update()
+                // (which always wraps _titleFromUrl() in _cleanTitle()).
+                // filter_var(FILTER_VALIDATE_URL) accepts hostnames up to
+                // 253 chars (the DNS limit), comfortably exceeding
+                // dials.title's VARCHAR(100) - verified empirically on a
+                // real MariaDB 10.11.14 instance with the project's own
+                // default (STRICT_TRANS_TABLES) sql_mode: an over-length
+                // title here threw an uncaught PDOException
+                // (SQLSTATE[22001]: Data too long for column 'title'),
+                // aborting the rest of the import mid-loop with no
+                // transaction to undo the rows already committed before it.
                 $host  = parse_url($url, PHP_URL_HOST) ?? $url;
-                $title = preg_replace('/^www\./i', '', $host);
+                $title = self::cleanStr(preg_replace('/^www\./i', '', $host), self::MAX_TITLE);
             }
 
             $pos = ($maxPos[$groupId] ?? -1) + 1;
+
+            // BUG-032: defense-in-depth. The cleanStr() fix above should
+            // make an over-length title impossible going forward, but this
+            // still guards against any OTHER unanticipated column
+            // constraint on a single malformed row - it now costs that one
+            // row (counted as skipped) instead of aborting the whole
+            // import uncaught, consistent with the SEC-110 pattern already
+            // used elsewhere in this project for unique-constraint races.
+            // $maxPos/$existingUrls bookkeeping is only committed AFTER a
+            // successful execute(), so a skipped row does not leave a
+            // position gap or falsely mark its URL as already imported.
+            try {
+                $stmt->execute([$userId, $groupId, $title, $url, $notes ?: null, $pos]);
+            } catch (\PDOException $e) {
+                error_log('[Import] importDials() row skipped due to DB error: ' . $e->getMessage());
+                $skipped++;
+                continue;
+            }
+
             $maxPos[$groupId] = $pos;
             $existingUrls[$groupId][$url] = true;
-
-            $stmt->execute([$userId, $groupId, $title, $url, $notes ?: null, $pos]);
             $created++;
         }
 

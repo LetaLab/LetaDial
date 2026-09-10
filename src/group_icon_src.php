@@ -1,6 +1,6 @@
 <?php
 /**
- * LetaDial — Group Icon (sesja 052 + BUG-018 + BUG-020)
+ * LetaDial - Group Icon (sesja 052 + BUG-018 + BUG-020 + BUG-034)
  *
  * Handles custom image icons for groups.
  * Stored as 32×32 WebP in storage/group_icons/u{userId}/{groupId}.webp
@@ -19,6 +19,8 @@
  * BUG-020: processUpload() now applies best-effort EXIF orientation
  * correction (applyExifOrientation()) before re-encoding, so a phone photo
  * used as a group icon does not come out sideways — mirrors avatar_src.php.
+ * BUG-034 (sesja 07.09.2026): serve() now sets Content-Length AFTER the
+ * 304 check, not before, matching Avatar::serve()/Thumbnail::serve().
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -187,12 +189,20 @@ class GroupIcon
         header('Content-Type: image/webp');
         header('Cache-Control: private, max-age=3600');
         header('ETag: ' . $etag);
-        header('Content-Length: ' . filesize($path));
 
         if (trim($_SERVER['HTTP_IF_NONE_MATCH'] ?? '') === $etag) {
             http_response_code(304);
             return;
         }
+
+        // BUG-034 (sesja 07.09.2026): Content-Length moved here, after the
+        // 304 check, matching Avatar::serve() and Thumbnail::serve() - a
+        // 304 response has no body, so it should not claim one via this
+        // header either. Harmless in practice (every real HTTP client
+        // treats 304 as bodyless regardless), but this now removes the
+        // one inconsistency between three otherwise-identical serve()
+        // methods.
+        header('Content-Length: ' . filesize($path));
 
         readfile($path);
     }

@@ -122,6 +122,20 @@ function process_admin(string &$step): void {
     if (!filter_var($app_url, FILTER_VALIDATE_URL) &&
         !preg_match('/^https?:\/\/(\d{1,3}\.){3}\d{1,3}/', $app_url))
         $errors[] = 'Invalid Application URL (must start with http:// or https://).';
+    // BUG-033/BUG-036 (sesja 07.09.2026): APP_NAME feeds into the 2FA setup
+    // QR code (setup_2fa_page.php) as BOTH the otpauth:// label prefix and
+    // the issuer= query param, so it counts twice toward the URI length
+    // QRCode::svg() must encode. The encoder itself was fixed this session
+    // to never silently corrupt a QR (see qr_code_src.php's own changelog)
+    // and now falls back safely to "enter this key manually" once a name
+    // is too long to fit any supported QR version - but capping it here
+    // keeps that fallback from ever triggering for any realistic,
+    // descriptive instance name. 40 chars was chosen empirically: a
+    // realistic name with spaces and punctuation at 40 chars still fits
+    // comfortably within version 10's corrected capacity (~10 bytes of
+    // margin), while 45 chars already overflows every supported version.
+    if (mb_strlen($app_name) > 40)
+        $errors[] = 'Application Name must be 40 characters or fewer (it is encoded into the 2FA setup QR code).';
 
     if (empty($errors)) {
         // BUG-019: cost 15 to match Password::BCRYPT_COST (raised from 12 to 15
@@ -853,7 +867,7 @@ function render_admin(): string {
                 <div class=\"form-grid\">
                     <div class=\"form-group\">
                         <label>Application Name</label>
-                        <input type=\"text\" name=\"app_name\" value=\"" . input_val('app_name', $brand) . "\" required>
+                        <input type=\"text\" name=\"app_name\" value=\"" . input_val('app_name', $brand) . "\" maxlength=\"40\" required>
                     </div>
                     <div class=\"form-group\">
                         <label>Application URL <span class=\"hint-inline\">(no trailing slash)</span></label>

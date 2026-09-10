@@ -71,19 +71,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $token_valid && $user) {
         } elseif ($new !== $confirm) {
             $error = 'Passwords do not match.';
         } else {
-            // Update password + clear token
+            // Update password + clear token.
+            //
+            // BUG-035 (sesja 07.09.2026): this UPDATE previously matched on
+            // "WHERE id = ?" alone, with no condition tying it back to the
+            // token that made this request valid in the first place. That
+            // meant a second, near-simultaneous submission of the same
+            // reset link (double-clicked button, two open tabs) did not
+            // fail or get skipped - it just overwrote password_hash a
+            // second time with whatever that OTHER request typed, "last
+            // write wins" silently, while BOTH requests reported the same
+            // generic success screen with no way to tell which password is
+            // actually active. Adding "AND reset_token = ?" here makes the
+            // race detectable the same way setup_account_page.php's
+            // "AND email_verified = 0" already does: once the first
+            // request's UPDATE clears reset_token to NULL, a second
+            // request's UPDATE (still carrying the original token value)
+            // matches zero rows instead of silently succeeding again.
             $hash = Password::hash($new);
-            DB::run(
-                "UPDATE users SET password_hash = ?, reset_token = NULL, reset_expires = NULL WHERE id = ?",
-                [$hash, $user['id']]
+            $rowsAffected = DB::run(
+                "UPDATE users SET password_hash = ?, reset_token = NULL, reset_expires = NULL
+                 WHERE id = ? AND reset_token = ?",
+                [$hash, $user['id'], $token]
             );
 
-            // Invalidate all existing sessions (including remember-me tokens)
-            Auth::logoutAllSessions($user['id']);
-
-            RateLimit::clear('reset_pw', $token);
-
-            $done = true;
+            if ($rowsAffected > 0) {
+                // Invalidate all existing sessions (including remember-me tokens)
+                Auth::logoutAllSessions($user['id']);
+                RateLimit::clear('reset_pw', $token);
+                $done = true;
+            } else {
+                $error = 'This reset link was already used in another tab or window a moment ago. '
+                       . 'Sign in with the password you set there, or request a new reset link.';
+            }
         }
     }
 }

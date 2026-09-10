@@ -81,7 +81,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $token_valid && $user) {
         } elseif ($new !== $confirm) {
             $error = 'Passwords do not match.';
         } else {
-            DB::run(
+            $rowsAffected = DB::run(
                 "UPDATE users
                  SET password_hash = ?, email_verified = 1, activation_token = NULL
                  WHERE id = ? AND email_verified = 0",
@@ -89,7 +89,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $token_valid && $user) {
             );
 
             RateLimit::clear('setup_account', $token);
-            $done = true;
+
+            // BUG-035 (sesja 07.09.2026): WHERE email_verified = 0 means a
+            // second, near-simultaneous submission of the same token
+            // (double-clicked button, two open tabs) affects zero rows
+            // once the first one already flipped email_verified to 1 - the
+            // code used to fall through to $done = true regardless,
+            // silently discarding this request's password while still
+            // showing a generic success screen, with nothing telling the
+            // user which of the two passwords they typed is actually
+            // active. Still entirely self-inflicted (only the account
+            // owner's own concurrent requests can race here, never another
+            // account), but now surfaced honestly instead of hidden.
+            if ($rowsAffected > 0) {
+                $done = true;
+            } else {
+                $error = 'This invitation link was already used in another tab or window a moment ago. '
+                       . 'Sign in with the password you set there.';
+            }
         }
     }
 }

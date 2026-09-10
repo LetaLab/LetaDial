@@ -3,9 +3,28 @@
  * QRCode — Pure PHP QR Code SVG Generator
  *
  * Supports Byte mode encoding, EC Level M (15% recovery)
- * Versions 1–10 (handles up to 216 bytes — enough for any otpauth:// URI)
+ * Versions 1-10 (handles up to 213 bytes of message data, enough for any
+ * realistic otpauth:// URI; see BUG-036 below for why this is 213, not 216)
  * Output: Inline SVG string. Zero external dependencies.
  * ISO/IEC 18004:2015
+ *
+ * Sesja 07.09.2026 (BUG-033 + BUG-036): two related encoding bugs fixed
+ * together in pickVersion()/encodeData(), both found and verified
+ * empirically (real PHP execution comparing encoded vs decoded bytes, not
+ * just code reading) while implementing the fix for a report raised in
+ * SEC_AND_BUG_ANIH_PLAN.md Part XIV:
+ *   BUG-033: the character-count-indicator field was hardcoded to 8 bits
+ *     for every version, but ISO/IEC 18004:2015 Table 3 requires 16 bits
+ *     for versions 10-26. A version-10 payload (183-216 bytes, reachable
+ *     with a longer custom APP_NAME at 2FA setup) produced a QR that no
+ *     spec-compliant reader could decode correctly.
+ *   BUG-036: pickVersion() compared the raw message length directly
+ *     against each version's total codeword capacity ($cap), with no
+ *     allowance for the mode+count header bits encodeData() always adds
+ *     on top - so a message length landing within 2-3 bytes of ANY
+ *     version's raw capacity (not just version 10) silently lost its last
+ *     1-2 bytes once the codeword-extraction loop stopped exactly at
+ *     $cap*8 bits. pickVersion() now reserves that header space up front.
  *
  * Usage:
  *   $svg = QRCode::svg('otpauth://totp/...');
@@ -89,7 +108,23 @@ final class QRCode
     private static function pickVersion(int $len): int
     {
         foreach (self::VERSIONS as $v => [$cap]) {
-            if ($len <= $cap) return $v;
+            // BUG-036 (sesja 07.09.2026): $cap is the version's TOTAL data
+            // codeword capacity for mode + count + message bytes +
+            // terminator + padding combined (see encodeData() below) - it
+            // is NOT "capacity for message bytes alone". This method used
+            // to compare $len directly against $cap with no allowance for
+            // the mode(4 bits) + count(8 or 16 bits) header that
+            // encodeData() always prepends, so any $len landing within
+            // ~2-3 bytes of a version's raw $cap silently lost its last
+            // 1-2 message bytes once the codeword-extraction loop in
+            // encodeData() stopped exactly at $cap*8 bits - verified
+            // empirically for both a version-1-boundary (16 byte) and a
+            // version-7-boundary (124 byte) payload. headerBytes below is
+            // the header's own size in bytes, rounded up (2 for the 12-bit
+            // header used by versions 1-9, 3 for the 20-bit header used by
+            // version 10 - see BUG-033's countBits fix in encodeData()).
+            $headerBytes = ($v >= 10) ? 3 : 2;
+            if ($len <= $cap - $headerBytes) return $v;
         }
         return 0; // too long
     }
@@ -98,10 +133,23 @@ final class QRCode
     {
         [$cap, $ecPerBlock, $g1, $g2] = self::VERSIONS[$version];
 
+        // BUG-033 (sesja 07.09.2026): per ISO/IEC 18004:2015 Table 3, the
+        // byte-mode character count indicator is 8 bits for versions 1-9,
+        // but 16 bits for versions 10-26 (and 27-40). This was previously
+        // hardcoded to 8 bits for every version, which silently corrupted
+        // any version-10 payload for every spec-compliant QR reader - a
+        // real decoder reads 16 bits here for v10, consuming 8 bits of
+        // what the encoder meant as the first data byte as part of the
+        // count. Verified empirically: a 187-byte otpauth:// URI (version
+        // 10) decoded its own count field as 46387 instead of 187 before
+        // this fix. Versions 1-9 are unaffected and behave exactly as
+        // before this change.
+        $countBits = ($version >= 10) ? 16 : 8;
+
         // ── Build bit stream ─────────────────────────────────────────────────
         $bits  = '';
-        $bits .= '0100';                            // Mode: byte
-        $bits .= sprintf('%08b', count($bytes));    // Char count (8 bits for v1-9)
+        $bits .= '0100';                                        // Mode: byte
+        $bits .= sprintf('%0' . $countBits . 'b', count($bytes)); // Char count
         foreach ($bytes as $b) {
             $bits .= sprintf('%08b', $b);           // Data bytes
         }

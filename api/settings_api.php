@@ -34,6 +34,13 @@
  * GET actions (backup-count, sessions) are unchanged — they have no
  * side effect and no brute-force surface, consistent with every other
  * authenticated GET endpoint in the app.
+ *
+ * SEC-139 (11.09.2026): backup-codes' TOTP::decrypt() call is now wrapped
+ * in try/catch(RuntimeException) — previously uncaught, so a stale
+ * ENCRYPTION_KEY or a rare openssl failure would have surfaced as an
+ * unhandled 500 on every regeneration attempt instead of falling through
+ * to the (unaffected) backup-code check, same fix and rationale as
+ * Auth::verify2FA() in auth_src.php.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -145,8 +152,22 @@ if ($action === 'backup-codes') {
         http_response_code(422);
         echo json_encode(['ok' => false, 'error' => '2FA code is required.']); exit;
     }
-    $secret = TOTP::decrypt($user['totp_secret']);
-    $valid  = TOTP::verifyAndConsume($secret, $code, $user['id']); // SEC-080: replay-safe
+    // SEC-139 (11.09.2026): TOTP::decrypt() throws RuntimeException on a
+    // corrupted ciphertext or an openssl-level failure (most likely trigger:
+    // ENCRYPTION_KEY rotated without migrating existing totp_secret rows).
+    // Previously uncaught. Caught and logged rather than re-thrown so this
+    // degrades gracefully: $valid simply stays false and falls through to
+    // the backup-code check below, which is unaffected by ENCRYPTION_KEY
+    // (bcrypt-hashed independently), instead of every attempt to regenerate
+    // backup codes hitting an unhandled exception whenever the TOTP secret
+    // can't be decrypted.
+    $valid = false;
+    try {
+        $secret = TOTP::decrypt($user['totp_secret']);
+        $valid  = TOTP::verifyAndConsume($secret, $code, $user['id']); // SEC-080: replay-safe
+    } catch (RuntimeException $e) {
+        error_log('[Settings] backup-codes TOTP::decrypt failed for user ' . $user['id'] . ': ' . $e->getMessage());
+    }
     // SEC-092: consolidated onto TOTP::useBackupCode() — see
     // Auth::verify2FA() for the full rationale (case-normalization was
     // missing from this duplicated loop too).

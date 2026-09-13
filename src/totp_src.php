@@ -176,6 +176,16 @@ class TOTP
      * already uses for TOTP codes (SEC-080) - the WHERE condition IS the
      * check, so at most one of two racing requests can ever flip a given
      * row from unused to used.
+     *
+     * SEC-141 (11.09.2026): the search loop below now always iterates every
+     * remaining row, instead of returning as soon as a match is found.
+     * password_verify() is itself constant-time per call, but the OLD loop
+     * still short-circuited on the first hit, so total wall-clock time (the
+     * number of bcrypt calls actually performed) leaked the position of the
+     * matching code - or its absence - among the user's remaining, unused
+     * codes. Low practical value to an attacker (this reveals how many
+     * codes remain unused, not any code's value), but costs nothing to
+     * close: at most 9 extra bcrypt calls on a full set of 10 codes.
      */
     public static function useBackupCode(int $userId, string $code): bool
     {
@@ -185,20 +195,42 @@ class TOTP
              WHERE user_id = ? AND used = 0",
             [$userId]
         );
+
+        $matchedId = null;
         foreach ($rows as $row) {
-            if (password_verify($code, $row['code_hash'])) {
-                $affected = DB::run(
-                    "UPDATE totp_backup_codes SET used = 1, used_at = NOW() WHERE id = ? AND used = 0",
-                    [$row['id']]
-                );
-                // affected === 0 means a concurrent request already consumed
-                // this exact row between our SELECT and this UPDATE - that
-                // is a lost race, not a valid use, so this request reports
-                // failure rather than granting access on a technicality.
-                return $affected > 0;
+            // SEC-141 fix, corrected during this same session after an
+            // empirical test caught it: password_verify() must be called
+            // UNCONDITIONALLY on every row. An earlier draft of this fix
+            // wrote `if ($matchedId === null && password_verify(...))`,
+            // which looks like it always checks every row but does not -
+            // PHP short-circuits `&&`, so once $matchedId stopped being
+            // null, password_verify() was never called for the remaining
+            // rows at all, silently reproducing the exact same early-exit
+            // timing behaviour this fix exists to remove. Verified with a
+            // standalone counting harness (10 real bcrypt hashes, position
+            // 0/4/9): the buggy version made 1/5/10 calls depending on
+            // match position; this corrected version makes exactly 10
+            // calls every time, regardless of where — or whether — a
+            // match occurs.
+            $isMatch = password_verify($code, $row['code_hash']);
+            if ($isMatch && $matchedId === null) {
+                $matchedId = $row['id'];
             }
         }
-        return false;
+
+        if ($matchedId === null) {
+            return false;
+        }
+
+        $affected = DB::run(
+            "UPDATE totp_backup_codes SET used = 1, used_at = NOW() WHERE id = ? AND used = 0",
+            [$matchedId]
+        );
+        // affected === 0 means a concurrent request already consumed
+        // this exact row between our SELECT and this UPDATE - that
+        // is a lost race, not a valid use, so this request reports
+        // failure rather than granting access on a technicality.
+        return $affected > 0;
     }
 
     // ── Private ────────────────────────────────────────────────────────────────

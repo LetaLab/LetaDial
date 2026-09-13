@@ -9,7 +9,7 @@
  * POST /api/admin/delete-user      — delete user        {user_id}
  * GET  /api/admin/login-history    — recent history     [?ip=x.x.x.x] [?limit=N]
  * GET  /api/admin/install-check    — system check
- * GET  /api/admin/export-blocked   — export             ?format=json|csv
+ * POST /api/admin/export-blocked   — export             {format: json|csv} (SEC-138: was GET, no CSRF)
  *
  * sesja 066:
  * GET  /api/admin/sessions              — list all active sessions [?user_id=N]
@@ -62,6 +62,13 @@
  * — at least as consequential as those two actions, so it gets the same
  * step-up guarantee: a stolen/hijacked admin session alone is not enough,
  * the request must also carry the calling admin's own current password.
+ *
+ * SEC-138 (11.09.2026): export-blocked was GET with no CSRF — the one
+ * remaining read endpoint in this file reachable without CSRF at all,
+ * the exact same class of inconsistency SEC-102 already closed for the
+ * regular, non-admin /api/export. Switched to POST + CSRF::require();
+ * admin_page.php's CSV/JSON export buttons now go through fetch()+Blob
+ * instead of window.location.href, mirroring app.js's doExport().
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -200,9 +207,21 @@ if ($method === 'GET' && $action === 'install-check') {
     exit;
 }
 
-// ── GET /api/admin/export-blocked ────────────────────────────────────────────
-if ($method === 'GET' && $action === 'export-blocked') {
-    $format = in_array($_GET['format'] ?? '', ['json', 'csv']) ? $_GET['format'] : 'json';
+// ── POST /api/admin/export-blocked ───────────────────────────────────────────
+// SEC-138 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XV): was GET with no CSRF - the
+// exact same class of problem SEC-102 already closed for the regular,
+// non-admin /api/export (a GET-triggerable file download, reachable
+// without CSRF, in a file that otherwise holds every other mutating admin
+// action to a stricter standard - SEC-113/SEC-117/SEC-122/SEC-124).
+// Practical risk was always low (no CORS anywhere in this app means the
+// response body can't be read cross-origin), same reasoning SEC-102 itself
+// gives - this closes the inconsistency regardless of how small that risk
+// is. Client updated in admin_page.php to POST via fetch()+Blob instead of
+// window.location.href, mirroring app.js's doExport() after SEC-102.
+if ($method === 'POST' && $action === 'export-blocked') {
+    CSRF::require();
+    $body   = json_decode(file_get_contents('php://input'), true) ?? [];
+    $format = in_array($body['format'] ?? '', ['json', 'csv'], true) ? $body['format'] : 'json';
     $data   = Admin::exportBlocked($format);
     $date   = date('Y-m-d');
     if ($format === 'csv') {

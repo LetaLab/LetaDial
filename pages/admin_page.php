@@ -877,8 +877,39 @@ document.getElementById('btn-refresh-blocked').addEventListener('click',async()=
     blocked=r.entries;renderBlocked(blocked);toast('Refreshed.','success');
 });
 document.getElementById('btn-unblock-all-global').addEventListener('click',doUnblockAllGlobal);
-document.getElementById('btn-export-csv').addEventListener('click',()=>{window.location.href='/api/admin/export-blocked?format=csv';});
-document.getElementById('btn-export-json').addEventListener('click',()=>{window.location.href='/api/admin/export-blocked?format=json';});
+// SEC-138: export-blocked is now POST+CSRF (was a plain GET link) - same
+// fix pattern as SEC-102's export_api.php / app.js doExport(). A native
+// window.location.href can only ever issue a GET, so the download now
+// goes through fetch()+Blob instead.
+async function doExportBlocked(format){
+    let res;
+    try{
+        res=await fetch('/api/admin/export-blocked',{
+            method:'POST',
+            headers:{'Content-Type':'application/json','X-CSRF-Token':CSRF},
+            credentials:'same-origin',
+            body:JSON.stringify({format})
+        });
+    }catch{
+        toast('Export failed: network error.','error');
+        return;
+    }
+    if(!res.ok){
+        let msg='Export failed.';
+        try{const data=await res.json();msg=data.error||msg;}catch{}
+        toast(msg,'error');
+        return;
+    }
+    const blob=await res.blob();
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;
+    a.download='letadial_blocked_'+new Date().toISOString().slice(0,10)+'.'+format;
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+document.getElementById('btn-export-csv').addEventListener('click',()=>doExportBlocked('csv'));
+document.getElementById('btn-export-json').addEventListener('click',()=>doExportBlocked('json'));
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TAB 2: USERS

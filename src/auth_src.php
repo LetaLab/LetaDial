@@ -73,6 +73,17 @@
  *   the matching read-side check, which grandfathers existing NULL
  *   activation_expires rows (accounts created before this column existed)
  *   as never-expiring, so this cannot retroactively lock anyone out.
+ *
+ * SEC-139 (11.09.2026): every TOTP::decrypt()/TOTP::encrypt() call in this
+ *   file (verify2FA, storeSetupSecret, getSetupSecret, enable2FA) is now
+ *   wrapped in try/catch(RuntimeException). Previously uncaught — a stale
+ *   ENCRYPTION_KEY (rotated without migrating existing totp_secret rows,
+ *   which config.php already warns invalidates every 2FA secret) or a rare
+ *   openssl failure would have surfaced as an unhandled exception on every
+ *   affected login instead of a clean error. Each site degrades safely:
+ *   verify2FA() falls through to the backup-code check (unaffected by
+ *   ENCRYPTION_KEY), the setup-secret helpers fall back to "generate a
+ *   fresh secret", and enable2FA() returns a plain retryable error.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -436,8 +447,28 @@ class Auth
             return ['ok' => false, 'error' => 'Too many 2FA attempts for this account. Please wait 15 minutes.'];
         }
 
+        // SEC-139 (11.09.2026): TOTP::decrypt() throws RuntimeException on a
+        // corrupted ciphertext or an openssl-level failure — most likely
+        // trigger is ENCRYPTION_KEY having been rotated without migrating
+        // existing totp_secret rows (config.php warns explicitly that this
+        // invalidates every stored 2FA secret). Previously uncaught here,
+        // so EVERY login attempt for EVERY 2FA-enabled account would hit an
+        // unhandled exception instead of a clear, actionable error. Caught
+        // and logged rather than re-thrown so this degrades gracefully:
+        // $totpOk simply stays false and execution falls through to the
+        // backup-code check below, which keeps working regardless (backup
+        // codes are bcrypt-hashed independently of ENCRYPTION_KEY), instead
+        // of a broken TOTP secret locking the account out of 2FA entirely.
         $secret_enc = $user['totp_secret'] ?? '';
-        if ($secret_enc && TOTP::verifyAndConsume(TOTP::decrypt($secret_enc), $code, $user['id'])) {
+        $totpOk     = false;
+        if ($secret_enc) {
+            try {
+                $totpOk = TOTP::verifyAndConsume(TOTP::decrypt($secret_enc), $code, $user['id']);
+            } catch (RuntimeException $e) {
+                error_log('[Auth] verify2FA() TOTP::decrypt failed for user ' . $user['id'] . ': ' . $e->getMessage());
+            }
+        }
+        if ($totpOk) {
             RateLimit::clear('2fa', $ip);
             RateLimit::clear('2fa_account', (string)$user['id']);
             DB::run("UPDATE sessions SET totp_verified = 1 WHERE id = ?", [self::$sessionId]);
@@ -466,21 +497,52 @@ class Auth
         return ['ok' => false, 'error' => 'Invalid code. Try again.'];
     }
 
+    /**
+     * SEC-139 (11.09.2026): TOTP::encrypt() can only fail here on a genuine
+     * openssl-level problem (this is a freshly generated secret, not
+     * decryption of old data, so a stale ENCRYPTION_KEY cannot be the
+     * trigger). Caught rather than left uncaught, and deliberately a silent
+     * no-op on failure: pending_totp simply keeps its previous value (null
+     * on a first attempt), so the next getSetupSecret() call below returns
+     * null exactly as if nothing had been stored yet — setup_2fa_page.php
+     * already treats that as "generate a fresh secret", which is the
+     * correct, self-healing recovery for a temporary, not-yet-confirmed
+     * setup secret.
+     */
     public static function storeSetupSecret(string $secret): void
     {
         $sid = self::getSessionId();
         if (!$sid) return;
+        try {
+            $encrypted = TOTP::encrypt($secret);
+        } catch (RuntimeException $e) {
+            error_log('[Auth] storeSetupSecret() TOTP::encrypt failed: ' . $e->getMessage());
+            return;
+        }
         DB::run("UPDATE sessions SET pending_totp = ? WHERE id = ?",
-            [TOTP::encrypt($secret), $sid]);
+            [$encrypted, $sid]);
     }
 
+    /**
+     * SEC-139 (11.09.2026): TOTP::decrypt() throws on a corrupted
+     * pending_totp value or an openssl-level failure. Caught and treated
+     * the same as "no setup secret stored yet" (return null) rather than
+     * left uncaught — the caller (setup_2fa_page.php) already regenerates
+     * a fresh secret whenever this returns null, which is a safe recovery
+     * path for a temporary, not-yet-confirmed setup secret.
+     */
     public static function getSetupSecret(): ?string
     {
         $sid = self::getSessionId();
         if (!$sid) return null;
         $enc = DB::val("SELECT pending_totp FROM sessions WHERE id = ?", [$sid]);
         if (!$enc) return null;
-        return TOTP::decrypt($enc);
+        try {
+            return TOTP::decrypt($enc);
+        } catch (RuntimeException $e) {
+            error_log('[Auth] getSetupSecret() TOTP::decrypt failed: ' . $e->getMessage());
+            return null;
+        }
     }
 
     public static function enable2FA(string $code): array
@@ -495,8 +557,21 @@ class Auth
             return ['ok' => false, 'error' => 'Invalid code. Check your authenticator app.'];
         }
 
+        // SEC-139 (11.09.2026): TOTP::encrypt() can only fail here on a
+        // genuine openssl-level problem (fresh secret, not decryption of
+        // old data). Previously uncaught — a failure here would have
+        // surfaced as an unhandled 500 mid-setup instead of a clean,
+        // retryable error, right after the user has already typed a
+        // correct code.
+        try {
+            $encryptedSecret = TOTP::encrypt($secret);
+        } catch (RuntimeException $e) {
+            error_log('[Auth] enable2FA() TOTP::encrypt failed for user ' . $user['id'] . ': ' . $e->getMessage());
+            return ['ok' => false, 'error' => 'Could not complete two-factor setup right now. Please try again or contact your administrator.'];
+        }
+
         DB::run("UPDATE users SET totp_secret = ?, totp_enabled = 1 WHERE id = ?",
-            [TOTP::encrypt($secret), $user['id']]);
+            [$encryptedSecret, $user['id']]);
 
         DB::run("DELETE FROM totp_backup_codes WHERE user_id = ?", [$user['id']]);
         $codes = [];

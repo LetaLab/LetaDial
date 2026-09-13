@@ -167,10 +167,33 @@ class Mailer
         $to     = self::sanitizeHeader($to);
         $port   = (int)SMTP_PORT;
         $host   = SMTP_HOST;
-        $prefix = ($port === 465) ? 'ssl://' : '';
         $domain = explode('@', SMTP_FROM)[1] ?? 'localhost';
 
-        $sock = @fsockopen($prefix . $host, $port, $errno, $errstr, 10);
+        // SEC-140 (11.09.2026): explicit SSL verification context, matching
+        // the same defensive pattern already used everywhere else in this
+        // project that opens a TLS connection (thumbnail_src.php's
+        // safeFetchBody()/fetchFavicon(), meta_src.php's download(),
+        // updater_src.php's GitHub API calls all set 'verify_peer' =>
+        // true, 'verify_peer_name' => true, 'peer_name' => $host
+        // explicitly). This was the one outbound connection in the app
+        // that instead relied implicitly on PHP's global default stream
+        // context — safe under PHP's own default (verify_peer=true since
+        // 5.6), but silently overridable by a php.ini change on any future
+        // host, with nothing in this application's own code to catch that.
+        // fsockopen() has no context parameter at all, so the immediate-TLS
+        // branch (port 465) is switched to stream_socket_client(), which
+        // does; behaviour for the plain tcp:// case (port 25) is unchanged.
+        $ctxOpts = [];
+        if ($port === 465) {
+            $ctxOpts['ssl'] = [
+                'verify_peer'      => true,
+                'verify_peer_name' => true,
+                'peer_name'        => $host,
+            ];
+        }
+        $ctx    = stream_context_create($ctxOpts);
+        $scheme = ($port === 465) ? 'ssl://' : 'tcp://';
+        $sock   = @stream_socket_client($scheme . $host . ':' . $port, $errno, $errstr, 10, STREAM_CLIENT_CONNECT, $ctx);
         if (!$sock) throw new RuntimeException("SMTP connect failed: {$errstr} ({$errno})");
 
         stream_set_timeout($sock, 15);
@@ -187,6 +210,14 @@ class Mailer
             if (!self::expect($sock, 220)) {
                 fclose($sock); throw new RuntimeException('SMTP: STARTTLS failed');
             }
+            // SEC-140: same explicit verification options as the port-465
+            // branch above, set on this stream's context immediately
+            // before the STARTTLS upgrade — stream_socket_enable_crypto()
+            // reads SSL options from the stream's own context, which for a
+            // plain tcp:// connection was never given one until now.
+            stream_context_set_option($sock, 'ssl', 'verify_peer', true);
+            stream_context_set_option($sock, 'ssl', 'verify_peer_name', true);
+            stream_context_set_option($sock, 'ssl', 'peer_name', $host);
             if (!stream_socket_enable_crypto($sock, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
                 fclose($sock); throw new RuntimeException('SMTP: TLS negotiation failed');
             }

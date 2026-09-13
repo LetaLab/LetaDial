@@ -1,8 +1,54 @@
-Options -Indexes
-<IfModule mod_authz_core.c>
+# LetaDial - root .htaccess
+#
+# SEC-137 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XV): poprzednia tresc tego pliku
+# byla "deny all" (Require all denied / Order deny,allow + Deny from all),
+# czyli calkowita, bezwarunkowa blokada calego katalogu pod Apache. Ten
+# plik jest sledzony w git (jedyny .htaccess w calym projekcie NIE objety
+# .gitignore - patrz uzasadnienie w PLAN, XV.3), wiec Updater::gitPull()
+# (git reset --hard origin/main) nadpisywalby KAZDA reczna poprawke
+# administratora Apache przy kazdym "Update now" - w tym dokladnie ta
+# konfiguracje, ktora README.md, sekcja "4b. Configure Apache", every
+# kaze administratorom Apache recznie tu wpisac. Skutek: strona przestaje
+# odpowiadac (403 na wszystko, wlacznie z panelem admina) natychmiast po
+# kazdej aktualizacji, bez zadnego komunikatu bledu.
+#
+# Naprawa: ten plik ma teraz od razu tresc z README "4b" (dzialajacy
+# front-controller + naglowki bezpieczenstwa + blokady) zamiast "deny
+# all". Efekt: administrator Apache dostaje dzialajaca konfiguracje od
+# razu po `git clone`, bez zadnego recznego kroku - i "Update now" juz
+# NIGDY nie moze cofnac tej konfiguracji do stanu zepsutego, bo
+# przywracalby TA SAMA, poprawna tresc.
+#
+# WAZNE dla instalacji nginx: ten plik jest dla nginx calkowicie martwy
+# i nieszkodliwy - nginx nigdy nie czyta .htaccess (patrz README.md,
+# "Security notes"). Ta zmiana nie ma zadnego wplywu na zadna instalacje
+# nginx, wlacznie z produkcyjnymi instancjami LetaLab.
+
+# Front controller, equivalent of nginx's try_files $uri $uri/ /index.php?$args;
+RewriteEngine On
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [QSA,L]
+
+# Same security headers as the nginx config (see nginx_letadial_example.conf)
+<IfModule mod_headers.c>
+    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    Header always set X-XSS-Protection "0"
+</IfModule>
+
+# Block dotfiles (.git, .env, .htaccess itself, etc.)
+<FilesMatch "^\.">
     Require all denied
-</IfModule>
-<IfModule !mod_authz_core.c>
-    Order deny,allow
-    Deny from all
-</IfModule>
+</FilesMatch>
+
+# Block sensitive file extensions
+# SEC-111 parity with nginx_letadial_example.conf: also blocks stray .md/.sh
+# files that a future `git reset --hard` might ever restore into the web root.
+<FilesMatch "\.(ini|log|conf|bak|sql|swp|dist|yml|md|sh)$">
+    Require all denied
+</FilesMatch>
+
+Options -Indexes

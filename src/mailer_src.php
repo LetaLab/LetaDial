@@ -205,7 +205,26 @@ class Mailer
         self::cmd($sock, "EHLO {$domain}");
         self::drainEhlo($sock);
 
-        if ($port === 587) {
+        // SEC-145 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVI): STARTTLS now also
+        // attempted for port 2525, not just 587. install.php::process_email()
+        // explicitly allows exactly four ports - [25, 465, 587, 2525] - but
+        // this method previously only ever attempted STARTTLS for 587,
+        // leaving 2525 connecting as plain, unencrypted tcp:// with no
+        // upgrade attempt at all. Port 2525 is a widely documented "use like
+        // 587" fallback offered by major transactional-mail providers
+        // (Mailgun, SendGrid, Postmark, among others) specifically for
+        // STARTTLS submission when 587 is blocked by an ISP/firewall -
+        // configuring it here previously meant AUTH LOGIN credentials
+        // (base64-encoded, not encrypted) and the message body travelled the
+        // network in plaintext. Most modern SMTP servers simply refuse
+        // AUTH without STARTTLS first (so the most likely prior symptom was
+        // failed delivery, not a confirmed leak) but nothing in this code
+        // enforced that - it depended entirely on the remote server's own
+        // policy. Port 25 intentionally remains untouched: it is commonly
+        // used for a local/same-host or same-network relay where TLS is not
+        // expected, and install.php does not document any assumption either
+        // way for it.
+        if (in_array($port, [587, 2525], true)) {
             fwrite($sock, "STARTTLS\r\n");
             if (!self::expect($sock, 220)) {
                 fclose($sock); throw new RuntimeException('SMTP: STARTTLS failed');

@@ -501,26 +501,39 @@ class Auth
      * SEC-139 (11.09.2026): TOTP::encrypt() can only fail here on a genuine
      * openssl-level problem (this is a freshly generated secret, not
      * decryption of old data, so a stale ENCRYPTION_KEY cannot be the
-     * trigger). Caught rather than left uncaught, and deliberately a silent
-     * no-op on failure: pending_totp simply keeps its previous value (null
-     * on a first attempt), so the next getSetupSecret() call below returns
-     * null exactly as if nothing had been stored yet — setup_2fa_page.php
-     * already treats that as "generate a fresh secret", which is the
-     * correct, self-healing recovery for a temporary, not-yet-confirmed
-     * setup secret.
+     * trigger). Caught rather than left uncaught.
+     *
+     * BUG-037 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVI): now returns bool
+     * instead of void, so the caller can tell a failed save apart from a
+     * successful one. Before this fix, a failed encrypt() here was a
+     * SILENT no-op: pending_totp simply kept its previous value (null on
+     * a first attempt), while setup_2fa_page.php had ALREADY rendered and
+     * shown the QR code / manual-entry secret for that same, never-saved
+     * value in the SAME request. A user who scanned that code and then
+     * submitted a verification attempt hit enable2FA() -> getSetupSecret()
+     * returning null (since pending_totp was never written), producing a
+     * confusing "Setup session expired. Start again." even though nothing
+     * had actually expired from their point of view - they had just
+     * scanned a code seconds earlier. The caller now checks this return
+     * value and shows an immediate, honest error instead of rendering a
+     * QR code that was doomed not to work. This requires ENCRYPTION_KEY to
+     * already be broken/rotated-without-migration for the encrypt() call
+     * to fail at all - not a security gap on its own, purely a
+     * completeness gap in the SEC-139 error handling.
      */
-    public static function storeSetupSecret(string $secret): void
+    public static function storeSetupSecret(string $secret): bool
     {
         $sid = self::getSessionId();
-        if (!$sid) return;
+        if (!$sid) return false;
         try {
             $encrypted = TOTP::encrypt($secret);
         } catch (RuntimeException $e) {
             error_log('[Auth] storeSetupSecret() TOTP::encrypt failed: ' . $e->getMessage());
-            return;
+            return false;
         }
         DB::run("UPDATE sessions SET pending_totp = ? WHERE id = ?",
             [$encrypted, $sid]);
+        return true;
     }
 
     /**

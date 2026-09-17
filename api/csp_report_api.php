@@ -81,6 +81,26 @@ $entry = [
 $logDir  = __DIR__ . '/../logs';
 $logFile = $logDir . '/csp-violations.log';
 
+// SEC-148 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVI): lazily create
+// logs/.htaccess if it is ever missing, the same self-healing pattern
+// avatar_src.php/group_icon_src.php already use for their own storage/
+// subdirectories. Previously logs/.htaccess was written ONLY by
+// install.php (a one-time script) - if it were ever deleted or skipped
+// on a manual deployment, nothing in the app would ever recreate it, and
+// on Apache (nginx is unaffected - see location ^~ /logs/ in
+// nginx_letadial_example.conf) logs/csp-violations.log (containing
+// visitor IPs and user-agent fragments) would become directly
+// downloadable with no self-healing mechanism to notice or fix it.
+// Best-effort only, one stat() call, comparable cost to the filesize()
+// check just below - never blocks the actual report write on failure.
+$logHtaccess = $logDir . '/.htaccess';
+if (is_dir($logDir) && !file_exists($logHtaccess)) {
+    @file_put_contents(
+        $logHtaccess,
+        "Options -Indexes\n<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\n    Order deny,allow\n    Deny from all\n</IfModule>\n"
+    );
+}
+
 // SEC-093: hard size backstop alongside the logrotate config
 // (/etc/logrotate.d/letadial on the server) — this endpoint is
 // intentionally public/unauthenticated (see docblock above), so under

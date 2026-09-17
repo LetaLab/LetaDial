@@ -1,0 +1,121 @@
+# LetaDial - root .htaccess
+#
+# SEC-137 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XV): poprzednia tresc tego pliku
+# byla "deny all" (Require all denied / Order deny,allow + Deny from all),
+# czyli calkowita, bezwarunkowa blokada calego katalogu pod Apache. Ten
+# plik jest sledzony w git (jedyny .htaccess w calym projekcie NIE objety
+# .gitignore - patrz uzasadnienie w PLAN, XV.3), wiec Updater::gitPull()
+# (git reset --hard origin/main) nadpisywalby KAZDA reczna poprawke
+# administratora Apache przy kazdym "Update now" - w tym dokladnie ta
+# konfiguracje, ktora README.md, sekcja "4b. Configure Apache", every
+# kaze administratorom Apache recznie tu wpisac. Skutek: strona przestaje
+# odpowiadac (403 na wszystko, wlacznie z panelem admina) natychmiast po
+# kazdej aktualizacji, bez zadnego komunikatu bledu.
+#
+# Naprawa: ten plik ma teraz od razu tresc z README "4b" (dzialajacy
+# front-controller + naglowki bezpieczenstwa + blokady) zamiast "deny
+# all". Efekt: administrator Apache dostaje dzialajaca konfiguracje od
+# razu po `git clone`, bez zadnego recznego kroku - i "Update now" juz
+# NIGDY nie moze cofnac tej konfiguracji do stanu zepsutego, bo
+# przywracalby TA SAMA, poprawna tresc.
+#
+# SEC-142 / SEC-143 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVI): dwa dodatkowe
+# problemy znalezione w TEJ SAMEJ tresci wprowadzonej przez SEC-137, oba
+# naprawione w tej wersji pliku:
+#
+#   SEC-142 [WYSOKI]: <FilesMatch "^\."> ponizej dopasowuje WYLACZNIE
+#   ostatni segment sciezki zadania (nazwe pliku), nigdy pelnej sciezki -
+#   to udokumentowana wlasciwosc Apache (mod_authz_core/mod_access_compat
+#   dzialaja na basename), nie blad tej konkretnej reguly. Dla zadania
+#   GET /.git/HEAD dopasowywana nazwa to "HEAD" (nie zaczyna sie od
+#   kropki), dla /.git/objects/4b/8f3c... to nazwa obiektu w hex - zaden
+#   z nich nie zaczyna sie od kropki i zaden nie konczy sie na blokowane
+#   rozszerzenie z drugiego bloku ponizej. Katalog .git/ z definicji
+#   istnieje na kazdym wdrozeniu (git jest jedynym udokumentowanym
+#   mechanizmem instalacji/aktualizacji - patrz Updater::gitPull()), wiec
+#   caly katalog .git/ (a z nim pelna historia repozytorium) przechodzil
+#   bez przeszkod. Naprawione przez osobna regule RewriteRule ponizej,
+#   dzialajaca na calym %{REQUEST_URI} (pelnej sciezce), nie tylko na
+#   nazwie pliku - dokladnie ten sam mechanizm, jaki juz zapewnia
+#   `location ~ /\.` w nginx_letadial_example.conf (gdzie regex dziala na
+#   calym URI, nie tylko na ostatnim segmencie).
+#
+#   SEC-143 [SREDNI]: oba bloki <FilesMatch> ponizej uzywaly WYLACZNIE
+#   nowoczesnej skladni autoryzacji Apache 2.4+ (Require all denied), bez
+#   legacy fallbacku - dokladnie ten sam problem, ktory SEC-121 (Czesc X)
+#   juz raz naprawilo we WSZYSTKICH innych miejscach projektu (patrz
+#   avatar_src.php, group_icon_src.php, install.php,
+#   LetaDial_Permissions.sh). Na Apache 2.2, lub na Apache 2.4+ bez
+#   zaladowanego mod_authz_core (LetaDial_Permissions.sh, wlasny
+#   komentarz: "several minimal/hardened images omit it"), samo
+#   `Require all denied` jest cicho ignorowane, bez zadnego bledu przy
+#   starcie serwera. Naprawione przez dokladnie ten sam wzorzec podwojnej
+#   skladni, ktory SEC-121 juz ustanowilo jako standard w tym projekcie.
+#
+# WAZNE dla instalacji nginx: ten plik jest dla nginx calkowicie martwy
+# i nieszkodliwy - nginx nigdy nie czyta .htaccess (patrz README.md,
+# "Security notes"). Zadna ze zmian w tym pliku (SEC-137, SEC-142,
+# SEC-143) nie ma zadnego wplywu na zadna instalacje nginx, wlacznie z
+# produkcyjnymi instancjami LetaLab.
+
+# SEC-142: block ANY path segment starting with a dot, anywhere in the
+# URL - the correct, path-aware way to protect .git/ (and any other
+# dot-prefixed directory) under Apache. %{REQUEST_URI} is the full
+# request path (query string excluded), so this matches /.git/HEAD,
+# /.git/config, /.git/objects/** etc, unlike the basename-only
+# <FilesMatch "^\."> further below. Placed first, before the
+# front-controller rule, with [F,L] so a matching request is refused
+# (403) immediately and never reaches any later rule. Requires
+# mod_rewrite, which this file already requires for the front controller
+# below - there is no configuration where one would be available and not
+# the other.
+RewriteEngine On
+RewriteCond %{REQUEST_URI} (^|/)\. [NC]
+RewriteRule ^ - [F,L]
+
+# Front controller, equivalent of nginx's try_files $uri $uri/ /index.php?$args;
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [QSA,L]
+
+# Same security headers as the nginx config (see nginx_letadial_example.conf)
+<IfModule mod_headers.c>
+    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    Header always set X-XSS-Protection "0"
+</IfModule>
+
+# Block dotfiles (.git, .env, .htaccess itself, etc.) - kept as a second,
+# redundant layer alongside the RewriteRule above (SEC-142). On its own
+# this directive only ever protects files matched by basename directly in
+# a given directory, never nested paths like .git/HEAD - see the SEC-142
+# comment at the top of this file for the full explanation. SEC-143: now
+# uses the dual Apache 2.2/2.4+ syntax already standard everywhere else
+# in this project (see avatar_src.php, group_icon_src.php, install.php).
+<FilesMatch "^\.">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order deny,allow
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# Block sensitive file extensions
+# SEC-111 parity with nginx_letadial_example.conf: also blocks stray .md/.sh
+# files that a future `git reset --hard` might ever restore into the web root.
+# SEC-143: dual Apache 2.2/2.4+ syntax, same as the block above.
+<FilesMatch "\.(ini|log|conf|bak|sql|swp|dist|yml|md|sh)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order deny,allow
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+Options -Indexes

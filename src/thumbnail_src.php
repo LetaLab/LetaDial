@@ -27,6 +27,15 @@
  *   - BUG-018: processUpload() now unlinks its upload temp file on every
  *     exit path via a finally block (cleanupTmp()), instead of relying
  *     solely on PHP's post-request purge
+ *   - SEC-148: generate()/processUpload() now lazily create
+ *     storage/thumbnails/.htaccess on first use if it is ever missing,
+ *     the same self-healing pattern avatar_src.php/group_icon_src.php
+ *     already had — this class was previously the one exception, relying
+ *     entirely on install.php (a one-time script) to have written that
+ *     file. Complements, does not replace, the git-tracked storage/.htaccess
+ *     introduced by the same fix (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVI) —
+ *     belt-and-suspenders, same philosophy as SEC-093's log-size backstop
+ *     alongside logrotate.
  *
  * Storage: storage/thumbnails/u{userId}/{dialId}.webp
  * Served:  GET /api/thumbs/{dialId} — PHP checks auth, streams file
@@ -70,6 +79,7 @@ class Thumbnail
                 return false;
             }
         }
+        self::ensureHtaccess(); // SEC-148
 
         $domain = self::parseDomain($url);
         if (!$domain) return false;
@@ -187,6 +197,7 @@ class Thumbnail
                 error_log("[Thumbnail] Cannot create dir: {$dir}");
                 return false;
             }
+            self::ensureHtaccess(); // SEC-148
 
             $absPath = self::absPath($dialId, $userId);
 
@@ -350,6 +361,34 @@ class Thumbnail
     private static function absDir(int $userId): string
     {
         return __DIR__ . '/../' . self::BASE . '/u' . $userId;
+    }
+
+    /**
+     * SEC-148: lazily create storage/thumbnails/.htaccess if it is ever
+     * missing, mirroring the pattern Avatar::processUpload() and
+     * GroupIcon::processUpload() already use for their own directories.
+     * Written at the BASE level (storage/thumbnails/), not per-userId —
+     * Apache applies .htaccess directives recursively down the directory
+     * tree, so one file here already protects every u{userId}/ subdirectory,
+     * present or future, without needing one per user.
+     *
+     * Best-effort only: a failed write here is logged, never fatal to the
+     * calling operation — this is a defense-in-depth backstop alongside
+     * the git-tracked storage/.htaccess, not the sole protection mechanism
+     * (nginx deployments are entirely unaffected either way, see
+     * nginx_letadial_example.conf's `location ^~ /storage/`).
+     */
+    private static function ensureHtaccess(): void
+    {
+        $path = __DIR__ . '/../' . self::BASE . '/.htaccess';
+        if (file_exists($path)) return;
+        $ok = @file_put_contents(
+            $path,
+            "Options -Indexes\n<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\n    Order deny,allow\n    Deny from all\n</IfModule>\n"
+        );
+        if ($ok === false) {
+            error_log('[Thumbnail] Could not write ' . $path . ' — storage/thumbnails/ may be unprotected on Apache without a git-tracked storage/.htaccess.');
+        }
     }
 
     private static function parseDomain(string $url): ?string

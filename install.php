@@ -647,9 +647,30 @@ function smtp_send_activation(array $smtp, string $to, string $app_url, string $
 
         $port   = (int)$smtp['port'];
         $host   = $smtp['host'];
-        $prefix = ($port === 465) ? 'ssl://' : '';
 
-        $sock = @fsockopen($prefix . $host, $port, $errno, $errstr, 10);
+        // SEC-146 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVI): explicit,
+        // verified SSL context - the exact same gap SEC-140 (Czesc XV)
+        // already fixed in src/mailer_src.php::smtp(), but this is a
+        // SECOND, independent SMTP client implementation (used once, for
+        // this installer's own "send a test activation email" step) that
+        // never received the matching fix. Previously connected via plain
+        // fsockopen() with no context at all, relying implicitly on PHP's
+        // global default stream context instead of a context this code
+        // controls explicitly. fsockopen() has no context parameter, so
+        // the immediate-TLS branch (port 465) uses stream_socket_client()
+        // instead, which does; behaviour for the plain tcp:// case
+        // (port 25) is unchanged.
+        $ctxOpts = [];
+        if ($port === 465) {
+            $ctxOpts['ssl'] = [
+                'verify_peer'      => true,
+                'verify_peer_name' => true,
+                'peer_name'        => $host,
+            ];
+        }
+        $ctx    = stream_context_create($ctxOpts);
+        $scheme = ($port === 465) ? 'ssl://' : '';
+        $sock   = @stream_socket_client($scheme . $host . ':' . $port, $errno, $errstr, 10, STREAM_CLIENT_CONNECT, $ctx);
         if (!$sock) return false;
         stream_set_timeout($sock, 10);
 
@@ -661,8 +682,23 @@ function smtp_send_activation(array $smtp, string $to, string $app_url, string $
         // Drain multi-line EHLO
         do { $peek = fgets($sock, 512); } while ($peek !== false && isset($peek[3]) && $peek[3] === '-');
 
-        if ($port === 587) {
+        // SEC-145 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVI): STARTTLS now also
+        // attempted for port 2525, not just 587 - see the matching fix
+        // and full rationale in src/mailer_src.php::smtp(). This
+        // installer's own process_email() explicitly allows 2525 as one
+        // of exactly four valid ports; before this fix it silently
+        // connected in plaintext with no upgrade attempt, same gap as
+        // mailer_src.php had.
+        if (in_array($port, [587, 2525], true)) {
             if (smtp_code(smtp_cmd($sock, 'STARTTLS')) !== 220) { fclose($sock); return false; }
+            // SEC-146: same explicit verification options as the port-465
+            // branch above, set on this stream's context immediately
+            // before the STARTTLS upgrade - stream_socket_enable_crypto()
+            // reads SSL options from the stream's own context, which for a
+            // plain tcp:// connection was never given one until now.
+            stream_context_set_option($sock, 'ssl', 'verify_peer', true);
+            stream_context_set_option($sock, 'ssl', 'verify_peer_name', true);
+            stream_context_set_option($sock, 'ssl', 'peer_name', $host);
             if (!stream_socket_enable_crypto($sock, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
                 fclose($sock); return false;
             }

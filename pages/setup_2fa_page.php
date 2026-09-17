@@ -50,7 +50,46 @@ $done         = false;
 $secret = Auth::getSetupSecret();
 if (!$secret) {
     $secret = TOTP::generateSecret();
-    Auth::storeSetupSecret($secret);
+    // BUG-037 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVI): storeSetupSecret() now
+    // returns bool (see auth_src.php) so this failure can be caught HERE,
+    // before any of the QR-code rendering below ever runs. Previously a
+    // failed save was silent (void return) and this page carried on
+    // regardless, rendering a working-looking QR code / manual-entry
+    // secret for a value that was never actually persisted — the user
+    // would scan it, then get a confusing "Setup session expired. Start
+    // again." on submission, with nothing telling them why. This requires
+    // TOTP::encrypt() to fail on a genuine openssl-level problem (most
+    // likely an already-broken/rotated-without-migration ENCRYPTION_KEY,
+    // itself a broader operational issue) — not reachable under normal
+    // operation, but worth failing loudly and immediately rather than
+    // rendering a QR code that was doomed not to work.
+    if (!Auth::storeSetupSecret($secret)) {
+        http_response_code(500);
+        $app_name_err = htmlspecialchars(APP_NAME, ENT_QUOTES, 'UTF-8');
+        die(<<<HTML
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Set up 2FA — {$app_name_err}</title>
+<link rel="stylesheet" href="/assets/css/design-system.css">
+<link rel="stylesheet" href="/assets/css/pages/setup-2fa.css">
+</head>
+<body>
+<div class="page-card">
+    <div class="logo"><h1>{$app_name_err}</h1></div>
+    <div class="page-body">
+        <div class="alert alert-error">
+            <span class="alert-icon">&#9888;</span>
+            <span>Could not start two-factor setup right now. Please try again in a moment, or contact your administrator if this keeps happening.</span>
+        </div>
+    </div>
+</div>
+</body>
+</html>
+HTML);
+    }
 }
 
 // URI label is display-only in auth apps — does NOT affect TOTP security.

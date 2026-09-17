@@ -218,8 +218,24 @@ if ($method === 'GET' && $action === 'install-check') {
 // gives - this closes the inconsistency regardless of how small that risk
 // is. Client updated in admin_page.php to POST via fetch()+Blob instead of
 // window.location.href, mirroring app.js's doExport() after SEC-102.
+//
+// SEC-144 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVI): the SEC-138 fix above
+// added CSRF but no rate limit at all, unlike its non-admin sibling
+// /api/export (SEC-133, 'export' bucket, 30/h) and unlike every other
+// mutating admin action in this file (the shared 'admin_mutate' bucket,
+// SEC-113). Admin::exportBlocked() runs
+// "SELECT ... FROM rate_limits ORDER BY attempts DESC" with no LIMIT at
+// all, unlike getBlocked() (used by the regular Blocked IPs tab), which
+// at least filters by a minimum attempts threshold - a genuinely
+// unbounded query with no rate limit behind it. Own dedicated bucket
+// (not the shared admin_mutate) for direct parity with SEC-133's own
+// 'export' bucket rather than folding it into an unrelated 200/h pool.
 if ($method === 'POST' && $action === 'export-blocked') {
     CSRF::require();
+    if (RateLimit::check('admin_export', (string)$user['id'], 30, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many export requests. Try again later.']); exit;
+    }
     $body   = json_decode(file_get_contents('php://input'), true) ?? [];
     $format = in_array($body['format'] ?? '', ['json', 'csv'], true) ? $body['format'] : 'json';
     $data   = Admin::exportBlocked($format);

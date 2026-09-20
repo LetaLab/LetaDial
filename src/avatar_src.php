@@ -53,8 +53,25 @@ class Avatar
     // SEC-090: reject images with a declared width/height above this BEFORE
     // imagecreatefromstring() fully decodes them — a small compressed file
     // can still declare huge pixel dimensions ("decompression bomb"), and
-    // GD has no configurable internal resource limit the way Imagick does.
-    private const MAX_DIMENSION = 8000;
+    // GD has no configurable internal resource limit the way Imagick does
+    // (contrast Thumbnail::applyImagickSafetyLimits(), which caps Imagick's
+    // memory/map usage as a SECOND, independent backstop on top of this
+    // same kind of dimension pre-check — GD has no equivalent API, so this
+    // pre-check is the ONLY protection here).
+    //
+    // SEC-154 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVII): lowered from the
+    // originally-shared value of 8000 to 3000. This class's own output is
+    // always exactly 128x128 — an 8000x8000 source decoded by GD to full
+    // RGBA truecolor is ~244 MiB for a single request, wildly out of
+    // proportion to that tiny target size, on a class with no Imagick-style
+    // resource ceiling to fall back on. 3000x3000 (~34 MiB decoded) is still
+    // far larger than any real phone/webcam photo anyone would reasonably
+    // upload as a square profile picture, while meaningfully shrinking the
+    // worst case for a small, self-hosted install's PHP-FPM worker pool.
+    // Thumbnail keeps 8000 unchanged — it genuinely needs to accept larger
+    // third-party og:image sources, and already has that second layer of
+    // Imagick resource limits this class lacks.
+    private const MAX_DIMENSION = 3000;
 
     // ── Paths ─────────────────────────────────────────────────────────────────
 

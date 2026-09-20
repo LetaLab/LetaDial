@@ -4,14 +4,21 @@
  *
  * Security:
  *   - SSRF: blocks private/loopback IPs before any HTTP request
- *   - SEC-086/SEC-087: resolvePinned() resolves a host ONCE, validates
- *     every A record AND every AAAA record, and every outbound fetch then
- *     connects directly to that one validated IPv4 address — never by
- *     handing a hostname to file_get_contents()/fopen() and letting PHP
- *     resolve it again independently. Closes DNS-rebinding TOCTOU
- *     (SEC-086, previously an accepted/deferred risk noted in
- *     isSafeHostLax()) and unvalidated-AAAA bypass (SEC-087) in one place.
- *     isSafeHost()/isSafeHostLax() are now thin boolean wrappers around it.
+ *   - SEC-086/SEC-087: every outbound fetch resolves a host ONCE, via the
+ *     shared SsrfGuard::resolvePinned() (SEC-153, src/ssrf_guard_src.php),
+ *     which validates every A record AND every AAAA record, and connects
+ *     directly to that one validated IPv4 address — never by handing a
+ *     hostname to file_get_contents()/fopen() and letting PHP resolve it
+ *     again independently. Closes DNS-rebinding TOCTOU (SEC-086, previously
+ *     an accepted/deferred risk noted in isSafeHostLax()) and unvalidated-
+ *     AAAA bypass (SEC-087) in one place. isSafeHost()/isSafeHostLax() are
+ *     thin boolean wrappers around SsrfGuard::resolvePinned().
+ *   - SEC-153: resolvePinned() used to be a private method DUPLICATED
+ *     verbatim in this file and in meta_src.php — the exact same logic,
+ *     independently maintained in two places. Now lives once in
+ *     SsrfGuard, shared by both Thumbnail and Meta, so a future guard
+ *     improvement can no longer be applied to one and forgotten in the
+ *     other.
  *   - Path: built from DB integers only — never from user input
  *   - Redirect: follow_location=false on ALL outbound fetches (favicon,
  *     OG-page, OG-image), every hop re-resolved + re-validated via the
@@ -399,66 +406,15 @@ class Thumbnail
     }
 
     /**
-     * SEC-086/SEC-087: resolve $host to ONE validated public IPv4 address,
-     * suitable for a pinned connection (see safeFetchBody()/fetchFavicon()
-     * below).
-     *
-     * Uses gethostbynamel() (plural — returns every A record) rather than
-     * gethostbyname() (singular — returns only the first), so a
-     * round-robin/multi-A host cannot hide a private address behind a
-     * public one that happens to be returned first: ANY private/reserved A
-     * record rejects the whole host.
-     *
-     * Also checks every AAAA record the same way (SEC-087), even though
-     * this method only ever returns an IPv4 address for the caller to
-     * connect over: a host that publishes a private/loopback AAAA (e.g.
-     * ::1) alongside a clean public A is treated as unsafe outright, rather
-     * than assuming the IPv4 pin alone makes that irrelevant.
-     *
-     * This is now the ONE authoritative resolve+validate function for this
-     * class — isSafeHost() and isSafeHostLax() below are thin boolean
-     * wrappers kept only so existing call sites stay self-documenting
-     * ("is this domain OK to touch at all" vs. "is this specific
-     * redirect/og:image host OK"). The actual outbound connection is always
-     * made to the IP this method returns, never by re-resolving the
-     * hostname later — that is what closes SEC-086 (DNS-rebinding TOCTOU:
-     * a DNS zone the attacker controls could previously answer a public IP
-     * for the check and a private IP moments later for the real connect,
-     * since those used to be two separate, independently-timed lookups).
-     *
-     * @return string|null a single validated public IPv4 address, or null
-     *                      if the host has no usable A record, or if any
-     *                      A/AAAA record it publishes is private/reserved.
+     * SEC-153: resolvePinned() itself now lives in the shared SsrfGuard
+     * class (src/ssrf_guard_src.php) — see that file's docblock for the
+     * full SEC-086/SEC-087 rationale, unchanged from when it lived here.
+     * isSafeHost() stays as a thin, self-documenting wrapper so call sites
+     * below still read as "is this domain OK to touch at all".
      */
-    private static function resolvePinned(string $host): ?string
-    {
-        $ipv4s = @gethostbynamel($host);
-        if (!$ipv4s) return null; // DNS failure / no A record at all
-
-        foreach ($ipv4s as $ip) {
-            if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) return null;
-            if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
-                return null; // any private/reserved A record → reject the whole host
-            }
-        }
-
-        // dns_get_record() can return false (or emit a warning) on resolver
-        // failure — treated the same as "no AAAA records", which is the
-        // common, legitimate case, not an error.
-        $aaaaRecords = @dns_get_record($host, DNS_AAAA) ?: [];
-        foreach ($aaaaRecords as $rec) {
-            $ip6 = $rec['ipv6'] ?? null;
-            if ($ip6 !== null && !filter_var($ip6, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
-                return null;
-            }
-        }
-
-        return $ipv4s[0];
-    }
-
     private static function isSafeHost(string $host): bool
     {
-        return self::resolvePinned($host) !== null;
+        return SsrfGuard::isSafe($host);
     }
 
     /**
@@ -582,16 +538,17 @@ class Thumbnail
 
     private static function isSafeHostLax(string $host): bool
     {
-        // SEC-086/SEC-087: now identical to isSafeHost() — both delegate to
-        // resolvePinned(), which performs the full A+AAAA check (see its
-        // docblock above). Kept as a separately-named call site purely for
-        // readability at each call site: isSafeHost() gates the primary
-        // page URL, isSafeHostLax() gates a redirect target or an
-        // extracted og:image URL. The DNS-rebinding TOCTOU risk this
-        // function's comment used to note as "deferred" is closed now that
-        // every fetch connects to resolvePinned()'s literal IP instead of
-        // re-resolving the hostname (see safeFetchBody()/fetchFavicon()).
-        return self::resolvePinned($host) !== null;
+        // SEC-086/SEC-087/SEC-153: identical to isSafeHost() — both
+        // delegate to SsrfGuard::resolvePinned(), which performs the full
+        // A+AAAA check. Kept as a separately-named call site purely for
+        // readability: isSafeHost() gates the primary page URL,
+        // isSafeHostLax() gates a redirect target or an extracted
+        // og:image URL. The DNS-rebinding TOCTOU risk this function's
+        // comment used to note as "deferred" is closed now that every
+        // fetch connects to SsrfGuard::resolvePinned()'s literal IP
+        // instead of re-resolving the hostname (see
+        // safeFetchBody()/fetchFavicon()).
+        return SsrfGuard::isSafe($host);
     }
 
     // ── SEC-081/SEC-086/SEC-087: redirect-safe, pin-connected fetch ──────────
@@ -628,7 +585,7 @@ class Thumbnail
             $host = $parts['host'];
             $port = $parts['port'] ?? ($scheme === 'https' ? 443 : 80);
 
-            $ip = self::resolvePinned($host);
+            $ip = SsrfGuard::resolvePinned($host);
             if (!$ip) return null;
 
             $path      = ($parts['path'] ?? '/') . (isset($parts['query']) ? '?' . $parts['query'] : '');
@@ -726,10 +683,11 @@ class Thumbnail
 
     private static function fetchFavicon(string $domain): ?string
     {
-        // SEC-086/SEC-087: resolve+validate ONCE and reuse the same pinned
-        // IP for both the https and http attempts below, instead of letting
-        // file_get_contents() resolve $domain independently each time.
-        $ip = self::resolvePinned($domain);
+        // SEC-086/SEC-087/SEC-153: resolve+validate ONCE via the shared
+        // SsrfGuard and reuse the same pinned IP for both the https and
+        // http attempts below, instead of letting file_get_contents()
+        // resolve $domain independently each time.
+        $ip = SsrfGuard::resolvePinned($domain);
         if (!$ip) return null;
 
         foreach (['https', 'http'] as $scheme) {

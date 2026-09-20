@@ -7,11 +7,17 @@
  *
  * Security:
  *   - SSRF: blocks private/loopback/reserved IPs (same as thumbnail_src.php)
- *   - SEC-086/SEC-087: resolves the host ONCE per hop and connects directly
- *     to that validated IP (see resolvePinned()) instead of letting PHP's
+ *   - SEC-086/SEC-087: resolves the host ONCE per hop, via the shared
+ *     SsrfGuard::resolvePinned() (SEC-153, src/ssrf_guard_src.php), and
+ *     connects directly to that validated IP instead of letting PHP's
  *     stream wrapper re-resolve the hostname independently at connect time.
  *     Closes DNS-rebinding TOCTOU (SEC-086) and unvalidated-AAAA bypass
- *     (SEC-087) in one mechanism — see resolvePinned()/download() docblocks.
+ *     (SEC-087) in one mechanism — see SsrfGuard's docblock and download()
+ *     below.
+ *   - SEC-153: resolvePinned() used to be a private method DUPLICATED
+ *     verbatim in this file and in thumbnail_src.php. Now lives once in
+ *     SsrfGuard, shared by both, so a future guard improvement can no
+ *     longer be applied to one and forgotten in the other.
  *   - Redirect: max 3 hops, EACH hop re-resolved + re-validated (SEC-081,
  *     extended by SEC-086/087) — never trusts PHP's built-in follow_location
  *   - Timeout: 5s connect + read
@@ -86,11 +92,11 @@ class Meta
      * every redirect target before following it.
      *
      * SEC-086/SEC-087: on EVERY hop (including the first), the host is
-     * resolved and validated exactly once via resolvePinned(), and the
-     * actual connection is made directly to that literal IP — never by
-     * handing the hostname to fopen() and letting PHP's stream wrapper
-     * resolve it again independently. This closes two related gaps that
-     * isSafeUrl()'s old single gethostbyname() check did not:
+     * resolved and validated exactly once via SsrfGuard::resolvePinned()
+     * (SEC-153), and the actual connection is made directly to that
+     * literal IP — never by handing the hostname to fopen() and letting
+     * PHP's stream wrapper resolve it again independently. This closes two
+     * related gaps that isSafeUrl()'s old single gethostbyname() check did not:
      *   - DNS rebinding (TOCTOU): a DNS zone the attacker controls could
      *     previously answer a public IP for the validation lookup and a
      *     private/internal IP for the real connection moments later, since
@@ -99,8 +105,8 @@ class Meta
      *   - Unvalidated AAAA bypass: gethostbyname() only ever inspects A
      *     (IPv4) records. A malicious AAAA record (e.g. pointing at ::1)
      *     was never checked, and PHP's stream wrapper could still prefer
-     *     it at connect time. resolvePinned() validates AAAA too and
-     *     rejects the host outright if any A or AAAA record is
+     *     it at connect time. SsrfGuard::resolvePinned() validates AAAA too
+     *     and rejects the host outright if any A or AAAA record is
      *     private/reserved, then this method only ever connects to the one
      *     specific, pre-validated IPv4 address it returned — there is no
      *     address-family selection left for the OS/PHP to make on its own.
@@ -123,7 +129,7 @@ class Meta
             $host = $parts['host'];
             $port = $parts['port'] ?? ($scheme === 'https' ? 443 : 80);
 
-            $ip = self::resolvePinned($host);
+            $ip = SsrfGuard::resolvePinned($host);
             if (!$ip) return null;
 
             $path      = ($parts['path'] ?? '/') . (isset($parts['query']) ? '?' . $parts['query'] : '');
@@ -202,51 +208,9 @@ class Meta
         return null; // too many redirects
     }
 
-    /**
-     * SEC-086/SEC-087: resolve $host to ONE validated public IPv4 address
-     * suitable for a pinned connection (see download() above).
-     *
-     * Uses gethostbynamel() (plural — returns every A record) rather than
-     * gethostbyname() (singular — returns only the first), so a
-     * round-robin/multi-A host cannot hide a private address behind a
-     * public one that happens to be returned first: ANY private/reserved A
-     * record rejects the whole host.
-     *
-     * Also checks every AAAA record the same way (SEC-087), even though
-     * this method only ever returns an IPv4 address for the caller to
-     * connect over: a host that publishes a private/loopback AAAA (e.g.
-     * ::1) alongside a clean public A is treated as unsafe outright, rather
-     * than assuming the IPv4 pin alone makes that irrelevant.
-     *
-     * @return string|null a single validated public IPv4 address, or null
-     *                      if the host has no usable A record, or if any
-     *                      A/AAAA record it publishes is private/reserved.
-     */
-    private static function resolvePinned(string $host): ?string
-    {
-        $ipv4s = @gethostbynamel($host);
-        if (!$ipv4s) return null; // DNS failure / no A record at all
-
-        foreach ($ipv4s as $ip) {
-            if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) return null;
-            if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
-                return null; // any private/reserved A record → reject the whole host
-            }
-        }
-
-        // dns_get_record() can return false (or emit a warning) on resolver
-        // failure — treated the same as "no AAAA records", which is the
-        // common, legitimate case, not an error.
-        $aaaaRecords = @dns_get_record($host, DNS_AAAA) ?: [];
-        foreach ($aaaaRecords as $rec) {
-            $ip6 = $rec['ipv6'] ?? null;
-            if ($ip6 !== null && !filter_var($ip6, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
-                return null;
-            }
-        }
-
-        return $ipv4s[0];
-    }
+    // SEC-153: resolvePinned() itself now lives in the shared SsrfGuard
+    // class (src/ssrf_guard_src.php) — see that file's docblock for the
+    // full SEC-086/SEC-087 rationale, unchanged from when it lived here.
 
     /** SEC-081: extract the numeric HTTP status code from a stream's response header array. */
     private static function parseStatusCode(array $headers): int

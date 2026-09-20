@@ -4,10 +4,13 @@
  *
  * Session flow:
  *   login()             → creates DB session, totp_verified=0 if 2FA enabled
- *   verify2FA()         → sets totp_verified=1
+ *   verify2FA()         → sets totp_verified=1 AND rotates to a brand-new
+ *                          session/token (SEC-149) — the pre-2FA token is
+ *                          deleted, never just "upgraded" in place
  *   getUser()           → returns user ONLY if totp_verified=1
  *   getPartialUser()    → returns user regardless of totp_verified (2FA page)
- *   loginFromRemember() → creates session with totp_verified=0 if user has 2FA
+ *   loginFromRemember() → creates session with totp_verified=0 if user has 2FA;
+ *                          rate limited and logged to login_history (SEC-152)
  *   register()          → sesja 068: self-registration (if enabled)
  *
  * SEC-080: verify2FA() and enable2FA() both call TOTP::verifyAndConsume()
@@ -84,6 +87,21 @@
  *   verify2FA() falls through to the backup-code check (unaffected by
  *   ENCRYPTION_KEY), the setup-secret helpers fall back to "generate a
  *   fresh secret", and enable2FA() returns a plain retryable error.
+ *
+ * SEC-149 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVII): verify2FA() and
+ *   enable2FA() now call the new rotateSessionAfter2FA() on every success
+ *   path instead of updating the pre-2FA session row in place. Before this,
+ *   the raw dv_s cookie value was identical before and after 2FA — a copy
+ *   leaked during the short (15 min) pre-2FA window would silently become
+ *   a fully-authenticated, long-lived session the instant the real user
+ *   finished 2FA, without the holder ever needing the TOTP code themselves.
+ *
+ * SEC-152 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVII): loginFromRemember() now
+ *   checks two new rate-limit buckets (remember_login by IP, then
+ *   remember_login_account by user_id once the token resolves) and writes
+ *   a login_history entry on success. Before this, remember-me-based
+ *   session creation was the one session-creating path in the app with no
+ *   throttle and zero trace in the Admin -> Login History view.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -471,7 +489,12 @@ class Auth
         if ($totpOk) {
             RateLimit::clear('2fa', $ip);
             RateLimit::clear('2fa_account', (string)$user['id']);
-            DB::run("UPDATE sessions SET totp_verified = 1 WHERE id = ?", [self::$sessionId]);
+            // SEC-149: rotate the session token now that 2FA has actually
+            // succeeded — see rotateSessionAfter2FA() below for the full
+            // rationale (a copy of the pre-2FA cookie, if it ever leaked
+            // during the narrow pre-2FA window, must not become a valid
+            // fully-authenticated token the instant 2FA completes).
+            self::rotateSessionAfter2FA((int)$user['id']);
             return ['ok' => true];
         }
 
@@ -486,7 +509,8 @@ class Auth
         if (TOTP::useBackupCode($user['id'], $code)) {
             RateLimit::clear('2fa', $ip);
             RateLimit::clear('2fa_account', (string)$user['id']);
-            DB::run("UPDATE sessions SET totp_verified = 1 WHERE id = ?", [self::$sessionId]);
+            // SEC-149: same rotation as the TOTP-success branch above.
+            self::rotateSessionAfter2FA((int)$user['id']);
             return ['ok' => true, 'used_backup' => true];
         }
 
@@ -595,8 +619,14 @@ class Auth
             $stmt->execute([$user['id'], password_hash($raw, PASSWORD_BCRYPT, ['cost' => 10])]);
         }
 
-        DB::run("UPDATE sessions SET totp_verified = 1, pending_totp = NULL WHERE id = ?",
-            [self::$sessionId]);
+        // SEC-149: rotate the session token here too — enable2FA() is the
+        // very first time this account's 2FA turns on, and the session that
+        // carried the user through the setup form is, from this exact
+        // instant forward, held to the same "must not survive a privilege
+        // change" standard as any ordinary post-2FA login. Deleting the old
+        // row also clears pending_totp implicitly, so no separate
+        // "pending_totp = NULL" update is needed on it.
+        self::rotateSessionAfter2FA((int)$user['id']);
 
         return ['ok' => true, 'backup_codes' => $codes];
     }
@@ -720,6 +750,45 @@ class Auth
         return $token;
     }
 
+    /**
+     * SEC-149 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVII): rotate the session
+     * token at the exact instant 2FA succeeds — called from both success
+     * branches of verify2FA() (TOTP and backup code) and from enable2FA().
+     *
+     * Before this fix, verify2FA()/enable2FA() only ever flipped
+     * totp_verified=1 on the SAME session row/token already created (with
+     * a much shorter, 15-minute TTL — SEC-129a) at the initial,
+     * password-only step of login(). The raw token in the dv_s cookie was
+     * therefore byte-for-byte IDENTICAL before and after 2FA — only its
+     * totp_verified flag and expiry changed. If that exact cookie value
+     * had ever leaked during the narrow pre-2FA window (a TLS-terminating
+     * middlebox log, a browser crash reporter, a malicious extension with
+     * cookie access, a shoulder-surfed devtools panel), whoever held a
+     * copy of it would silently inherit a fully-authenticated, up-to-
+     * session_lifetime session the moment the legitimate user finished
+     * entering their real TOTP code — without ever needing to know that
+     * code themselves.
+     *
+     * Fix: mint a brand-new session (new random token, new DB row, new
+     * cookie) at the moment 2FA succeeds, and delete the old, now-
+     * superseded pre-2FA row. This mirrors the rotation
+     * createRememberToken()/loginFromRemember() already perform on every
+     * single use of a remember-me token — a credential must not survive
+     * the moment it gets elevated to a higher privilege level.
+     */
+    private static function rotateSessionAfter2FA(int $userId): void
+    {
+        $oldSessionId = self::$sessionId;
+
+        $rawToken = self::createSession($userId, 1);
+        self::setSessionCookie($rawToken, 1);
+        self::$sessionId = hash('sha256', $rawToken);
+
+        if ($oldSessionId) {
+            DB::run("DELETE FROM sessions WHERE id = ?", [$oldSessionId]);
+        }
+    }
+
     private static function loadSession(string $rawToken): ?array
     {
         $id  = hash('sha256', $rawToken);
@@ -823,6 +892,23 @@ class Auth
         if (!str_contains($cookie, ':')) return null;
         [$selector, $verifier_b64] = explode(':', $cookie, 2);
 
+        // SEC-152 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVII): IP-scoped rate
+        // limit, checked before any DB lookup — mirrors login()'s own
+        // 'login' bucket. Before this fix, loginFromRemember() was the one
+        // session-creating code path in the whole app with no throttle of
+        // any kind, reachable on every page load that carries a dv_r
+        // cookie but no (or an expired) dv_s session cookie. A rate-limit
+        // hit here is NOT treated as an invalid token — the remember token
+        // itself is left untouched in the DB, so a legitimate visitor is
+        // simply treated as logged-out for this one request and can
+        // succeed again once the window passes, exactly like every other
+        // RateLimit::check() call in this file never invalidates the
+        // underlying credential, only throttles the attempt.
+        $ip = self::ip();
+        if (RateLimit::check('remember_login', $ip, 30, 600, 600)) {
+            return null;
+        }
+
         $row = DB::row(
             "SELECT * FROM remember_tokens WHERE selector = ? AND expires_at > NOW()",
             [$selector]
@@ -835,6 +921,14 @@ class Auth
         if (!hash_equals($row['verifier'], $verifier_hash)) {
             DB::run("DELETE FROM remember_tokens WHERE user_id = ?", [$row['user_id']]);
             self::clearCookies();
+            return null;
+        }
+
+        // SEC-152: account-scoped rate limit, now that user_id is known —
+        // mirrors login_account. Bounds how often ANY ONE account can be
+        // walked through this path, independent of source IP, without
+        // touching the (already-verified-valid) token itself.
+        if (RateLimit::check('remember_login_account', (string)$row['user_id'], 30, 900, 900)) {
             return null;
         }
 
@@ -851,6 +945,20 @@ class Auth
         self::$sessionId = hash('sha256', $raw_token);
 
         DB::run("UPDATE users SET last_login = NOW() WHERE id = ?", [$user['id']]);
+
+        // SEC-152: leave a trace in the same audit table login() already
+        // writes to on every attempt, so Admin -> Login History is no
+        // longer completely blind to remember-me-based access (including a
+        // stolen/replayed dv_r cookie, right up until this same fix's rate
+        // limits above throttle it). Deliberately reuses the existing
+        // 'success' enum value rather than adding a new one, so this is
+        // immediately deployable on any existing installation with zero
+        // schema change — see SEC_AND_BUG_ANIH_PLAN.md, SEC-152 for the
+        // optional follow-up of adding a distinct 'success_remember' status.
+        DB::run("INSERT INTO login_history (user_id, login_attempt, ip, user_agent, status)
+                 VALUES (?, ?, ?, ?, 'success')",
+            [$user['id'], $user['login'], $ip, self::ua()]
+        );
 
         if ($user['totp_enabled']) {
             return null;

@@ -35,7 +35,12 @@ class GroupIcon
     // imagecreatefromstring() fully decodes them — same rationale as
     // avatar_src.php's MAX_DIMENSION (GD has no configurable internal resource
     // limit the way Imagick does, so the dimension pre-check IS the guard).
-    private const MAX_DIMENSION = 8000;
+    //
+    // SEC-154 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVII): lowered from 8000 to
+    // 3000, mirroring the identical change and full rationale in
+    // avatar_src.php — this class's output is a mere 32x32, making 8000x8000
+    // (~244 MiB decoded) even more disproportionate here than for Avatar.
+    private const MAX_DIMENSION = 3000;
 
     // ── Paths ─────────────────────────────────────────────────────────────────
 

@@ -23,6 +23,11 @@
  *      auth_src.php); bez catch-a `uq_login`/`uq_email` UNIQUE KEY (install.php)
  *      zamieniał kolizję w nieobsłużony PDOException zamiast czytelnej
  *      odpowiedzi błędu.
+ * SEC-151 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVII): installCheck() — nowy
+ *      check w grupie "Security" ostrzegający, jeśli display_errors jest
+ *      włączone na hostingu. Uzupełnia (nie zastępuje) nowy globalny
+ *      set_exception_handler() w index.php — ten sam problem od strony
+ *      wykrywania w panelu admina, nie tylko od strony samego kodu.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -616,6 +621,21 @@ class Admin
                 $remoteOk ? '' : 'origin must be https://github.com/LetaLab/LetaDial.git — fix with: git remote set-url origin https://github.com/LetaLab/LetaDial.git');
         }
 
+        // SEC-151 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVII): index.php now
+        // installs a global set_exception_handler() as a backstop, but
+        // display_errors is still the FIRST line of defense against an
+        // uncaught error (or plain warning/notice, which the exception
+        // handler does not touch) printing file paths, class names, or
+        // query fragments straight into the response. Common web-SAPI
+        // values are '', '0' (off) or '1' (on); anything else falling
+        // through the whitelist below is treated conservatively as "on".
+        $displayErrorsRaw = (string)ini_get('display_errors');
+        $displayErrorsOff = in_array(strtolower($displayErrorsRaw), ['', '0', 'off', 'no', 'false'], true);
+        $checks[] = self::chk('display_errors disabled', $displayErrorsOff, false,
+            $displayErrorsOff ? 'disabled (good)' : "enabled ({$displayErrorsRaw}) — may print file paths or stack traces on error",
+            'Security',
+            $displayErrorsOff ? '' : 'Set display_errors = Off in php.ini for production. index.php\'s global exception handler already limits what an UNCAUGHT exception shows regardless, but a plain PHP warning/notice is not an exception and is unaffected by it — display_errors is still the correct baseline.');
+
         // ── Filesystem ────────────────────────────────────────────────────────
 
         // SEC-079: app root itself must not be world-writable.
@@ -697,6 +717,7 @@ class Admin
             'src/csp_src.php'              => true,   // BUG-007 — was missing despite being loaded by index.php
             'src/dial_src.php'             => true,
             'src/group_src.php'            => true,
+            'src/ssrf_guard_src.php'       => true,   // SEC-153 — Thumbnail and Meta both hard-depend on it now
             'src/thumbnail_src.php'        => true,
             'src/admin_src.php'            => true,
             'src/mailer_src.php'           => true,

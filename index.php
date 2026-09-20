@@ -10,9 +10,52 @@
  * and admin.php as two different files. Class names inside these files
  * are UNCHANGED (still Auth, Admin, CSRF, Dial, ...) — only the filenames
  * moved. See NAMING_CONVENTION.md for the full old-name -> new-name map.
+ *
+ * SEC-151 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVII): a global
+ * set_exception_handler() is now installed as the very first statement in
+ * this file, before config.php is even checked for. See the comment on
+ * that call below for the full rationale.
  */
 declare(strict_types=1);
 define('DIALVAULT_APP', true);
+
+// SEC-151 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVII): global safety net for any
+// Throwable that escapes every local try/catch in the app. Before this,
+// protection against leaking a stack trace (file paths, DB details, class
+// names) on an unforeseen error depended ENTIRELY on the hosting server's
+// own display_errors setting — something this project has no control over
+// from inside its own code. This does not replace or loosen any existing
+// try/catch (this project already catches and degrades gracefully at every
+// call site that has been reviewed — see SEC-112, SEC-139, and the many
+// individual fixes those informed); it only ever fires for a case nobody
+// has anticipated yet, logging it server-side and returning a short,
+// information-free message instead of whatever PHP's own default handler
+// would otherwise print (governed by display_errors, which on a
+// misconfigured host can include the full trace). Deliberately scoped to
+// set_exception_handler() only — NOT set_error_handler() — so the many
+// existing `@`-suppressed calls throughout this codebase (image
+// processing, SSRF-guarded fetches, best-effort .htaccess writes) keep
+// behaving exactly as before; this only ever fires for a genuinely
+// unhandled Throwable, never a suppressed warning/notice. See also the new
+// display_errors check added to Admin::installCheck() in the same session.
+set_exception_handler(function (Throwable $e): void {
+    error_log('[LetaDial] Unhandled ' . get_class($e) . ': ' . $e->getMessage()
+        . ' in ' . $e->getFile() . ':' . $e->getLine());
+
+    if (headers_sent()) return;
+
+    http_response_code(500);
+    $uri = $_SERVER['REQUEST_URI'] ?? '';
+    if (str_starts_with($uri, '/api/')) {
+        header('Content-Type: application/json; charset=UTF-8');
+        echo json_encode(['error' => 'Internal server error. Please try again or contact your administrator.']);
+    } else {
+        header('Content-Type: text/html; charset=UTF-8');
+        echo '<!DOCTYPE html><html><body style="font-family:system-ui;text-align:center;padding:4rem">'
+           . '<h1 style="color:#690B22">500</h1><p>Something went wrong. Please try again.</p>'
+           . '<a href="/" style="color:#690B22">&larr; Home</a></body></html>';
+    }
+});
 
 if (!file_exists(__DIR__ . '/config.php')) {
     if (file_exists(__DIR__ . '/install.php')) { header('Location: /install.php'); exit; }
@@ -33,6 +76,7 @@ require_once __DIR__ . '/src/qr_code_src.php';      // Pure PHP QR SVG (no exter
 require_once __DIR__ . '/src/mailer_src.php';       // Raw SMTP socket mailer
 require_once __DIR__ . '/src/auth_src.php';         // Session management & login
 require_once __DIR__ . '/src/group_src.php';        // Dial group CRUD
+require_once __DIR__ . '/src/ssrf_guard_src.php';   // SEC-153: shared SSRF pinning guard — before Thumbnail/Meta (both use it)
 require_once __DIR__ . '/src/thumbnail_src.php';    // Thumbnail generation (GD/WebP) — before Dial
 require_once __DIR__ . '/src/group_icon_src.php';   // Group icon upload (GD/WebP) — sesja 052
 require_once __DIR__ . '/src/avatar_src.php';       // User avatar upload (GD/WebP) — sesja 078

@@ -41,6 +41,16 @@
  * unhandled 500 on every regeneration attempt instead of falling through
  * to the (unaffected) backup-code check, same fix and rationale as
  * Auth::verify2FA() in auth_src.php.
+ *
+ * SEC-150 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVII): the 'email' action's
+ * "already in use" branch used to reveal, via a distinct message with no
+ * timing protection, whether an arbitrary address already belonged to
+ * another account — reachable by any authenticated user (a very low bar
+ * when self-registration is open), unlike the anonymous registration
+ * (SEC-104) and forgot-password (SEC-098) flows this project already
+ * hardened against exactly this class of enumeration. Both outcomes now
+ * share one generic error message and one floor-padded response time via
+ * _settings_equalize_email_timing().
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -236,6 +246,23 @@ if ($action === 'sessions' && $sub_action === 'delete-all') {
     exit;
 }
 
+// SEC-150 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVII): pad the elapsed time
+// since $t0 up to a fixed floor, so the "email already taken" and "email
+// change actually sent" branches of the 'email' action below take the
+// same amount of time. Mirrors the identical $_sfp_target/usleep()
+// pattern in forgot_password_page.php (SEC-098), which solves the same
+// class of enumeration problem for the anonymous forgot-password flow.
+// Can only ever ADD delay, never subtract - a genuinely slow SMTP send
+// that already exceeds the floor on its own is left alone.
+function _settings_equalize_email_timing(float $t0): void
+{
+    $target  = 1.2; // seconds - matches SEC-098's forgot-password floor
+    $elapsed = microtime(true) - $t0;
+    if ($elapsed < $target) {
+        usleep((int)(($target - $elapsed) * 1_000_000));
+    }
+}
+
 // ── sesja 066: Email Change ───────────────────────────────────────────────────
 if ($action === 'email' && $sub_action === null) {
     if (RateLimit::check('settings_email', (string)$user['id'], 3, 3600, 3600)) {
@@ -267,13 +294,34 @@ if ($action === 'email' && $sub_action === null) {
     if (!$newEmail) { http_response_code(422); echo json_encode(['ok' => false, 'error' => 'New email address is required.']); exit; }
     if (!filter_var($newEmail, FILTER_VALIDATE_EMAIL)) { http_response_code(422); echo json_encode(['ok' => false, 'error' => 'Invalid email address format.']); exit; }
     if ($newEmail === strtolower($user['email'])) { http_response_code(422); echo json_encode(['ok' => false, 'error' => 'This is already your current email address.']); exit; }
+
+    // SEC-150 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVII): from here on, the
+    // request either reveals that $newEmail already belongs to another
+    // account (or is pending on one) or actually sends a confirmation
+    // link - the same class of enumeration problem SEC-104 already closed
+    // for anonymous registration and SEC-098 closed for forgot-password.
+    // This endpoint only requires being authenticated as SOME account (a
+    // very low bar when self-registration is open) plus that account's
+    // OWN password, so it was reachable by anyone with a throwaway
+    // account. Both branches below now share one generic message and one
+    // floor-padded response time, so neither the text nor the timing
+    // tells the caller whether $newEmail belongs to a real, different
+    // account.
+    $_email_t0 = microtime(true);
+
     $taken = DB::val("SELECT id FROM users WHERE (email = ? OR email_pending = ?) AND id != ?", [$newEmail, $newEmail, $user['id']]);
-    if ($taken) { http_response_code(422); echo json_encode(['ok' => false, 'error' => 'This email address is already in use.']); exit; }
+    if ($taken) {
+        _settings_equalize_email_timing($_email_t0);
+        http_response_code(422);
+        echo json_encode(['ok' => false, 'error' => 'Could not update your email address with these details.']); exit;
+    }
+
     $token   = bin2hex(random_bytes(32));
     $expires = date('Y-m-d H:i:s', time() + 3600);
     DB::run("UPDATE users SET email_pending = ?, email_change_token = ?, email_change_expires = ? WHERE id = ?", [$newEmail, $token, $expires, $user['id']]);
     $sent = false;
     if (defined('SMTP_ENABLED') && SMTP_ENABLED) { $sent = Mailer::sendEmailChange($newEmail, $token); }
+    _settings_equalize_email_timing($_email_t0);
     echo json_encode(['ok' => true, 'email_sent' => $sent, 'smtp_enabled' => defined('SMTP_ENABLED') && SMTP_ENABLED]);
     exit;
 }

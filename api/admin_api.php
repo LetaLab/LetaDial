@@ -1,6 +1,6 @@
 <?php
 /**
- * LetaDial — Admin API (sesja 065 + 066 + 067 + 068 + 069 + SEC-105)
+ * LetaDial — Admin API (sesja 065 + 066 + 067 + 068 + 069 + SEC-105 + SEC-155 + SEC-156)
  *
  * GET  /api/admin/blocked          — list blocked rate_limit entries
  * POST /api/admin/unblock          — unblock one entry  {key_hash, action}
@@ -9,7 +9,7 @@
  * POST /api/admin/delete-user      — delete user        {user_id}
  * GET  /api/admin/login-history    — recent history     [?ip=x.x.x.x] [?limit=N]
  * GET  /api/admin/install-check    — system check
- * POST /api/admin/export-blocked   — export             {format: json|csv} (SEC-138: was GET, no CSRF)
+ * POST /api/admin/export-blocked   — export             {format: json|csv, min?: int} (SEC-138: was GET, no CSRF; SEC-156: min filter added)
  *
  * sesja 066:
  * GET  /api/admin/sessions              — list all active sessions [?user_id=N]
@@ -69,6 +69,25 @@
  * regular, non-admin /api/export. Switched to POST + CSRF::require();
  * admin_page.php's CSV/JSON export buttons now go through fetch()+Blob
  * instead of window.location.href, mirroring app.js's doExport().
+ *
+ * SEC-155 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVIII): every handler below was
+ * reachable by an admin account that has role==='admin' but totp_enabled=0
+ * (2FA never completed) — Auth::login() treats that state as "2FA doesn't
+ * apply", so the session is fully totp_verified=1 from the very first,
+ * password-only login, with no time cap. A new totp_enabled check right
+ * after the existing role check now closes this for the whole file at
+ * once, mirroring the identical fix in admin_page.php (the redirect there)
+ * and updater_api.php (the same JSON-response pattern used here) — fixing
+ * only the HTML page would have left this API directly reachable (curl,
+ * browser devtools, a stolen pre-setup session) with zero enforcement.
+ *
+ * SEC-156 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVIII): export-blocked now
+ * accepts an optional `min` (default 3, same default as GET
+ * /api/admin/blocked), passed through to Admin::exportBlocked(), which
+ * itself now also carries a hard LIMIT 5000 as an independent backstop.
+ * SEC-144's rate limit only ever bounded how often this endpoint could be
+ * CALLED, not how many rows one call could serialize — this closes the
+ * other half of that same finding.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -83,6 +102,19 @@ if (!$user) {
 if ($user['role'] !== 'admin') {
     http_response_code(403);
     echo json_encode(['ok' => false, 'error' => 'Admin only.']); exit;
+}
+// SEC-155 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVIII): see admin_page.php for
+// the full rationale — a totp_enabled=0 admin account (2FA never
+// completed) is not fully authorized for the admin API just because
+// role==='admin' and the session's own totp_verified flag reads 1 (which
+// it does automatically whenever totp_enabled is 0 — see Auth::login()).
+// Fixing only admin_page.php's redirect would leave this exact endpoint
+// reachable directly (curl, browser devtools, a stolen pre-setup session)
+// with zero enforcement, since a JSON API has no page to redirect from in
+// the first place.
+if (!$user['totp_enabled']) {
+    http_response_code(403);
+    echo json_encode(['ok' => false, 'error' => 'Two-factor authentication setup is required before using admin features. Complete setup at /setup-2fa.']); exit;
 }
 
 $method     = $_SERVER['REQUEST_METHOD'];
@@ -238,7 +270,12 @@ if ($method === 'POST' && $action === 'export-blocked') {
     }
     $body   = json_decode(file_get_contents('php://input'), true) ?? [];
     $format = in_array($body['format'] ?? '', ['json', 'csv'], true) ? $body['format'] : 'json';
-    $data   = Admin::exportBlocked($format);
+    // SEC-156: min-attempts filter, mirroring the same "min attempts" input
+    // the on-screen Blocked IPs table already uses (GET /api/admin/blocked)
+    // — see Admin::exportBlocked() for the full rationale. Clamped to a
+    // sane range server-side regardless of what the client sends.
+    $min    = isset($body['min']) ? max(0, min(999, (int)$body['min'])) : 3;
+    $data   = Admin::exportBlocked($format, $min);
     $date   = date('Y-m-d');
     if ($format === 'csv') {
         header('Content-Type: text/csv; charset=UTF-8');

@@ -15,6 +15,12 @@
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die();
 
+// SEC-157 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVIII): no-store - completes the
+// VI.3/SEC-134 rollout, same rationale as login_page.php's identical
+// addition. This page embeds a live CSRF token in rendered HTML.
+header('Cache-Control: no-store, no-cache, must-revalidate, private');
+header('Pragma: no-cache');
+
 if (Auth::isLoggedIn()) { header('Location: /'); exit; }
 
 // Pre-warm CSRF before any HTML output

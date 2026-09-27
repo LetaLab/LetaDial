@@ -28,6 +28,13 @@
  *      włączone na hostingu. Uzupełnia (nie zastępuje) nowy globalny
  *      set_exception_handler() w index.php — ten sam problem od strony
  *      wykrywania w panelu admina, nie tylko od strony samego kodu.
+ * SEC-156 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVIII): exportBlocked() —
+ *      dodano parametr $min (domyslnie 3, jak w getBlocked()) i twardy
+ *      LIMIT 5000 jako niezalezny backstop. Wczesniej eksport nie mial
+ *      ani filtra, ani LIMIT — zwracal doslownie kazdy wiersz
+ *      rate_limits, wlacznie ze zwyklymi, jednorazowymi wpisami z
+ *      bucketow uzytkowych (dial_mutate, settings_mutate, ...), mimo ze
+ *      SEC-144 dodalo juz rate limit na samo wywolanie endpointu.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -75,10 +82,39 @@ class Admin
         );
     }
 
-    public static function exportBlocked(string $format): string
+    /**
+     * SEC-156 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVIII): $min and the hard
+     * LIMIT below are both new. Before this, exportBlocked() had no
+     * filter and no LIMIT at all - SEC-144's own rate limit
+     * (admin_export, 30/h/admin) only bounds how often the ENDPOINT can
+     * be called, not how many rows a single call serializes. Unlike
+     * getBlocked() (used by the on-screen "Blocked IPs" table, which
+     * already filters attempts >= $min), this method dumped literally
+     * every row in rate_limits - including ordinary, non-suspicious,
+     * single-attempt bookkeeping rows from routine usage buckets
+     * (dial_mutate, settings_mutate, group_mutate, admin_mutate, ...
+     * keyed by a plain numeric user_id, not anything blocked or
+     * suspicious) mixed in with genuinely blocked entries, inconsistent
+     * with the tab's own "Blocked IPs" framing and its own visible "min
+     * attempts" filter. $min defaults to 3, matching getBlocked()'s own
+     * default, and admin_api.php now passes through whatever the admin
+     * currently has the on-screen filter set to, so the export matches
+     * what they're looking at. The LIMIT is a second, independent
+     * backstop (same "filter as the main control, hard cap as a
+     * belt-and-suspenders ceiling" pattern already used for the 10MB CSP
+     * log cap in SEC-093 and the 512MB Imagick resource limits in
+     * SEC-090) - it bounds worst-case size even if $min is ever passed
+     * as 0/1 from a future caller.
+     */
+    public static function exportBlocked(string $format, int $min = 3): string
     {
+        $min  = max(0, $min);
         $rows = DB::rows(
-            "SELECT key_plain, action, attempts, window_start FROM rate_limits ORDER BY attempts DESC"
+            "SELECT key_plain, action, attempts, window_start FROM rate_limits
+             WHERE attempts >= ?
+             ORDER BY attempts DESC
+             LIMIT 5000",
+            [$min]
         );
 
         if ($format === 'csv') {
@@ -87,9 +123,9 @@ class Admin
                 // SEC-122: key_plain can contain arbitrary attacker text
                 // (see sanitizeCsvField() docblock below) - neutralize
                 // before writing to CSV, not just before writing to the
-                // DB. exportBlocked() (unlike getBlocked()) has no minimum
-                // attempts filter, so a single failed request already
-                // appears here.
+                // DB. A $min of 0 (an admin can still choose that from the
+                // UI) still lets a single, first-ever attempt appear here,
+                // same as it always could on the on-screen table at min=0.
                 $out .= implode(',', [
                     '"' . str_replace('"', '""', self::sanitizeCsvField($r['key_plain'])) . '"',
                     '"' . str_replace('"', '""', self::sanitizeCsvField($r['action']))    . '"',

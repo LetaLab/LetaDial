@@ -8,6 +8,18 @@
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die();
 
+// SEC-157 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVIII): no-store - completes the
+// VI.3/SEC-134 rollout. This page embeds a live CSRF token
+// (CSRF::field()/CSRF::token(), Mode B pre-auth double-submit cookie) in
+// rendered HTML, same as every other page that already carries this header.
+// Real-world impact here is lower than on the dashboard/admin/settings pages
+// this header was first added for (this page shows no personal or
+// session-bound data - every anonymous visitor sees the identical form), but
+// closing the one remaining gap costs nothing and matches the standard the
+// rest of the app already holds itself to.
+header('Cache-Control: no-store, no-cache, must-revalidate, private');
+header('Pragma: no-cache');
+
 if (Auth::isLoggedIn()) { header('Location: /'); exit; }
 
 // ── PRE-WARM CSRF TOKEN ───────────────────────────────────────────────────────

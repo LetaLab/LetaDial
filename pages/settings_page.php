@@ -635,7 +635,7 @@ async function apiPost(path,body){try{const res=await fetch(path,{method:'POST',
 async function apiGet(path){try{const res=await fetch(path,{headers:{'X-CSRF-Token':CSRF_TOKEN},credentials:'same-origin'});return await res.json();}catch{return{ok:false,error:'Network error.'};}}
 function showAlert(id,msgId,type,msg){const el=document.getElementById(id);const mel=document.getElementById(msgId);if(!el||!mel)return;el.className='inline-alert show '+type;mel.textContent=msg;el.scrollIntoView({block:'nearest',behavior:'smooth'});}
 function hideAlert(id){const el=document.getElementById(id);if(el)el.className='inline-alert';}
-function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');} // SEC-158: apostrophe escaping added, matching escHtml() in app.js and esc() in admin_page.php
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // AVATAR (sesja 078)

@@ -1,6 +1,6 @@
 <?php
 /**
- * LetaDial — Admin Panel (sesja 065 + 066 + 067 + 068 + 069 + 074 + 078 + SEC-079 + SEC-105 + SEC-113)
+ * LetaDial — Admin Panel (sesja 065 + 066 + 067 + 068 + 069 + 074 + 078 + SEC-079 + SEC-105 + SEC-113 + SEC-155)
  *
  * Tabs:
  *   1. Blocked IPs    — rate_limits; unblock / export
@@ -26,6 +26,20 @@
  * promptReauth() modal as force-password/create-user — deleting an
  * account is irreversible and at least as consequential as those two.
  * No new modal was needed; doDeleteUser() just calls the existing one.
+ * SEC-155 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVIII): Auth::requireAdmin()
+ * only ever confirmed role === 'admin' — never totp_enabled. A freshly
+ * created admin account (totp_enabled=0, 2FA not yet completed) gets a
+ * fully totp_verified=1 session the instant it logs in with just a
+ * password (see Auth::login()), with the FULL session_lifetime, not the
+ * 15-minute cap SEC-129a already gives a genuinely-pending-2FA session —
+ * so this page, reached directly instead of via the dashboard's own
+ * redirect, was accessible without 2FA ever being completed, for as long
+ * as that session lasted. Now redirects to /setup-2fa the same way
+ * dashboard_page.php/settings_page.php already do; see the check right
+ * after Auth::requireAdmin() below for the full rationale. admin_api.php
+ * and updater_api.php got the matching JSON-response fix in the same
+ * session, since this page's own redirect does nothing for a caller that
+ * hits the API directly.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die();
@@ -40,6 +54,38 @@ header('Cache-Control: no-store, no-cache, must-revalidate, private');
 header('Pragma: no-cache');
 
 $user = Auth::requireAdmin();
+
+// SEC-155 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVIII): Auth::requireAdmin() only
+// confirms role === 'admin' - it does NOT confirm totp_enabled. A freshly
+// created admin account (install.php's bootstrap admin, or
+// Admin::createUser() with role='admin' - both immediately active, no email
+// confirmation step) gets a fully totp_verified=1 session the instant it
+// logs in with just a password: Auth::login() sets
+// $totp_verified = ($user['totp_enabled'] ? 0 : 1), so "2FA not yet
+// configured" (totp_enabled=0) is treated identically to "2FA doesn't apply
+// to this account" - and unlike a genuinely-pending-2FA session
+// (totp_enabled=1, totp_verified=0, capped to 15 minutes by SEC-129a), this
+// session gets the FULL session_lifetime (default 30 days), since
+// createSession()'s short-lifetime branch only fires when $totpVerified is
+// falsy, and here it is 1. login_page.php redirects this state to
+// /setup-2fa, but that is only a UX nudge - the session cookie is already
+// fully valid on every other URL. dashboard_page.php and settings_page.php
+// already re-check this and redirect; this file did not, letting an admin
+// who simply types /admin instead of following the redirect (or anyone who
+// captures that specific, long-lived session) reach the full admin panel -
+// every user's email, every active session's IP/user-agent, the full login
+// history, Install Check diagnostics, plus non-destructive actions like
+// unblock/registration-toggle - without 2FA ever being completed, for as
+// long as the session lasts, with nothing forcing setup to ever finish.
+// The most destructive actions (delete-user, force-password, create-user,
+// git-pull) still require re-entering the admin's own current password
+// (SEC-079/SEC-105/SEC-113), which bounds the worst case, but everything
+// else on this page was reachable regardless. Same check, verbatim in
+// intent, as dashboard_page.php/settings_page.php's $needs_2fa_setup - here
+// simplified to just !$user['totp_enabled'], since requireAdmin() above has
+// already confirmed role === 'admin', making the "role === 'admin'" half of
+// their OR condition always true in this specific context.
+if (!$user['totp_enabled']) { header('Location: /setup-2fa'); exit; }
 
 $app_name   = htmlspecialchars(APP_NAME, ENT_QUOTES, 'UTF-8');
 $user_login = htmlspecialchars($user['login'], ENT_QUOTES, 'UTF-8');
@@ -883,12 +929,18 @@ document.getElementById('btn-unblock-all-global').addEventListener('click',doUnb
 // goes through fetch()+Blob instead.
 async function doExportBlocked(format){
     let res;
+    // SEC-156: send the same "min attempts" value the on-screen table is
+    // currently filtered to, so the download matches what the admin is
+    // actually looking at, instead of silently exporting every row
+    // (including ordinary, non-suspicious single-attempt bookkeeping rows
+    // from routine usage buckets) regardless of the visible filter.
+    const min = parseInt(document.getElementById('blocked-min-input')?.value) || 3;
     try{
         res=await fetch('/api/admin/export-blocked',{
             method:'POST',
             headers:{'Content-Type':'application/json','X-CSRF-Token':CSRF},
             credentials:'same-origin',
-            body:JSON.stringify({format})
+            body:JSON.stringify({format, min})
         });
     }catch{
         toast('Export failed: network error.','error');

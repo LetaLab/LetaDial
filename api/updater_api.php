@@ -1,18 +1,27 @@
 <?php
 /**
- * LetaDial — Update API (sesja 059 + sesja 065 + SEC-079)
+ * LetaDial — Update API (sesja 059 + sesja 065 + SEC-079 + SEC-155)
  *
  * GET  /api/update              — cached GitHub Release status (sesja 059)
  * POST /api/update/refresh      — force-refresh GitHub Release cache
  * GET  /api/update/git-check    — git fetch + log HEAD..origin/main (sesja 065)
  * POST /api/update/git-pull     — git pull, requires current password (SEC-079 re-auth)
  *
- * Wszystkie endpointy: tylko admin.
+ * Wszystkie endpointy: tylko admin, z ukonczonym 2FA (SEC-155, patrz nizej).
  * POST endpointy: CSRF wymagany.
  * POST /api/update/git-pull dodatkowo wymaga pola "password" w body —
  * skradziona 30-dniowa sesja admina sama w sobie nie wystarcza już do
  * wywołania update'u (który jest RCE-equivalent, jeśli origin repo
  * zostanie kiedyś skompromitowane).
+ *
+ * SEC-155 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVIII): "tylko admin" powyzej
+ * dawniej sprawdzalo wylacznie role === 'admin', nigdy totp_enabled —
+ * konto administratora, ktore jeszcze nie ukonczylo /setup-2fa, dostaje
+ * w pelni totp_verified=1 sesje juz po samym hasle (Auth::login()), bez
+ * limitu 15 minut jak przy prawdziwie oczekujacym 2FA (SEC-129a). git-pull
+ * jest z definicji rownowazne RCE, jesli origin repo zostanie kiedys
+ * skompromitowane — nie moze byc osiagalne przez konto, ktore nigdy nie
+ * ukonczylo obowiazkowego 2FA. Ten sam fix co w admin_api.php/admin_page.php.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -27,6 +36,16 @@ if (!$user) {
 if ($user['role'] !== 'admin') {
     http_response_code(403);
     echo json_encode(['ok' => false, 'error' => 'Admin only.']); exit;
+}
+// SEC-155 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVIII): same gap and same fix as
+// admin_api.php/admin_page.php — git-pull is functionally RCE-equivalent if
+// the origin repo were ever compromised (see gitPull()'s own docblock), so
+// it must not be reachable by an admin account that has never completed
+// the 2FA setup the rest of this app treats as mandatory. See
+// admin_page.php for the full rationale.
+if (!$user['totp_enabled']) {
+    http_response_code(403);
+    echo json_encode(['ok' => false, 'error' => 'Two-factor authentication setup is required before using admin features. Complete setup at /setup-2fa.']); exit;
 }
 
 $method = $_SERVER['REQUEST_METHOD'];

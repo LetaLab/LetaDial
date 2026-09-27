@@ -23,6 +23,19 @@ define('DIALVAULT_APP', true);
 define('INSTALLER_VERSION', '2.0.0');
 define('APP_BRAND', 'LetaDial');
 
+// BUG-038 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVIII): Password::validate()/
+// Password::hash() are plain static methods with zero dependency on the
+// database or on config.php (which does not exist yet at install time) -
+// there was never a technical reason install.php's admin-account creation
+// (process_admin() below) could not use them directly. Required here,
+// right after the DIALVAULT_APP guard constant it needs, so every password
+// rule (including the 72-byte maximum that prevents silent bcrypt
+// truncation - see password_src.php's own MIN_LENGTH/MAX_LENGTH/BCRYPT_COST)
+// is enforced identically for the single highest-privilege account in the
+// whole system as for every other account created anywhere else in the app,
+// with one source of truth instead of two copies that can drift apart.
+require_once __DIR__ . '/src/password_src.php';
+
 // ── Block if already installed ────────────────────────────────────────────────
 if (file_exists(__DIR__ . '/config.php')) {
     http_response_code(403);
@@ -111,12 +124,19 @@ function process_admin(string &$step): void {
         $errors[] = 'Login: 3–50 characters, letters/numbers/underscore only.';
     if (!filter_var($email, FILTER_VALIDATE_EMAIL))
         $errors[] = 'Invalid email address.';
-    if (strlen($password) < 12)
-        $errors[] = 'Password must be at least 12 characters.';
-    if (!preg_match('/[A-Z]/', $password)) $errors[] = 'Password needs an uppercase letter.';
-    if (!preg_match('/[a-z]/', $password)) $errors[] = 'Password needs a lowercase letter.';
-    if (!preg_match('/[0-9]/', $password)) $errors[] = 'Password needs a number.';
-    if (!preg_match('/[^A-Za-z0-9]/', $password)) $errors[] = 'Password needs a special character.';
+    // BUG-038 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVIII): was five hand-rolled
+    // checks here (min length + four complexity rules) with NO maximum-length
+    // check at all - the one password-setting path in the whole app that
+    // Password::validate()'s 72-byte ceiling never covered, silently letting
+    // bcrypt truncate the admin bootstrap account's password with zero
+    // warning if it ever exceeded 72 bytes (see password_src.php's own
+    // MAX_LENGTH comment for why that matters: two passwords agreeing on the
+    // first 72 bytes would hash identically and both work). Password class is
+    // required in at the top of this file now, so this is one call instead of
+    // a second, incomplete copy of the same five-plus-one rules.
+    foreach (Password::validate($password) as $pwError) {
+        $errors[] = $pwError;
+    }
     if ($password !== $confirm)
         $errors[] = 'Passwords do not match.';
     if (!filter_var($app_url, FILTER_VALIDATE_URL) &&
@@ -138,18 +158,20 @@ function process_admin(string &$step): void {
         $errors[] = 'Application Name must be 40 characters or fewer (it is encoded into the 2FA setup QR code).';
 
     if (empty($errors)) {
-        // BUG-019: cost 15 to match Password::BCRYPT_COST (raised from 12 to 15
-        // by BUG-010, 03.08.2026). The Password class does not exist yet at
-        // install time, so the installer hashes by hand — previously it still
-        // used the old literal 12. Auth::login()'s opportunistic rehash (see
-        // Password::verifyAndRehash()) would have silently upgraded this hash
-        // to cost 15 on the admin's first login regardless, so this was never
-        // an active weakness — this just avoids depending on that self-healing
-        // step for the very first login.
+        // BUG-019 (03.08.2026, historical): cost 15 to match
+        // Password::BCRYPT_COST (raised from 12 to 15 by BUG-010). At the
+        // time this comment was first written, the Password class did not
+        // exist yet, so the installer hashed by hand with the literal cost
+        // value. BUG-038 (Czesc XVIII) added a require_once for
+        // src/password_src.php at the top of this file and switched this
+        // call to Password::hash() directly, so this cost value (and the
+        // bcrypt algorithm choice itself) can never again drift out of sync
+        // with the rest of the app just because this one file has its own
+        // copy.
         $_SESSION['idata']['admin'] = [
             'login'         => $login,
             'email'         => $email,
-            'password_hash' => password_hash($password, PASSWORD_BCRYPT, ['cost' => 15]),
+            'password_hash' => Password::hash($password),
         ];
         $_SESSION['idata']['app'] = ['name' => $app_name ?: APP_BRAND, 'url' => $app_url];
         $step = 'email';
@@ -889,7 +911,15 @@ function render_database(): string {
 
 function render_admin(): string {
     global $errors;
-    $app_url = h((!empty($_SERVER['HTTPS']) ? 'https' : 'http') . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost'));
+    // SEC-159 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVIII): was pre-filled from
+    // $_SERVER['HTTP_HOST'] — not independently exploitable (h()-escaped,
+    // and the actually-submitted value is still fully re-validated via
+    // FILTER_VALIDATE_URL in process_admin() regardless of what this
+    // suggests), but inconsistent with the rest of the app's "APP_URL is
+    // always the fixed config.php constant, never derived from a request
+    // header" principle. Left empty; the placeholder text alone guides the
+    // admin, who must type their own value either way.
+    $app_url = '';
     $brand   = APP_BRAND;
     return render_layout('Admin Account', 'admin',
         render_errors($errors) .
@@ -925,7 +955,7 @@ function render_admin(): string {
                 <div class=\"form-grid\">
                     <div class=\"form-group\">
                         <label>Password <span class=\"hint-inline\">(min. 12 chars, mixed)</span></label>
-                        <input type=\"password\" name=\"admin_password\" required autocomplete=\"new-password\" minlength=\"12\">
+                        <input type=\"password\" name=\"admin_password\" required autocomplete=\"new-password\" minlength=\"12\" maxlength=\"72\">
                     </div>
                     <div class=\"form-group\">
                         <label>Confirm Password</label>

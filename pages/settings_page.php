@@ -1,13 +1,14 @@
 <?php
 /**
- * LetaDial — Settings Page (sesja 058 + 066 + 067 + 071b + 072 + 074 + 077 + 078)
+ * LetaDial — Settings Page (sesja 058 + 066 + 067 + 071b + 072 + 074 + 077 + 078 + 079)
  *
  * Sections:
- *   0. Profile Avatar      (sesja 078) ← NEW
+ *   0. Profile Avatar      (sesja 078)
  *   1. Change Password
  *   2. Email Address       (sesja 066)
  *   3. Two-Factor Auth
  *   4. Active Sessions     (sesja 066)
+ *   4b. Trusted Devices    (sesja 079) ← NEW
  *   5. UI Preferences
  *   6. Custom Colors       (sesja 071b + 072)
  *   6b. Dial Card Size     (sesja 074)
@@ -75,6 +76,11 @@ if ($totp_enabled) {
         [$user['id']]
     ) ?? 0);
 }
+
+// ── sesja 079: Trusted Devices count (for section badge) ──────────────────────
+$trusted_device_count = $totp_enabled
+    ? (int)(DB::val("SELECT COUNT(*) FROM trusted_devices WHERE user_id = ? AND expires_at > NOW()", [$user['id']]) ?? 0)
+    : 0;
 
 // ── LetaLink bookmarklet (sesja 077) ──────────────────────────────────────────
 $_bm_js  = "javascript:(function(){"
@@ -146,7 +152,6 @@ function eyeSvg(bool $show): string {
         <div class="settings-section-body">
             <div class="inline-alert" id="avatar-alert"><span id="avatar-alert-msg"></span></div>
             <div style="display:flex;align-items:flex-start;gap:1.5rem;flex-wrap:wrap">
-                <!-- Circular preview -->
                 <div class="avatar-preview-circle" id="avatar-preview-wrap">
                     <?php if ($has_avatar): ?>
                     <img id="avatar-preview-img"
@@ -158,8 +163,6 @@ function eyeSvg(bool $show): string {
                     <span id="avatar-preview-icon">👤</span>
                     <?php endif; ?>
                 </div>
-
-                <!-- Upload controls -->
                 <div style="flex:1;min-width:180px">
                     <p style="font-size:.85rem;color:var(--text-muted);margin:0 0 1rem">
                         Shown in the dashboard topbar and the admin panel.<br>
@@ -221,6 +224,9 @@ function eyeSvg(bool $show): string {
                     <button type="button" class="eye-btn" id="eye-btn-confirm-pw" aria-label="Show/hide"><?= eyeSvg(true) ?></button>
                 </div>
             </div>
+            <p class="field-hint" style="margin-bottom:.75rem">
+                Changing your password signs out every session and revokes every trusted device on this account.
+            </p>
             <button type="button" class="btn btn-primary" id="btn-change-pw">Change password</button>
         </div>
     </div>
@@ -344,6 +350,31 @@ function eyeSvg(bool $show): string {
             </div>
         </div>
     </div>
+
+    <!-- ══ 4b: Trusted Devices (sesja 079) ══ -->
+    <?php if ($totp_enabled): ?>
+    <div class="settings-section" id="trusted-devices">
+        <div class="settings-section-header">
+            <span class="settings-section-icon">🛡️</span>
+            <h2>Trusted Devices</h2>
+            <button type="button" class="btn btn-ghost btn-sm" id="btn-refresh-trusted" style="margin-left:auto">↻ Refresh</button>
+        </div>
+        <div class="settings-section-body">
+            <p style="font-size:.875rem;color:var(--text-muted);margin-bottom:1rem">
+                A trusted device skips the 2FA code prompt for up to <strong>180 days</strong>.
+                Your password is always required regardless — trust only ever skips the second factor.
+                Revoke a device here at any time.
+            </p>
+            <div class="inline-alert" id="trusted-alert"><span id="trusted-alert-msg"></span></div>
+            <div id="trusted-list"><div class="sessions-loading">Loading trusted devices…</div></div>
+            <div style="margin-top:1rem;display:flex;justify-content:flex-end">
+                <button type="button" class="btn btn-ghost btn-sm" id="btn-revoke-all-trusted" style="border-color:var(--error-bdr);color:var(--error)">
+                    Revoke all trusted devices
+                </button>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
 
     <!-- ══ 5: UI Preferences ══ -->
     <div class="settings-section">
@@ -620,7 +651,6 @@ document.querySelectorAll('#theme-btn,#theme-btn-pref').forEach(btn=>btn.addEven
 
 // ── Shared utilities ───────────────────────────────────────────────────────────
 function togglePw(id,btn){const i=document.getElementById(id);const showing=i.type==='text';i.type=showing?'password':'text';btn.innerHTML=showing?'<?= addslashes(eyeSvg(true)) ?>':'<?= addslashes(eyeSvg(false)) ?>';}
-// ── Event listeners (CSP: bez inline onXXX=, Krok 4a) ──────────────────────────
 document.getElementById('eye-btn-current-pw')?.addEventListener('click',function(){togglePw('current-pw',this);});
 document.getElementById('eye-btn-new-pw')?.addEventListener('click',function(){togglePw('new-pw',this);});
 document.getElementById('eye-btn-confirm-pw')?.addEventListener('click',function(){togglePw('confirm-pw',this);});
@@ -635,7 +665,7 @@ async function apiPost(path,body){try{const res=await fetch(path,{method:'POST',
 async function apiGet(path){try{const res=await fetch(path,{headers:{'X-CSRF-Token':CSRF_TOKEN},credentials:'same-origin'});return await res.json();}catch{return{ok:false,error:'Network error.'};}}
 function showAlert(id,msgId,type,msg){const el=document.getElementById(id);const mel=document.getElementById(msgId);if(!el||!mel)return;el.className='inline-alert show '+type;mel.textContent=msg;el.scrollIntoView({block:'nearest',behavior:'smooth'});}
 function hideAlert(id){const el=document.getElementById(id);if(el)el.className='inline-alert';}
-function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');} // SEC-158: apostrophe escaping added, matching escHtml() in app.js and esc() in admin_page.php
+function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // AVATAR (sesja 078)
@@ -667,7 +697,6 @@ function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').
         else      { topbarAvatar.style.display = 'none'; }
     }
 
-    // FileReader preview on file select
     fileInput?.addEventListener('change', function() {
         const f = this.files?.[0];
         if (!f) return;
@@ -684,7 +713,6 @@ function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').
         if (uploadActions) uploadActions.style.display = 'flex';
     });
 
-    // Save — multipart upload
     saveBtn?.addEventListener('click', async () => {
         if (!selectedFile) return;
         const btn = saveBtn;
@@ -709,7 +737,6 @@ function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').
                 return;
             }
 
-            // Cache-bust: force browser to reload the avatar
             const fresh = '/api/avatars/' + USER_ID + '?t=' + Date.now();
             showPreview(fresh);
             updateTopbar(fresh);
@@ -727,7 +754,6 @@ function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').
         btn.disabled = false; btn.textContent = 'Save avatar';
     });
 
-    // Cancel — revert preview to saved state
     cancelBtn?.addEventListener('click', () => {
         selectedFile = null;
         if (fileInput) fileInput.value = '';
@@ -740,7 +766,6 @@ function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').
         }
     });
 
-    // Remove avatar
     removeBtn?.addEventListener('click', async () => {
         const btn = removeBtn;
         btn.disabled = true; btn.textContent = '…';
@@ -798,11 +823,9 @@ function downloadCodes(codes){const appName=<?= json_encode(APP_NAME) ?>;const n
 // ── Sessions ───────────────────────────────────────────────────────────────────
 function parseUA(ua){if(!ua)return{browser:'Unknown',os:'Unknown',icon:'🖥️'};let b='Unknown',o='Unknown',icon='🖥️';if(/EdgA?\//.test(ua))b='Edge';else if(/OPR\//.test(ua))b='Opera';else if(/Chrome\//.test(ua))b='Chrome';else if(/Safari\//.test(ua)&&/Version\//.test(ua))b='Safari';else if(/Firefox\//.test(ua))b='Firefox';if(/Windows NT/.test(ua)){o='Windows';icon='🖥️';}else if(/Macintosh/.test(ua)){o='macOS';icon='🍎';}else if(/Android/.test(ua)){o='Android';icon='📱';}else if(/iPhone|iPad/.test(ua)){o='iOS';icon='📱';}else if(/Linux/.test(ua)){o='Linux';icon='🐧';}return{browser:b,os:o,icon};}
 function relTime(s){if(!s)return'—';const d=new Date(s.replace(' ','T'));const diff=Math.floor((Date.now()-d.getTime())/1000);if(diff<60)return`${diff}s ago`;if(diff<3600)return`${Math.floor(diff/60)}m ago`;if(diff<86400)return`${Math.floor(diff/3600)}h ago`;return`${Math.floor(diff/86400)}d ago`;}
+function fmtDate(s){if(!s)return'—';const d=new Date(s.replace(' ','T'));return d.toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'});}
 async function loadSessions(){const list=document.getElementById('sessions-list');if(!list)return;list.innerHTML='<div class="sessions-loading">Loading…</div>';const r=await apiGet('/api/settings/sessions');if(!r.ok||!r.sessions){list.innerHTML='<div class="sessions-loading">Could not load sessions.</div>';return;}if(!r.sessions.length){list.innerHTML='<div class="sessions-loading">No active sessions found.</div>';return;}const html=r.sessions.map(s=>{const ua=parseUA(s.user_agent);const isCur=s.id===CURRENT_SESSION;const badge=isCur?'<span class="session-badge">This device</span>':'';const delBtn=isCur?`<span style="font-size:.75rem;color:var(--text-faint)">current</span>`:`<button type="button" class="btn btn-ghost btn-sm" style="border-color:var(--error-bdr);color:var(--error)" data-action="delete-session" data-session-id="${esc(s.id)}">Sign out</button>`;return `<div class="session-item${isCur?' current-session':''}"><div class="session-icon">${esc(ua.icon)}</div><div class="session-info"><div class="session-title">${esc(ua.browser)} on ${esc(ua.os)}${badge}</div><div class="session-meta">IP: <strong>${esc(s.ip)}</strong> · Last active: ${relTime(s.last_activity)} · Signed in: ${relTime(s.created_at)}</div></div><div class="session-actions">${delBtn}</div></div>`;}).join('');list.innerHTML=`<div class="session-list">${html}</div>`;}
 async function deleteSession(sessionId,btn){btn.disabled=true;btn.textContent='…';const r=await apiPost('/api/settings/sessions/delete',{session_id:sessionId});if(!r.ok){btn.disabled=false;btn.textContent='Sign out';showAlert('sess-alert','sess-alert-msg','error',r.error||'Could not sign out session.');return;}showAlert('sess-alert','sess-alert-msg','success','Session signed out.');loadSessions();}
-// CSP Krok 4b — single delegated listener on the (stable) list container replaces the
-// per-row inline click handler that used to be built inside the template literal above.
-// #sessions-list itself is never replaced, only its innerHTML — attaching once here is enough.
 document.getElementById('sessions-list')?.addEventListener('click', e => {
     const btn = e.target.closest('[data-action="delete-session"]');
     if (btn) deleteSession(btn.dataset.sessionId, btn);
@@ -810,6 +833,47 @@ document.getElementById('sessions-list')?.addEventListener('click', e => {
 document.getElementById('btn-refresh-sessions')?.addEventListener('click',()=>{hideAlert('sess-alert');loadSessions();});
 document.getElementById('btn-signout-all-others')?.addEventListener('click',async()=>{const btn=document.getElementById('btn-signout-all-others');btn.disabled=true;btn.textContent='…';const r=await apiPost('/api/settings/sessions/delete-all',{});btn.disabled=false;btn.textContent='Sign out all other devices';if(!r.ok){showAlert('sess-alert','sess-alert-msg','error',r.error||'Could not sign out other sessions.');return;}const n=r.deleted||0;showAlert('sess-alert','sess-alert-msg','success',n===0?'No other sessions to sign out.':`${n} other session${n!==1?'s':''} signed out.`);loadSessions();});
 loadSessions();
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TRUSTED DEVICES (sesja 079)
+// ═══════════════════════════════════════════════════════════════════════════════
+async function loadTrusted(){
+    const list=document.getElementById('trusted-list');
+    if(!list)return;
+    list.innerHTML='<div class="sessions-loading">Loading…</div>';
+    const r=await apiGet('/api/settings/trusted-devices');
+    if(!r.ok||!r.devices){list.innerHTML='<div class="sessions-loading">Could not load trusted devices.</div>';return;}
+    if(!r.devices.length){list.innerHTML='<div class="sessions-loading">No trusted devices. Check "Trust this device" next time you enter a 2FA code.</div>';return;}
+    const html=r.devices.map(d=>{
+        const badge=d.is_this_device?'<span class="session-badge">This device</span>':'';
+        const delBtn=`<button type="button" class="btn btn-ghost btn-sm" style="border-color:var(--error-bdr);color:var(--error)" data-action="revoke-trusted" data-id="${d.id}">Revoke</button>`;
+        return `<div class="session-item"><div class="session-icon">🛡️</div><div class="session-info"><div class="session-title">${esc(d.label||'Unknown device')}${badge}</div><div class="session-meta">IP: <strong>${esc(d.ip)}</strong> · Trusted since: ${fmtDate(d.created_at)} · Last used: ${relTime(d.last_used_at)} · Expires: ${fmtDate(d.expires_at)}</div></div><div class="session-actions">${delBtn}</div></div>`;
+    }).join('');
+    list.innerHTML=`<div class="session-list">${html}</div>`;
+}
+async function revokeTrusted(id,btn){
+    btn.disabled=true;btn.textContent='…';
+    const r=await apiPost('/api/settings/trusted-devices/delete',{id});
+    if(!r.ok){btn.disabled=false;btn.textContent='Revoke';showAlert('trusted-alert','trusted-alert-msg','error',r.error||'Could not revoke device.');return;}
+    showAlert('trusted-alert','trusted-alert-msg','success','Device revoked. It will need a 2FA code next time.');
+    loadTrusted();
+}
+document.getElementById('trusted-list')?.addEventListener('click', e => {
+    const btn = e.target.closest('[data-action="revoke-trusted"]');
+    if (btn) revokeTrusted(parseInt(btn.dataset.id), btn);
+});
+document.getElementById('btn-refresh-trusted')?.addEventListener('click',()=>{hideAlert('trusted-alert');loadTrusted();});
+document.getElementById('btn-revoke-all-trusted')?.addEventListener('click',async()=>{
+    const btn=document.getElementById('btn-revoke-all-trusted');
+    btn.disabled=true;btn.textContent='…';
+    const r=await apiPost('/api/settings/trusted-devices/delete-all',{});
+    btn.disabled=false;btn.textContent='Revoke all trusted devices';
+    if(!r.ok){showAlert('trusted-alert','trusted-alert-msg','error',r.error||'Could not revoke devices.');return;}
+    const n=r.deleted||0;
+    showAlert('trusted-alert','trusted-alert-msg','success',n===0?'No trusted devices to revoke.':`${n} device${n!==1?'s':''} revoked.`);
+    loadTrusted();
+});
+loadTrusted();
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // COLOR PICKER (sesja 071b + 072)
@@ -901,9 +965,6 @@ loadSessions();
         pendingText[tab] = val || null;
         const cur = document.documentElement.getAttribute('data-theme') || 'light';
         if (live && tab === cur) _setExtraCssVars(pendingBg[tab] || null, val || null);
-    }
-    function getDefaultColor(tab) {
-        return { light: '#690b22', dark: '#e05070', midnight: '#ff6b8a' }[tab] || '#690b22';
     }
     function updateSaveBtn() {
         const btn = document.getElementById('btn-save-color');

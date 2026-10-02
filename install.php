@@ -1,6 +1,6 @@
 <?php
 /**
- * LetaDial — Installer v2.0
+ * LetaDial — Installer v2.1
  *
  * Single-file, zero-dependency installation wizard.
  * Drop into web root, navigate to it, follow steps.
@@ -17,10 +17,25 @@
  *  - config.php: HMAC_KEY added, SESSION_KEY removed, SESSION_TTL = 30 days
  *  - settings: full set including registration_enabled, remember_me_days
  *  - migrate_001.sql is now fully integrated — no separate migration needed
+ *
+ * Sesja 079 (Trusted Device — skip 2FA for 180 days):
+ *  - New trusted_devices table added to db_create_tables() below. Only
+ *    affects FRESH installs — an existing install must run the matching
+ *    CREATE TABLE manually via mariadb (see PROJECT_080.md, "Migracja dla
+ *    istniejących instalacji"), since this installer self-deletes after
+ *    first run and never touches an already-configured site again.
+ *  - Installer default version bumped 2.0.0 -> 2.1.0. This ONLY affects
+ *    what a brand-new install writes into config.php's APP_VERSION and
+ *    the settings.installed_version row — it does NOT retroactively touch
+ *    any existing config.php (this installer never runs again on an
+ *    already-installed site). An existing site can optionally hand-edit
+ *    the APP_VERSION line in its own config.php if it wants the About
+ *    section and the update-available banner to compare against the
+ *    correct baseline after upgrading via git pull.
  */
 
 define('DIALVAULT_APP', true);
-define('INSTALLER_VERSION', '2.0.0');
+define('INSTALLER_VERSION', '2.1.0');
 define('APP_BRAND', 'LetaDial');
 
 // BUG-038 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVIII): Password::validate()/
@@ -286,7 +301,7 @@ function process_install(string &$step): void {
         // a thumbnail by direct storage URL - so the weaker variant
         // protected nothing on purpose. On nginx deployments this was
         // always moot (location ^~ /storage/ { deny all; } blocks the
-        // whole tree regardless of .htaccess content), but on Apache
+        // whole tree regardless of .htaccess), but on Apache
         // deployments (which this installer explicitly supports) it
         // allowed unauthenticated direct access to any dial's thumbnail
         // image via its small, sequential /storage/thumbnails/u{userId}/{dialId}.webp
@@ -326,7 +341,7 @@ function process_install(string &$step): void {
             ['app_name',               $d['app']['name']],
             ['app_url',                $d['app']['url']],
             ['installed_at',           date('Y-m-d H:i:s')],
-            ['installed_version',      '2.0.0'],
+            ['installed_version',      '2.1.0'],
             ['require_2fa',            '1'],          // admin always required; users optional
             ['registration_enabled',   '1'],
             ['session_lifetime',       '2592000'],    // 30 days
@@ -466,6 +481,29 @@ function db_create_tables(PDO $pdo): void {
             verifier    CHAR(64)     NOT NULL COMMENT 'SHA-256 hex of raw verifier bytes',
             created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
             expires_at  DATETIME     NOT NULL,
+            UNIQUE KEY uq_selector (selector),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            INDEX idx_user    (user_id),
+            INDEX idx_expires (expires_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+
+        // ── Trusted devices (sesja 079 — skip 2FA for 180 days) ─────────────────
+        // Selector/verifier split, identical model to remember_tokens above —
+        // see src/trusted_device_src.php for the full rationale. Deliberately
+        // its own table, not a flag on `sessions`: a trusted device outlives
+        // any single session (it is checked again on every fresh login for
+        // up to 180 days), and must survive Auth::logout() (a plain sign-out
+        // does not revoke device trust — see TrustedDevice's docblock).
+        "CREATE TABLE IF NOT EXISTS trusted_devices (
+            id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            user_id       INT UNSIGNED NOT NULL,
+            selector      CHAR(24)     NOT NULL,
+            verifier      CHAR(64)     NOT NULL COMMENT 'SHA-256 hex of raw verifier bytes',
+            label         VARCHAR(255) DEFAULT NULL COMMENT 'Best-effort browser/OS label for the Settings UI',
+            ip            VARCHAR(45)  NOT NULL COMMENT 'IP at the time this device was trusted',
+            created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            last_used_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            expires_at    DATETIME     NOT NULL COMMENT '180 days from creation',
             UNIQUE KEY uq_selector (selector),
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
             INDEX idx_user    (user_id),
@@ -618,7 +656,7 @@ define('DB_CHARSET', 'utf8mb4');
 // ── Application ───────────────────────────────────────────────────────────────
 define('APP_NAME',    '{$app_name}');
 define('APP_URL',     '{$app_url}');
-define('APP_VERSION', '2.0.0');
+define('APP_VERSION', '2.1.0');
 
 // ── Security Keys ─────────────────────────────────────────────────────────────
 define('ENCRYPTION_KEY', '{$enc}');   // AES-256-GCM key for TOTP secrets
@@ -1140,7 +1178,7 @@ code{background:var(--bg);padding:.1em .4em;border-radius:4px;font-size:.85em;fo
 <div class="wrap">
     <div class="logo">
         <h1>{$brand}</h1>
-        <p>Installer v2.0</p>
+        <p>Installer v2.1</p>
     </div>
     {$steps}
     {$content}

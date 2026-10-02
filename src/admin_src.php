@@ -1,6 +1,6 @@
 <?php
 /**
- * LetaDial — Admin Model (sesja 065 + 066 + 067 + 068 + 069 + 071b + 077 + 078 + SEC-079)
+ * LetaDial — Admin Model (sesja 065 + 066 + 067 + 068 + 069 + 071b + 077 + 078 + 079 + SEC-079)
  *
  * Static methods for the admin panel.
  * 065: Blocked IPs, Users, Login History, Install Check, Export
@@ -12,6 +12,10 @@
  * 077: installCheck — dodano pages/bookmarklet_page.php do listy integralności plików
  * 078: getUsers() zwraca avatar_path; deleteUser() usuwa plik avatara;
  *      installCheck() — dodano src/avatar_src.php + api/avatar_api.php do listy integralności
+ * 079: installCheck() — dodano tabelę trusted_devices do sprawdzania schematu bazy
+ *      oraz src/trusted_device_src.php do listy integralności plików. Trusted
+ *      Device nie dodaje żadnego nowego katalogu w storage/ (dane trzymane
+ *      wyłącznie w DB), więc LetaDial_Permissions.sh nie wymaga zmian.
  * SEC-079: fix_permissions.sh usunięty z repo i z listy integralności — patrz
  *      README → Permissions. installCheck() — dodano: wykrywanie katalogów
  *      world-writable, diagnostyka właściciela plików, weryfikacja
@@ -92,19 +96,19 @@ class Admin
      * already filters attempts >= $min), this method dumped literally
      * every row in rate_limits - including ordinary, non-suspicious,
      * single-attempt bookkeeping rows from routine usage buckets
-     * (dial_mutate, settings_mutate, group_mutate, admin_mutate, ...
-     * keyed by a plain numeric user_id, not anything blocked or
-     * suspicious) mixed in with genuinely blocked entries, inconsistent
-     * with the tab's own "Blocked IPs" framing and its own visible "min
-     * attempts" filter. $min defaults to 3, matching getBlocked()'s own
-     * default, and admin_api.php now passes through whatever the admin
-     * currently has the on-screen filter set to, so the export matches
-     * what they're looking at. The LIMIT is a second, independent
-     * backstop (same "filter as the main control, hard cap as a
-     * belt-and-suspenders ceiling" pattern already used for the 10MB CSP
-     * log cap in SEC-093 and the 512MB Imagick resource limits in
-     * SEC-090) - it bounds worst-case size even if $min is ever passed
-     * as 0/1 from a future caller.
+     * (dial_mutate, settings_mutate, group_mutate, admin_mutate,
+     * trusted_device, ... keyed by a plain numeric user_id or a plain
+     * IP, not anything blocked or suspicious) mixed in with genuinely
+     * blocked entries, inconsistent with the tab's own "Blocked IPs"
+     * framing and its own visible "min attempts" filter. $min defaults
+     * to 3, matching getBlocked()'s own default, and admin_api.php now
+     * passes through whatever the admin currently has the on-screen
+     * filter set to, so the export matches what they're looking at. The
+     * LIMIT is a second, independent backstop (same "filter as the main
+     * control, hard cap as a belt-and-suspenders ceiling" pattern already
+     * used for the 10MB CSP log cap in SEC-093 and the 512MB Imagick
+     * resource limits in SEC-090) - it bounds worst-case size even if
+     * $min is ever passed as 0/1 from a future caller.
      */
     public static function exportBlocked(string $format, int $min = 3): string
     {
@@ -184,7 +188,8 @@ class Admin
                     u.avatar_path, u.created_at, u.last_login,
                     (SELECT COUNT(*) FROM groups_list g WHERE g.user_id = u.id) AS group_count,
                     (SELECT COUNT(*) FROM dials d WHERE d.user_id = u.id) AS dial_count,
-                    (SELECT COUNT(*) FROM sessions s WHERE s.user_id = u.id AND s.expires_at > NOW()) AS session_count
+                    (SELECT COUNT(*) FROM sessions s WHERE s.user_id = u.id AND s.expires_at > NOW()) AS session_count,
+                    (SELECT COUNT(*) FROM trusted_devices t WHERE t.user_id = u.id AND t.expires_at > NOW()) AS trusted_device_count
              FROM users u
              ORDER BY u.created_at DESC"
         ) ?: [];
@@ -221,7 +226,9 @@ class Admin
             @unlink($avatarFile);
         }
 
-        // Delete user (cascades to sessions, dials, groups, backup codes, remember tokens)
+        // Delete user (cascades to sessions, dials, groups, backup codes,
+        // remember tokens, AND trusted_devices — sesja 079, ON DELETE
+        // CASCADE in install.php's schema — nothing extra to do here).
         DB::run("DELETE FROM users WHERE id = ?", [$userId]);
 
         return ['ok' => true, 'login' => $user['login']];
@@ -356,6 +363,45 @@ class Admin
         return DB::run("DELETE FROM sessions WHERE user_id = ?", [$userId]);
     }
 
+    // ── Trusted Devices (sesja 079) ───────────────────────────────────────────
+
+    /**
+     * List every trusted device across every user, for a future admin-facing
+     * view. Not yet wired into a tab in admin_page.php — getSessions() above
+     * covers the equivalent, more urgent "who is currently logged in"
+     * question; this is exposed here so a future session can add an
+     * admin-side "Trusted Devices" table (e.g. next to Sessions) without
+     * needing a new model method. Left unused for now is intentional: adding
+     * UI for it is out of scope for sesja 079, which focuses on the
+     * user-facing Settings → Trusted Devices flow.
+     */
+    public static function getTrustedDevices(?int $filterUserId = null): array
+    {
+        if ($filterUserId !== null) {
+            return DB::rows(
+                "SELECT t.id, t.user_id, t.label, t.ip, t.created_at, t.last_used_at, t.expires_at, u.login
+                 FROM trusted_devices t
+                 JOIN users u ON u.id = t.user_id
+                 WHERE t.expires_at > NOW() AND t.user_id = ?
+                 ORDER BY t.last_used_at DESC",
+                [$filterUserId]
+            ) ?: [];
+        }
+
+        return DB::rows(
+            "SELECT t.id, t.user_id, t.label, t.ip, t.created_at, t.last_used_at, t.expires_at, u.login
+             FROM trusted_devices t
+             JOIN users u ON u.id = t.user_id
+             WHERE t.expires_at > NOW()
+             ORDER BY t.last_used_at DESC"
+        ) ?: [];
+    }
+
+    public static function deleteUserTrustedDevices(int $userId): int
+    {
+        return DB::run("DELETE FROM trusted_devices WHERE user_id = ?", [$userId]);
+    }
+
     // ── Force Password Reset (066) ────────────────────────────────────────────
 
     public static function forcePasswordReset(int $targetId, string $password, int $adminId): array
@@ -377,6 +423,10 @@ class Admin
         $hash = Password::hash($password);
         DB::run("UPDATE users SET password_hash = ? WHERE id = ?", [$hash, $targetId]);
 
+        // Sesja 079: Auth::logoutAllSessions() also revokes every trusted
+        // device for $targetId — a device trusted to skip 2FA must not
+        // remain trusted once an admin has just force-reset the password
+        // behind it.
         Auth::logoutAllSessions($targetId);
 
         return ['ok' => true, 'login' => $target['login']];
@@ -539,7 +589,8 @@ class Admin
             'Required for Admin → Update tab (git pull). Not needed for normal operation.');
 
         // ── Database ──────────────────────────────────────────────────────────
-        $tables = ['users','sessions','remember_tokens','groups_list','dials',
+        // Sesja 079: trusted_devices added to this list.
+        $tables = ['users','sessions','remember_tokens','trusted_devices','groups_list','dials',
                    'totp_backup_codes','rate_limits','settings','login_history'];
         foreach ($tables as $tbl) {
             $exists = DB::val(
@@ -547,8 +598,11 @@ class Admin
                  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?",
                 [$tbl]
             ) !== null;
+            $note = ($tbl === 'trusted_devices' && !$exists)
+                ? 'New in sesja 079. Existing installs must create it manually — see PROJECT_080.md, "Migracja dla istniejących instalacji".'
+                : '';
             $checks[] = self::chk("Table: {$tbl}", $exists, true,
-                $exists ? 'exists' : 'MISSING', 'Database');
+                $exists ? 'exists' : 'MISSING', 'Database', $note);
         }
 
         // Key columns
@@ -582,6 +636,10 @@ class Admin
             ['groups_list', 'color',                    'VARCHAR — tab color'],
             ['groups_list', 'icon_path',                'VARCHAR — custom icon image'],
             ['rate_limits', 'key_plain',                'VARCHAR — admin blocked IPs display'],
+            // Sesja 079
+            ['trusted_devices', 'selector',      'CHAR(24) — device trust lookup key'],
+            ['trusted_devices', 'verifier',      'CHAR(64) — SHA-256 hash of the raw cookie verifier'],
+            ['trusted_devices', 'expires_at',    'DATETIME — 180-day trust window'],
         ];
 
         foreach ($colChecks as [$table, $col, $desc]) {
@@ -685,6 +743,9 @@ class Admin
                 $rootWorldWr ? self::PERMS_FIX_HINT : '');
         }
 
+        // Sesja 079: no new storage/ subdirectory needed — trusted device
+        // data lives entirely in the trusted_devices table, not on disk —
+        // so the directory list below is UNCHANGED from sesja 078.
         $dirs = [
             'storage'             => ['writable' => true,  'required' => true],
             'storage/thumbnails'  => ['writable' => true,  'required' => true],
@@ -767,6 +828,7 @@ class Admin
             'src/updater_src.php'          => true,
             'src/group_icon_src.php'       => true,
             'src/avatar_src.php'           => true,   // sesja 078
+            'src/trusted_device_src.php'   => true,   // sesja 079
             'pages/login_page.php'         => true,
             'pages/dashboard_page.php'     => true,
             'pages/setup_2fa_page.php'     => true,

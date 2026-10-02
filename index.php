@@ -15,6 +15,12 @@
  * set_exception_handler() is now installed as the very first statement in
  * this file, before config.php is even checked for. See the comment on
  * that call below for the full rationale.
+ *
+ * Sesja 079: src/trusted_device_src.php loaded here, right after
+ * rate_limit_src.php and before auth_src.php — TrustedDevice depends on
+ * DB (loaded first) and RateLimit (loaded next), and auth_src.php now
+ * calls TrustedDevice::verify()/create()/deleteAllForUser() directly, so
+ * it must be defined before Auth is.
  */
 declare(strict_types=1);
 define('DIALVAULT_APP', true);
@@ -71,6 +77,7 @@ require_once __DIR__ . '/src/password_src.php';     // Password hashing & valida
 require_once __DIR__ . '/src/csrf_src.php';         // CSRF protection (v5)
 require_once __DIR__ . '/src/csp_src.php';          // Content Security Policy — nonce + Report-Only (Krok 2, plan CSP)
 require_once __DIR__ . '/src/rate_limit_src.php';   // Brute-force protection
+require_once __DIR__ . '/src/trusted_device_src.php'; // sesja 079 — "skip 2FA" device trust, before Auth (Auth calls it)
 require_once __DIR__ . '/src/totp_src.php';         // RFC 6238 TOTP 2FA
 require_once __DIR__ . '/src/qr_code_src.php';      // Pure PHP QR SVG (no external requests)
 require_once __DIR__ . '/src/mailer_src.php';       // Raw SMTP socket mailer

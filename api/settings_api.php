@@ -1,8 +1,8 @@
 <?php
 /**
- * LetaDial — Settings API (sesja 058 + 066 + 071a + 071b + 072 + SEC-101)
+ * LetaDial — Settings API (sesja 058 + 066 + 071a + 071b + 072 + 079 + SEC-101)
  *
- * POST /api/settings/password      — change password
+ * POST /api/settings/password      — change password (also revokes trusted devices, sesja 079)
  * POST /api/settings/backup-codes  — regenerate 2FA backup codes
  * GET  /api/settings/backup-count  — unused backup codes count
  * POST /api/settings/recent        — toggle Recent tab {disabled}
@@ -17,40 +17,24 @@
  * POST /api/settings/email              — initiate email change {new_email}
  * POST /api/settings/email/cancel       — cancel pending email change
  *
- * SEC-101: password/backup-codes/email already had their own strict,
- * dedicated rate limits (brute-forceable codes, or a costly SMTP send).
- * Every OTHER mutating action below — recent, sessions/delete,
- * sessions/delete-all, email/cancel, theme, primary-color, theme-extras,
- * dial-width — had none at all. Risk from any single one of these was
- * already low (auth + CSRF both required, no secret being guessed, no
- * external side effect), but "low risk" isn't "no rate limit" — every
- * other mutating resource in the app (dial_api.php, group_api.php) already
- * shares one generous per-user ceiling across all of its write actions
- * (SEC-095's 500/h dial_mutate / group_mutate). This brings the rest of
- * settings_api.php in line with that same pattern via one shared
- * 'settings_mutate' bucket, generous enough that no legitimate UI
- * interaction (rapid theme/color testing, dragging the dial-width
- * slider, session cleanup) will ever come close to it. The two read-only
- * GET actions (backup-count, sessions) are unchanged — they have no
- * side effect and no brute-force surface, consistent with every other
- * authenticated GET endpoint in the app.
+ * sesja 079 (Trusted Device):
+ * GET  /api/settings/trusted-devices        — list this user's trusted devices
+ * POST /api/settings/trusted-devices/delete — revoke one device {id}
+ * POST /api/settings/trusted-devices/delete-all — revoke every trusted device
  *
- * SEC-139 (11.09.2026): backup-codes' TOTP::decrypt() call is now wrapped
- * in try/catch(RuntimeException) — previously uncaught, so a stale
- * ENCRYPTION_KEY or a rare openssl failure would have surfaced as an
- * unhandled 500 on every regeneration attempt instead of falling through
- * to the (unaffected) backup-code check, same fix and rationale as
- * Auth::verify2FA() in auth_src.php.
+ * SEC-101: password/backup-codes/email already had their own strict,
+ * dedicated rate limits. Every OTHER mutating action below shares one
+ * generous 'settings_mutate' bucket (500/h/user) — see original docblock
+ * for full rationale, unchanged by sesja 079. Trusted-devices delete/
+ * delete-all join that same shared bucket, same reasoning as sessions
+ * delete/delete-all right next to them.
+ *
+ * SEC-139 (11.09.2026): backup-codes' TOTP::decrypt() call is wrapped in
+ * try/catch(RuntimeException).
  *
  * SEC-150 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVII): the 'email' action's
- * "already in use" branch used to reveal, via a distinct message with no
- * timing protection, whether an arbitrary address already belonged to
- * another account — reachable by any authenticated user (a very low bar
- * when self-registration is open), unlike the anonymous registration
- * (SEC-104) and forgot-password (SEC-098) flows this project already
- * hardened against exactly this class of enumeration. Both outcomes now
- * share one generic error message and one floor-padded response time via
- * _settings_equalize_email_timing().
+ * "already in use" branch shares one generic message and one floor-padded
+ * response time with the "email change actually sent" branch.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -99,6 +83,31 @@ if ($method === 'GET' && $action === 'sessions') {
     exit;
 }
 
+// ── GET /api/settings/trusted-devices (sesja 079) ─────────────────────────────
+if ($method === 'GET' && $action === 'trusted-devices') {
+    $devices = TrustedDevice::listForUser((int)$user['id']);
+    $cookieRaw = $_COOKIE[TrustedDevice::COOKIE_NAME] ?? '';
+    $thisSelector = $cookieRaw && str_contains($cookieRaw, ':') ? explode(':', $cookieRaw, 2)[0] : null;
+    // Mark "this device" for the UI — selector is not a secret on its own
+    // (it is not usable to authenticate without the matching verifier),
+    // and it is already sitting in the request's own cookie header.
+    foreach ($devices as &$d) {
+        $d['is_this_device'] = false; // populated below only if selector matches
+    }
+    unset($d);
+    if ($thisSelector) {
+        $row = DB::row("SELECT id FROM trusted_devices WHERE selector = ? AND user_id = ?", [$thisSelector, $user['id']]);
+        if ($row) {
+            foreach ($devices as &$d) {
+                if ((int)$d['id'] === (int)$row['id']) $d['is_this_device'] = true;
+            }
+            unset($d);
+        }
+    }
+    echo json_encode(['ok' => true, 'devices' => $devices]);
+    exit;
+}
+
 if ($method !== 'POST') {
     http_response_code(405);
     echo json_encode(['error' => 'Method not allowed.']); exit;
@@ -141,6 +150,9 @@ if ($action === 'password') {
     }
     $hash = Password::hash($new);
     DB::run("UPDATE users SET password_hash = ? WHERE id = ?", [$hash, $user['id']]);
+    // Sesja 079: Auth::logoutAllSessions() now also revokes every trusted
+    // device for this user — a device trusted to skip 2FA must not remain
+    // trusted once the password behind it has just changed.
     Auth::logoutAllSessions($user['id']);
     RateLimit::clear('settings_pw', (string)$user['id']);
     echo json_encode(['ok' => true, 'message' => 'Password changed. Please log in again.']);
@@ -162,25 +174,13 @@ if ($action === 'backup-codes') {
         http_response_code(422);
         echo json_encode(['ok' => false, 'error' => '2FA code is required.']); exit;
     }
-    // SEC-139 (11.09.2026): TOTP::decrypt() throws RuntimeException on a
-    // corrupted ciphertext or an openssl-level failure (most likely trigger:
-    // ENCRYPTION_KEY rotated without migrating existing totp_secret rows).
-    // Previously uncaught. Caught and logged rather than re-thrown so this
-    // degrades gracefully: $valid simply stays false and falls through to
-    // the backup-code check below, which is unaffected by ENCRYPTION_KEY
-    // (bcrypt-hashed independently), instead of every attempt to regenerate
-    // backup codes hitting an unhandled exception whenever the TOTP secret
-    // can't be decrypted.
     $valid = false;
     try {
         $secret = TOTP::decrypt($user['totp_secret']);
-        $valid  = TOTP::verifyAndConsume($secret, $code, $user['id']); // SEC-080: replay-safe
+        $valid  = TOTP::verifyAndConsume($secret, $code, $user['id']);
     } catch (RuntimeException $e) {
         error_log('[Settings] backup-codes TOTP::decrypt failed for user ' . $user['id'] . ': ' . $e->getMessage());
     }
-    // SEC-092: consolidated onto TOTP::useBackupCode() — see
-    // Auth::verify2FA() for the full rationale (case-normalization was
-    // missing from this duplicated loop too).
     if (!$valid) {
         $valid = TOTP::useBackupCode($user['id'], $code);
     }
@@ -203,7 +203,6 @@ if ($action === 'backup-codes') {
 
 // ── POST /api/settings/recent ─────────────────────────────────────────────────
 if ($action === 'recent') {
-    // SEC-101
     if (RateLimit::check('settings_mutate', (string)$user['id'], 500, 3600, 3600)) {
         http_response_code(429);
         echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
@@ -216,7 +215,6 @@ if ($action === 'recent') {
 
 // ── sesja 066: Sessions ───────────────────────────────────────────────────────
 if ($action === 'sessions' && $sub_action === 'delete') {
-    // SEC-101
     if (RateLimit::check('settings_mutate', (string)$user['id'], 500, 3600, 3600)) {
         http_response_code(429);
         echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
@@ -235,7 +233,6 @@ if ($action === 'sessions' && $sub_action === 'delete') {
 }
 
 if ($action === 'sessions' && $sub_action === 'delete-all') {
-    // SEC-101
     if (RateLimit::check('settings_mutate', (string)$user['id'], 500, 3600, 3600)) {
         http_response_code(429);
         echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
@@ -246,17 +243,33 @@ if ($action === 'sessions' && $sub_action === 'delete-all') {
     exit;
 }
 
-// SEC-150 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVII): pad the elapsed time
-// since $t0 up to a fixed floor, so the "email already taken" and "email
-// change actually sent" branches of the 'email' action below take the
-// same amount of time. Mirrors the identical $_sfp_target/usleep()
-// pattern in forgot_password_page.php (SEC-098), which solves the same
-// class of enumeration problem for the anonymous forgot-password flow.
-// Can only ever ADD delay, never subtract - a genuinely slow SMTP send
-// that already exceeds the floor on its own is left alone.
+// ── sesja 079: Trusted Devices ────────────────────────────────────────────────
+if ($action === 'trusted-devices' && $sub_action === 'delete') {
+    if (RateLimit::check('settings_mutate', (string)$user['id'], 500, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
+    $id = (int)($body['id'] ?? 0);
+    if (!$id) { http_response_code(422); echo json_encode(['ok' => false, 'error' => 'id required.']); exit; }
+    $ok = TrustedDevice::delete($id, (int)$user['id']);
+    if (!$ok) { http_response_code(404); echo json_encode(['ok' => false, 'error' => 'Device not found.']); exit; }
+    echo json_encode(['ok' => true]);
+    exit;
+}
+
+if ($action === 'trusted-devices' && $sub_action === 'delete-all') {
+    if (RateLimit::check('settings_mutate', (string)$user['id'], 500, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
+    $count = TrustedDevice::deleteAllForUser((int)$user['id']);
+    echo json_encode(['ok' => true, 'deleted' => $count]);
+    exit;
+}
+
 function _settings_equalize_email_timing(float $t0): void
 {
-    $target  = 1.2; // seconds - matches SEC-098's forgot-password floor
+    $target  = 1.2;
     $elapsed = microtime(true) - $t0;
     if ($elapsed < $target) {
         usleep((int)(($target - $elapsed) * 1_000_000));
@@ -270,15 +283,6 @@ if ($action === 'email' && $sub_action === null) {
         echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again in an hour.']); exit;
     }
 
-    // SEC-116: step-up re-auth, same pattern as POST /api/settings/password
-    // above and the admin actions in admin_api.php (SEC-105). Without this,
-    // a hijacked session alone (no knowledge of the password at all) was
-    // enough to point the account's email at an address the attacker
-    // controls, confirm it via that inbox, then use /forgot-password to set
-    // a brand new password - a full, irreversible account takeover that
-    // never required the attacker to know the current password. Every other
-    // sensitive self-service action already required proof of the password
-    // (or a 2FA code); this was the one gap.
     $currentPassword = $body['current_password'] ?? '';
     if ($currentPassword === '') {
         http_response_code(422);
@@ -295,18 +299,6 @@ if ($action === 'email' && $sub_action === null) {
     if (!filter_var($newEmail, FILTER_VALIDATE_EMAIL)) { http_response_code(422); echo json_encode(['ok' => false, 'error' => 'Invalid email address format.']); exit; }
     if ($newEmail === strtolower($user['email'])) { http_response_code(422); echo json_encode(['ok' => false, 'error' => 'This is already your current email address.']); exit; }
 
-    // SEC-150 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVII): from here on, the
-    // request either reveals that $newEmail already belongs to another
-    // account (or is pending on one) or actually sends a confirmation
-    // link - the same class of enumeration problem SEC-104 already closed
-    // for anonymous registration and SEC-098 closed for forgot-password.
-    // This endpoint only requires being authenticated as SOME account (a
-    // very low bar when self-registration is open) plus that account's
-    // OWN password, so it was reachable by anyone with a throwaway
-    // account. Both branches below now share one generic message and one
-    // floor-padded response time, so neither the text nor the timing
-    // tells the caller whether $newEmail belongs to a real, different
-    // account.
     $_email_t0 = microtime(true);
 
     $taken = DB::val("SELECT id FROM users WHERE (email = ? OR email_pending = ?) AND id != ?", [$newEmail, $newEmail, $user['id']]);
@@ -327,7 +319,6 @@ if ($action === 'email' && $sub_action === null) {
 }
 
 if ($action === 'email' && $sub_action === 'cancel') {
-    // SEC-101
     if (RateLimit::check('settings_mutate', (string)$user['id'], 500, 3600, 3600)) {
         http_response_code(429);
         echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
@@ -340,7 +331,6 @@ if ($action === 'email' && $sub_action === 'cancel') {
 
 // ── POST /api/settings/theme (sesja 071a) ─────────────────────────────────────
 if ($action === 'theme') {
-    // SEC-101
     if (RateLimit::check('settings_mutate', (string)$user['id'], 500, 3600, 3600)) {
         http_response_code(429);
         echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
@@ -358,7 +348,6 @@ if ($action === 'theme') {
 
 // ── POST /api/settings/primary-color (sesja 071b) ────────────────────────────
 if ($action === 'primary-color') {
-    // SEC-101
     if (RateLimit::check('settings_mutate', (string)$user['id'], 500, 3600, 3600)) {
         http_response_code(429);
         echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
@@ -388,12 +377,7 @@ if ($action === 'primary-color') {
 }
 
 // ── POST /api/settings/theme-extras — bg + text colors (sesja 072) ───────────
-//
-// Body: {"theme": "light"|"dark"|"midnight", "bg": "#rrggbb"|null, "text": "#rrggbb"|null}
-// null / "" → reset (NULL w DB)
-// Stored as JSON: {"bg":"#xxx","text":"#xxx"} in theme_X_extra column
 if ($action === 'theme-extras') {
-    // SEC-101
     if (RateLimit::check('settings_mutate', (string)$user['id'], 500, 3600, 3600)) {
         http_response_code(429);
         echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
@@ -431,13 +415,8 @@ if ($action === 'theme-extras') {
     exit;
 }
 
-
 // ── POST /api/settings/dial-width — dial card width (sesja 074) ───────────────
-//
-// Body: {"width": 200}
-// Clamps to valid range 120–280 server-side.
 if ($action === 'dial-width') {
-    // SEC-101
     if (RateLimit::check('settings_mutate', (string)$user['id'], 500, 3600, 3600)) {
         http_response_code(429);
         echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;

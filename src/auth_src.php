@@ -4,14 +4,31 @@
  *
  * Session flow:
  *   login()             → creates DB session, totp_verified=0 if 2FA enabled
+ *                          UNLESS this device is trusted (sesja 079,
+ *                          TrustedDevice::verify()), in which case 2FA is
+ *                          skipped and the session is created fully verified.
  *   verify2FA()         → sets totp_verified=1 AND rotates to a brand-new
  *                          session/token (SEC-149) — the pre-2FA token is
- *                          deleted, never just "upgraded" in place
+ *                          deleted, never just "upgraded" in place. If the
+ *                          caller asked to trust this device (sesja 079),
+ *                          a new trusted-device record + dv_td cookie is
+ *                          created here, immediately after the real 2FA
+ *                          success — never before it.
  *   getUser()           → returns user ONLY if totp_verified=1
  *   getPartialUser()    → returns user regardless of totp_verified (2FA page)
- *   loginFromRemember() → creates session with totp_verified=0 if user has 2FA;
+ *   loginFromRemember() → creates session with totp_verified=0 if user has 2FA
+ *                          AND the device is not trusted (sesja 079);
  *                          rate limited and logged to login_history (SEC-152)
  *   register()          → sesja 068: self-registration (if enabled)
+ *
+ * Sesja 079 (Trusted Device — skip 2FA for 180 days):
+ *   A device that has already completed one real 2FA challenge can be
+ *   marked "trusted" (src/trusted_device_src.php). A trusted device still
+ *   has to supply the correct password every time the session cookie
+ *   itself expires — trust only ever removes the SECOND factor prompt,
+ *   never the first. Trusted devices are revoked automatically whenever
+ *   Auth::logoutAllSessions() runs (password change, forced reset, email
+ *   change, password reset via email) — see that method below.
  *
  * SEC-080: verify2FA() and enable2FA() both call TOTP::verifyAndConsume()
  *   so a captured/replayed TOTP code cannot be used twice. See totp_src.php
@@ -62,7 +79,7 @@
  *   can both pass that SELECT before either writes, a window SEC-104's own
  *   timing floor makes wider, not narrower. Without the catch, the
  *   uq_login/uq_email UNIQUE KEY (install.php) turned that race into an
- *   uncaught PDOException instead of the normal, enumeration-safe error
+ *   uncaught PDOException instead of a clean, enumeration-safe error
  *   response. See register()'s own inline comment for the full rationale;
  *   the same pattern was applied to Admin::createUser()/inviteUser() and
  *   confirm_email_page.php's "apply the change" branch in the same pass.
@@ -70,38 +87,20 @@
  * SEC-135: register() now also computes activation_expires (48h) alongside
  *   activation_token. Before this, self-registration's activation token was
  *   the only one of the app's four single-use secret tokens with no
- *   time-based expiry at all (reset_token/reset_expires and
- *   email_change_token/email_change_expires both have one; the invite/
- *   setup-account token is bounded by created_at). See activate_page.php for
- *   the matching read-side check, which grandfathers existing NULL
- *   activation_expires rows (accounts created before this column existed)
- *   as never-expiring, so this cannot retroactively lock anyone out.
+ *   time-based expiry at all. See activate_page.php for the matching
+ *   read-side check.
  *
  * SEC-139 (11.09.2026): every TOTP::decrypt()/TOTP::encrypt() call in this
- *   file (verify2FA, storeSetupSecret, getSetupSecret, enable2FA) is now
- *   wrapped in try/catch(RuntimeException). Previously uncaught — a stale
- *   ENCRYPTION_KEY (rotated without migrating existing totp_secret rows,
- *   which config.php already warns invalidates every 2FA secret) or a rare
- *   openssl failure would have surfaced as an unhandled exception on every
- *   affected login instead of a clean error. Each site degrades safely:
- *   verify2FA() falls through to the backup-code check (unaffected by
- *   ENCRYPTION_KEY), the setup-secret helpers fall back to "generate a
- *   fresh secret", and enable2FA() returns a plain retryable error.
+ *   file (verify2FA, storeSetupSecret, getSetupSecret, enable2FA) is
+ *   wrapped in try/catch(RuntimeException). See totp_src.php.
  *
  * SEC-149 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVII): verify2FA() and
- *   enable2FA() now call the new rotateSessionAfter2FA() on every success
- *   path instead of updating the pre-2FA session row in place. Before this,
- *   the raw dv_s cookie value was identical before and after 2FA — a copy
- *   leaked during the short (15 min) pre-2FA window would silently become
- *   a fully-authenticated, long-lived session the instant the real user
- *   finished 2FA, without the holder ever needing the TOTP code themselves.
+ *   enable2FA() call rotateSessionAfter2FA() on every success path instead
+ *   of updating the pre-2FA session row in place.
  *
- * SEC-152 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVII): loginFromRemember() now
- *   checks two new rate-limit buckets (remember_login by IP, then
- *   remember_login_account by user_id once the token resolves) and writes
- *   a login_history entry on success. Before this, remember-me-based
- *   session creation was the one session-creating path in the app with no
- *   throttle and zero trace in the Admin -> Login History view.
+ * SEC-152 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVII): loginFromRemember() rate
+ *   limits per-IP then per-account, and writes a login_history entry on
+ *   success.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -115,26 +114,13 @@ class Auth
     /**
      * SEC-097: fixed decoy hash used ONLY to pay the same bcrypt cost as a
      * real verify when the submitted login does not match any account.
-     * Not a secret and not a real credential — it exists purely so
-     * Password::verify() has something to spend cycles against. Generated
-     * once via password_hash('dummy-password-for-timing-attack-mitigation-
-     * never-matches', PASSWORD_BCRYPT, ['cost' => 15]) to match
-     * Password::BCRYPT_COST; if BCRYPT_COST ever changes again (see
-     * BUG-010), regenerate this constant to the new cost so the two paths
-     * stay balanced.
      */
     private const DUMMY_HASH = '$2y$15$N7E8msBbPqnQWwfk8p5JrOxz/YNPKi.d1MJ68jRmBd4As8i0xWLVW';
 
     /**
      * SEC-104: fixed floor (seconds) that register() pads BOTH the
      * "login or email already taken" branch and the "account created"
-     * branch up to, via equalizeRegisterTiming() below — same
-     * $_sfp_target/usleep() pattern already used in forgot_password_page.php
-     * (SEC-098) for the identical class of problem. Set comfortably above
-     * Password::hash()'s own ~2s cost at BCRYPT_COST=15 (see BUG-010),
-     * since the "account created" branch always pays that cost and the
-     * "already taken" branch otherwise would not — without a floor at
-     * least that high, the floor itself would do nothing to close the gap.
+     * branch up to, via equalizeRegisterTiming() below.
      */
     private const REGISTER_TIMING_FLOOR = 2.5;
 
@@ -147,35 +133,10 @@ class Auth
     public static function login(string $login, string $password, bool $remember = false): array
     {
         $ip = self::ip();
-        // SEC-131 (04.09.2026): windowSec raised 300 -> 600 to match
-        // blockSec. Exact same class of bug already fixed for the '2fa'
-        // bucket in SEC-129(c) below: RateLimit::check()'s actual
-        // counter-reset is driven by windowSec, not blockSec (see
-        // rate_limit_src.php), so this bucket was silently resetting
-        // every 5 minutes even though the message here always said 10.
-        // 'login' was the one bucket the SEC-129(c) comment (verify2FA()
-        // below) incorrectly assumed was already consistent - it was
-        // not. Effective per-IP throughput was double what the message
-        // implies (10 attempts / 5 min = up to 120/h, not 60/h).
         if (RateLimit::check('login', $ip, 10, 600, 600)) {
             return ['ok' => false, 'error' => 'Too many login attempts. Please wait 10 minutes.'];
         }
 
-        // INFO-B (24.08.2026): per-account limit, independent of the
-        // attacker's source IP. The 'login' bucket above is keyed by IP
-        // only, so an attack spread across many IPs against ONE target
-        // account was not bounded at all — 10 attempts/IP times an
-        // unlimited number of IPs. Keyed by the lowercased, trimmed
-        // SUBMITTED login string, not by a resolved user ID or any DB
-        // lookup result — this runs identically whether or not that
-        // string turns out to match a real account, which is what keeps
-        // SEC-097's enumeration-safe timing/behaviour below fully intact
-        // (a non-existent login gets its own harmless bucket; a real one
-        // gets genuinely throttled no matter how many IPs are used).
-        // Looser than the per-IP limit (20 vs 10, 15 min vs 5 min window)
-        // since a legitimate person switching between phone/laptop/work
-        // devices can plausibly rack up more failed attempts across
-        // different IPs than from any single one of them.
         $loginKey = mb_strtolower(trim($login));
         if ($loginKey !== '' && RateLimit::check('login_account', $loginKey, 20, 900, 900)) {
             return ['ok' => false, 'error' => 'Too many login attempts for this account. Please wait 15 minutes.'];
@@ -186,15 +147,6 @@ class Auth
             [$login, $login]
         );
 
-        // SEC-097: always spend exactly one bcrypt verify at the same cost,
-        // whether $user was found or not. Previously `!$user || !Password::
-        // verifyAndRehash(...)` short-circuited on `!$user` and skipped the
-        // bcrypt call entirely for a login that doesn't exist — the error
-        // TEXT was already identical either way, but a non-existent login
-        // returned in a few ms while a wrong password on a real one took
-        // ~2s (BUG-010 raised BCRYPT_COST to 15), which alone is enough to
-        // enumerate valid logins. DUMMY_HASH is not a real credential; it
-        // exists only so this branch pays the same CPU cost.
         if ($user) {
             $passwordOk = Password::verifyAndRehash($password, $user['password_hash'], (int)$user['id']);
         } else {
@@ -202,12 +154,6 @@ class Auth
             $passwordOk = false;
         }
 
-        // BUG-012: users.login and login_history.login_attempt are both
-        // VARCHAR(50), but $login is also matched against `email`
-        // (VARCHAR(255)) above, so it can arrive here longer than the
-        // history column allows. Truncate once, reuse for both INSERTs
-        // below — an untruncated $login hit an unhandled PDOException
-        // under strict SQL mode instead of the normal error response.
         $loginForHistory = mb_substr($login, 0, 50);
 
         if (!$user || !$passwordOk) {
@@ -221,8 +167,14 @@ class Auth
         RateLimit::clear('login', $ip);
         RateLimit::clear('login_account', $loginKey);
 
-        $totp_verified = ($user['totp_enabled'] ? 0 : 1);
-        $raw_token     = self::createSession($user['id'], $totp_verified);
+        // Sesja 079: a device that already proved it completed a real 2FA
+        // challenge on this account can skip the 2FA prompt for up to 180
+        // days. Password is ALWAYS required regardless — this only ever
+        // affects the second factor.
+        $deviceTrusted = $user['totp_enabled'] && TrustedDevice::verify((int)$user['id']);
+        $totp_verified = (!$user['totp_enabled'] || $deviceTrusted) ? 1 : 0;
+
+        $raw_token = self::createSession($user['id'], $totp_verified);
 
         DB::run("UPDATE users SET last_login = NOW() WHERE id = ?", [$user['id']]);
         DB::run("INSERT INTO login_history (user_id, login_attempt, ip, user_agent, status)
@@ -239,33 +191,18 @@ class Auth
         self::$sessionId   = hash('sha256', $raw_token);
         self::$currentUser = $user;
 
-        if ($user['totp_enabled']) {
+        if ($user['totp_enabled'] && !$deviceTrusted) {
             return ['ok' => true, 'needs_2fa' => true, 'needs_setup' => false];
         }
-        if ($user['totp_required']) {
+        if ($user['totp_required'] && !$user['totp_enabled']) {
             return ['ok' => true, 'needs_2fa' => false, 'needs_setup' => true];
         }
-        return ['ok' => true, 'needs_2fa' => false, 'needs_setup' => false];
+        return ['ok' => true, 'needs_2fa' => false, 'needs_setup' => false, 'device_trusted' => $deviceTrusted];
     }
 
     /**
-     * Self-registration (sesja 068).
-     *
-     * Returns:
-     *   ['ok' => true, 'auto_verified' => bool]   — success
-     *   ['ok' => false, 'error' => string]         — validation failed
-     *
-     * If SMTP is enabled: creates unverified account, sends activation email.
-     * If SMTP is disabled: creates verified account immediately (no email needed).
-     *
-     * Rate limit: 5 registrations per IP per hour.
-     *
-     * SEC-104: the "login taken" / "email taken" / "account created" outcomes
-     * are deliberately indistinguishable from outside — one shared error
-     * message, one shared floor-padded response time (see
-     * REGISTER_TIMING_FLOOR / equalizeRegisterTiming() above) — so an
-     * anonymous visitor cannot use this endpoint to enumerate which logins
-     * or email addresses are already registered.
+     * Self-registration (sesja 068). See original docblock at top of file
+     * for the SEC-104 timing-equalization rationale — unchanged by sesja 079.
      */
     public static function register(
         string $login,
@@ -275,17 +212,10 @@ class Auth
     ): array {
         $ip = self::ip();
 
-        // Rate limit — stricter than login (registration is more expensive)
         if (RateLimit::check('register', $ip, 5, 3600, 3600)) {
             return ['ok' => false, 'error' => 'Too many registration attempts. Try again in an hour.'];
         }
 
-        // ── Validate login ────────────────────────────────────────────────────
-        // These early, format-only checks do not depend on whether any account
-        // already exists — a malformed login is rejected the same way whether
-        // or not "admin" happens to be taken — so they are intentionally OUTSIDE
-        // the SEC-104 timing equalization below, which only needs to cover the
-        // step that actually reveals account existence.
         if (!$login) {
             return ['ok' => false, 'error' => 'Login is required.'];
         }
@@ -293,13 +223,11 @@ class Auth
             return ['ok' => false, 'error' => 'Login must be 3–50 characters: letters, numbers, underscore only.'];
         }
 
-        // ── Validate email ────────────────────────────────────────────────────
         $email = strtolower(trim($email));
         if (!$email || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
             return ['ok' => false, 'error' => 'Please enter a valid email address.'];
         }
 
-        // ── Validate password ─────────────────────────────────────────────────
         $pwErrors = Password::validate($password);
         if (!empty($pwErrors)) {
             return ['ok' => false, 'error' => implode(' ', $pwErrors)];
@@ -308,19 +236,8 @@ class Auth
             return ['ok' => false, 'error' => 'Passwords do not match.'];
         }
 
-        // SEC-104: from here on, the request either reveals that an account
-        // already exists (collision) or creates one (success) — both branches
-        // below now share ONE generic error message and ONE floor-padded
-        // response time (equalizeRegisterTiming()), so neither the message
-        // text nor the timing lets an anonymous visitor learn whether a
-        // specific login or a specific email address is already registered.
         $_reg_t0 = microtime(true);
 
-        // ── Check uniqueness ──────────────────────────────────────────────────
-        // Both queries always run, regardless of the other's result — keeping
-        // this symmetric (rather than short-circuiting once one is found
-        // taken) is what makes "which field collided" genuinely
-        // indistinguishable from query cost alone, on top of the timing floor.
         $loginTaken = (bool)DB::val("SELECT id FROM users WHERE login = ?", [$login]);
         $emailTaken = (bool)DB::val("SELECT id FROM users WHERE email = ?", [$email]);
 
@@ -332,11 +249,6 @@ class Auth
             ];
         }
 
-        // ── Enforce max users limit (optional) ────────────────────────────────
-        // Reveals only that the INSTANCE is full, never anything about a
-        // specific login/email — a different, non-per-account condition, so
-        // it is intentionally outside the SEC-104 timing/message equalization
-        // above.
         $maxUsers = (int)(DB::val("SELECT value FROM settings WHERE key_name = 'max_users'") ?? 0);
         if ($maxUsers > 0) {
             $userCount = (int)(DB::val("SELECT COUNT(*) FROM users") ?? 0);
@@ -345,35 +257,12 @@ class Auth
             }
         }
 
-        // ── Create account ────────────────────────────────────────────────────
         $smtpEnabled   = defined('SMTP_ENABLED') && SMTP_ENABLED;
         $autoVerified  = !$smtpEnabled;
         $activToken    = $autoVerified ? null : bin2hex(random_bytes(32));
-        // SEC-135: activation_token used to be the only one of the four
-        // single-use secret tokens in this app with no time-based expiry at
-        // all (reset_token/reset_expires and email_change_token/
-        // email_change_expires both have one; the invite/setup-account token
-        // is bounded by created_at). 48h mirrors the invite flow's own
-        // window. See activate_page.php for the matching read-side check and
-        // its grandfather clause for accounts created before this column
-        // existed.
         $activExpires  = $autoVerified ? null : date('Y-m-d H:i:s', time() + 172800);
         $passwordHash  = Password::hash($password);
 
-        // SEC-110: the SELECT-based uniqueness check above and this INSERT are
-        // not atomic — two near-simultaneous requests with the same login/email
-        // can both pass the SELECT (neither has INSERTed yet) before either
-        // reaches this write, and SEC-104's own multi-second timing floor
-        // above widens that window rather than closing it. db_src.php sets
-        // PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, so the uq_login/uq_email
-        // UNIQUE KEY (install.php, CREATE TABLE users) would otherwise turn
-        // that race into an uncaught PDOException instead of a clean JSON/HTML
-        // response — a stability regression with a side risk of an
-        // information leak if display_errors is ever on in production.
-        // Catch it and fall back to the exact same generic, enumeration-safe
-        // message + timing floor as the SELECT-based check above, so a losing
-        // concurrent request degrades gracefully instead of leaking a stack
-        // trace or a raw 500.
         try {
             DB::run(
                 "INSERT INTO users (login, email, password_hash, role, email_verified, activation_token, activation_expires, created_at)
@@ -382,45 +271,24 @@ class Auth
             );
         } catch (PDOException $e) {
             if ($e->getCode() === '23000') {
-                // Duplicate login/email — collided with a concurrent request
-                // that won the race. Same message/timing as the pre-check.
                 self::equalizeRegisterTiming($_reg_t0);
                 return [
                     'ok'    => false,
                     'error' => 'Could not create account with these details. If you already have an account, try signing in instead.',
                 ];
             }
-            throw $e; // any other DB error stays a real, loud failure
+            throw $e;
         }
 
-        // ── Send activation email ─────────────────────────────────────────────
         if (!$autoVerified && $activToken) {
             Mailer::sendActivation($email, $activToken);
         }
 
-        // SEC-104: pad the success branch to the same floor as the
-        // "already taken" branch above (started at $_reg_t0). In practice
-        // Password::hash() at cost 15 alone already takes close to the
-        // floor (see BUG-010), so this is normally a small or no-op sleep —
-        // it exists to guarantee the floor holds even on unusually fast
-        // hardware, keeping both branches' timing consistent regardless of
-        // server speed.
         self::equalizeRegisterTiming($_reg_t0);
 
         return ['ok' => true, 'auto_verified' => $autoVerified];
     }
 
-    /**
-     * SEC-104: pad the elapsed time since $startTime up to
-     * REGISTER_TIMING_FLOOR. Shared by both branches of register() that
-     * follow the uniqueness check, so "login or email already taken" and
-     * "account created" take the same (floor-padded) amount of time —
-     * mirrors the $_sfp_target/usleep() pattern in forgot_password_page.php
-     * (SEC-098), which solves the identical problem for password reset.
-     * Can only ever ADD delay, never subtract — a genuinely slow bcrypt
-     * hash or DB round trip that already exceeds the floor on its own is
-     * left alone.
-     */
     private static function equalizeRegisterTiming(float $startTime): void
     {
         $elapsed = microtime(true) - $startTime;
@@ -429,54 +297,26 @@ class Auth
         }
     }
 
-    public static function verify2FA(string $code): array
+    /**
+     * Sesja 079: $trustDevice controls whether a trusted-device record +
+     * dv_td cookie is created on success. Only ever created AFTER a real
+     * TOTP/backup-code success below — never before it, and never on a
+     * failed attempt.
+     */
+    public static function verify2FA(string $code, bool $trustDevice = false): array
     {
         $user = self::getPartialUser();
         if (!$user) return ['ok' => false, 'error' => 'Session expired. Log in again.'];
 
         $ip = self::ip();
-        // SEC-129 (01.09.2026): windowSec raised 300 -> 600 to match
-        // blockSec, consistent with every other bucket in this app (login,
-        // login_account, settings_mutate, dial_mutate, ... all have
-        // windowSec === blockSec). This was the one bucket where they
-        // diverged: RateLimit::check()'s own reset cycle is driven by
-        // windowSec, not blockSec, so the actual throttle was silently
-        // resetting every 5 minutes even though the message below always
-        // said 10. Matching them fixes that inconsistency and, as a side
-        // effect, halves the per-IP attempt rate available to an attacker.
         if (RateLimit::check('2fa', $ip, 5, 600, 600)) {
             return ['ok' => false, 'error' => 'Too many 2FA attempts. Wait 10 minutes.'];
         }
 
-        // SEC-129 (01.09.2026): account-scoped bucket, mirrors login_account
-        // (INFO-B) - without this, a distributed-IP attacker who already
-        // has the account's password (phishing, credential reuse from an
-        // unrelated breach - NOT guessed via this app's own, well-protected
-        // login()) could replay the one session cookie obtained from a
-        // single successful password login across many source IPs, staying
-        // under the per-IP bucket above on every one of them, and brute-force
-        // the 6-digit TOTP code (only ~139,000 attempts needed on average
-        // for a 50% chance, given the small keyspace - see SEC_AND_BUG_ANIH_PLAN.md
-        // SEC-129 for the full derivation). Deliberately tighter than
-        // login_account's 20/900/900: TOTP's keyspace is far smaller than
-        // password entropy, so a wider allowance here would still leave a
-        // meaningful residual risk.
         if (RateLimit::check('2fa_account', (string)$user['id'], 10, 900, 900)) {
             return ['ok' => false, 'error' => 'Too many 2FA attempts for this account. Please wait 15 minutes.'];
         }
 
-        // SEC-139 (11.09.2026): TOTP::decrypt() throws RuntimeException on a
-        // corrupted ciphertext or an openssl-level failure — most likely
-        // trigger is ENCRYPTION_KEY having been rotated without migrating
-        // existing totp_secret rows (config.php warns explicitly that this
-        // invalidates every stored 2FA secret). Previously uncaught here,
-        // so EVERY login attempt for EVERY 2FA-enabled account would hit an
-        // unhandled exception instead of a clear, actionable error. Caught
-        // and logged rather than re-thrown so this degrades gracefully:
-        // $totpOk simply stays false and execution falls through to the
-        // backup-code check below, which keeps working regardless (backup
-        // codes are bcrypt-hashed independently of ENCRYPTION_KEY), instead
-        // of a broken TOTP secret locking the account out of 2FA entirely.
         $secret_enc = $user['totp_secret'] ?? '';
         $totpOk     = false;
         if ($secret_enc) {
@@ -489,28 +329,20 @@ class Auth
         if ($totpOk) {
             RateLimit::clear('2fa', $ip);
             RateLimit::clear('2fa_account', (string)$user['id']);
-            // SEC-149: rotate the session token now that 2FA has actually
-            // succeeded — see rotateSessionAfter2FA() below for the full
-            // rationale (a copy of the pre-2FA cookie, if it ever leaked
-            // during the narrow pre-2FA window, must not become a valid
-            // fully-authenticated token the instant 2FA completes).
             self::rotateSessionAfter2FA((int)$user['id']);
+            if ($trustDevice) {
+                TrustedDevice::create((int)$user['id'], TrustedDevice::labelFromUserAgent(self::ua()), $ip);
+            }
             return ['ok' => true];
         }
 
-        // SEC-092: consolidated onto TOTP::useBackupCode() — the one
-        // implementation of this check that already normalizes case
-        // (strtoupper) before comparing. This call site and the one in
-        // api/settings_api.php (backup-codes regeneration) previously
-        // duplicated the same loop WITHOUT that normalization, so a
-        // correct backup code typed in lowercase (e.g. copied by hand
-        // from a printed sheet) was wrongly rejected as "Invalid code"
-        // here even though TOTP::useBackupCode() itself would accept it.
         if (TOTP::useBackupCode($user['id'], $code)) {
             RateLimit::clear('2fa', $ip);
             RateLimit::clear('2fa_account', (string)$user['id']);
-            // SEC-149: same rotation as the TOTP-success branch above.
             self::rotateSessionAfter2FA((int)$user['id']);
+            if ($trustDevice) {
+                TrustedDevice::create((int)$user['id'], TrustedDevice::labelFromUserAgent(self::ua()), $ip);
+            }
             return ['ok' => true, 'used_backup' => true];
         }
 
@@ -521,30 +353,6 @@ class Auth
         return ['ok' => false, 'error' => 'Invalid code. Try again.'];
     }
 
-    /**
-     * SEC-139 (11.09.2026): TOTP::encrypt() can only fail here on a genuine
-     * openssl-level problem (this is a freshly generated secret, not
-     * decryption of old data, so a stale ENCRYPTION_KEY cannot be the
-     * trigger). Caught rather than left uncaught.
-     *
-     * BUG-037 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVI): now returns bool
-     * instead of void, so the caller can tell a failed save apart from a
-     * successful one. Before this fix, a failed encrypt() here was a
-     * SILENT no-op: pending_totp simply kept its previous value (null on
-     * a first attempt), while setup_2fa_page.php had ALREADY rendered and
-     * shown the QR code / manual-entry secret for that same, never-saved
-     * value in the SAME request. A user who scanned that code and then
-     * submitted a verification attempt hit enable2FA() -> getSetupSecret()
-     * returning null (since pending_totp was never written), producing a
-     * confusing "Setup session expired. Start again." even though nothing
-     * had actually expired from their point of view - they had just
-     * scanned a code seconds earlier. The caller now checks this return
-     * value and shows an immediate, honest error instead of rendering a
-     * QR code that was doomed not to work. This requires ENCRYPTION_KEY to
-     * already be broken/rotated-without-migration for the encrypt() call
-     * to fail at all - not a security gap on its own, purely a
-     * completeness gap in the SEC-139 error handling.
-     */
     public static function storeSetupSecret(string $secret): bool
     {
         $sid = self::getSessionId();
@@ -560,14 +368,6 @@ class Auth
         return true;
     }
 
-    /**
-     * SEC-139 (11.09.2026): TOTP::decrypt() throws on a corrupted
-     * pending_totp value or an openssl-level failure. Caught and treated
-     * the same as "no setup secret stored yet" (return null) rather than
-     * left uncaught — the caller (setup_2fa_page.php) already regenerates
-     * a fresh secret whenever this returns null, which is a safe recovery
-     * path for a temporary, not-yet-confirmed setup secret.
-     */
     public static function getSetupSecret(): ?string
     {
         $sid = self::getSessionId();
@@ -582,7 +382,12 @@ class Auth
         }
     }
 
-    public static function enable2FA(string $code): array
+    /**
+     * Sesja 079: $trustDevice mirrors verify2FA()'s parameter — a user
+     * completing INITIAL 2FA setup can also trust the device they just
+     * set it up on in the same step.
+     */
+    public static function enable2FA(string $code, bool $trustDevice = false): array
     {
         $user = self::getPartialUser();
         if (!$user) return ['ok' => false, 'error' => 'Session expired.'];
@@ -594,12 +399,6 @@ class Auth
             return ['ok' => false, 'error' => 'Invalid code. Check your authenticator app.'];
         }
 
-        // SEC-139 (11.09.2026): TOTP::encrypt() can only fail here on a
-        // genuine openssl-level problem (fresh secret, not decryption of
-        // old data). Previously uncaught — a failure here would have
-        // surfaced as an unhandled 500 mid-setup instead of a clean,
-        // retryable error, right after the user has already typed a
-        // correct code.
         try {
             $encryptedSecret = TOTP::encrypt($secret);
         } catch (RuntimeException $e) {
@@ -619,14 +418,11 @@ class Auth
             $stmt->execute([$user['id'], password_hash($raw, PASSWORD_BCRYPT, ['cost' => 10])]);
         }
 
-        // SEC-149: rotate the session token here too — enable2FA() is the
-        // very first time this account's 2FA turns on, and the session that
-        // carried the user through the setup form is, from this exact
-        // instant forward, held to the same "must not survive a privilege
-        // change" standard as any ordinary post-2FA login. Deleting the old
-        // row also clears pending_totp implicitly, so no separate
-        // "pending_totp = NULL" update is needed on it.
         self::rotateSessionAfter2FA((int)$user['id']);
+
+        if ($trustDevice) {
+            TrustedDevice::create((int)$user['id'], TrustedDevice::labelFromUserAgent(self::ua()), self::ip());
+        }
 
         return ['ok' => true, 'backup_codes' => $codes];
     }
@@ -701,16 +497,25 @@ class Auth
         self::$userLoaded  = false;
     }
 
+    /**
+     * Sesja 079: also revokes every trusted device for this user.
+     * Every existing call site (password change, admin force-reset, email
+     * change confirmation, password-reset-via-email) gets this for free —
+     * a device trusted to skip 2FA must not remain trusted once whatever
+     * credential this method is protecting has just been rotated.
+     */
     public static function logoutAllSessions(int $userId): void
     {
         DB::run("DELETE FROM sessions        WHERE user_id = ?", [$userId]);
         DB::run("DELETE FROM remember_tokens WHERE user_id = ?", [$userId]);
+        TrustedDevice::deleteAllForUser($userId);
     }
 
     public static function logoutEveryone(): void
     {
         DB::run("DELETE FROM sessions");
         DB::run("DELETE FROM remember_tokens");
+        DB::run("DELETE FROM trusted_devices");
     }
 
     public static function getSessionId(): ?string { return self::$sessionId; }
@@ -721,20 +526,8 @@ class Auth
     {
         $lifetime = (int)(DB::val("SELECT value FROM settings WHERE key_name = 'session_lifetime'") ?? SESSION_TTL);
 
-        // SEC-129 (01.09.2026): a session pending 2FA verification must not
-        // inherit the full, potentially 30-day session_lifetime. TOTP has a
-        // far smaller keyspace than a password (1,000,000 six-digit codes,
-        // 5 valid at any instant - see TOTP::WINDOW), so a long-lived pending
-        // session turns a single, externally-compromised password into a
-        // patient, weeks-long brute-force window against the second factor,
-        // replayable from any number of source IPs via the one session
-        // cookie. A legitimate user completes 2FA within seconds of entering
-        // their password, so 15 minutes is generous for that case while
-        // closing the extended window for an attacker who only has one
-        // successful password login. Verified 2FA sessions are unaffected -
-        // this branch only ever shortens the PENDING state.
         if (!$totpVerified) {
-            $lifetime = min($lifetime, 900); // 15 minutes
+            $lifetime = min($lifetime, 900); // 15 minutes — pending-2FA cap, SEC-129a
         }
 
         $token    = bin2hex(random_bytes(32));
@@ -751,30 +544,10 @@ class Auth
     }
 
     /**
-     * SEC-149 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVII): rotate the session
-     * token at the exact instant 2FA succeeds — called from both success
-     * branches of verify2FA() (TOTP and backup code) and from enable2FA().
-     *
-     * Before this fix, verify2FA()/enable2FA() only ever flipped
-     * totp_verified=1 on the SAME session row/token already created (with
-     * a much shorter, 15-minute TTL — SEC-129a) at the initial,
-     * password-only step of login(). The raw token in the dv_s cookie was
-     * therefore byte-for-byte IDENTICAL before and after 2FA — only its
-     * totp_verified flag and expiry changed. If that exact cookie value
-     * had ever leaked during the narrow pre-2FA window (a TLS-terminating
-     * middlebox log, a browser crash reporter, a malicious extension with
-     * cookie access, a shoulder-surfed devtools panel), whoever held a
-     * copy of it would silently inherit a fully-authenticated, up-to-
-     * session_lifetime session the moment the legitimate user finished
-     * entering their real TOTP code — without ever needing to know that
-     * code themselves.
-     *
-     * Fix: mint a brand-new session (new random token, new DB row, new
-     * cookie) at the moment 2FA succeeds, and delete the old, now-
-     * superseded pre-2FA row. This mirrors the rotation
-     * createRememberToken()/loginFromRemember() already perform on every
-     * single use of a remember-me token — a credential must not survive
-     * the moment it gets elevated to a higher privilege level.
+     * SEC-149: rotate the session token at the exact instant 2FA succeeds
+     * — see original docblock. Unchanged by sesja 079 except that its
+     * callers now also optionally create a trusted-device record right
+     * after this returns.
      */
     private static function rotateSessionAfter2FA(int $userId): void
     {
@@ -802,28 +575,11 @@ class Auth
         return $row;
     }
 
-    /**
-     * SEC-132 (04.09.2026): now takes $totpVerified so the cookie's own
-     * 'expires' attribute mirrors the same cap createSession() already
-     * applies (SEC-129a, above) to the underlying DB session row while
-     * 2FA is still pending. Previously this function always used the
-     * full session_lifetime regardless of totp_verified, so a
-     * pending-2FA session's cookie claimed up to 30 days even though the
-     * DB row behind it - the actual source of truth checked by
-     * loadSession() below - expired after 15 minutes. Not an exploitable
-     * bypass either way (the DB has always been authoritative, a token
-     * presented after its DB row expires is rejected regardless of what
-     * the cookie itself claims), just an inconsistency between what the
-     * cookie says and what is actually still valid. Default 0 (capped)
-     * matches createSession()'s own default, so any future call site
-     * that forgets to pass this argument fails safe (short-lived cookie)
-     * rather than silently reintroducing this same gap.
-     */
     private static function setSessionCookie(string $rawToken, int $totpVerified = 0): void
     {
         $lifetime = (int)(DB::val("SELECT value FROM settings WHERE key_name = 'session_lifetime'") ?? SESSION_TTL);
         if (!$totpVerified) {
-            $lifetime = min($lifetime, 900); // 15 minutes - mirrors createSession()'s SEC-129(a) cap
+            $lifetime = min($lifetime, 900);
         }
         $secure   = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
         setcookie(self::COOKIE_SESSION, $rawToken, [
@@ -841,6 +597,10 @@ class Auth
         $past = ['expires' => time() - 86400, 'path' => '/', 'secure' => $isHttps, 'httponly' => true, 'samesite' => 'Lax'];
         setcookie(self::COOKIE_SESSION,  '', $past);
         setcookie(self::COOKIE_REMEMBER, '', $past);
+        // Note: dv_td (trusted device) is deliberately NOT cleared on a
+        // plain sign-out — trust is a property of the DEVICE, not the
+        // session, exactly like remember-me. It is only ever removed by
+        // explicit revocation (Settings) or by logoutAllSessions().
     }
 
     private static function fetchUser(int $id): ?array
@@ -887,23 +647,20 @@ class Auth
         ]);
     }
 
+    /**
+     * Sesja 079: if the account has 2FA enabled but this device is
+     * trusted (TrustedDevice::verify()), the resulting session is created
+     * FULLY verified instead of returning null — this is what actually
+     * fixes "remember-me always re-asks for a 2FA code". Password is
+     * still never skipped: this whole method only ever runs because the
+     * dv_r remember-me token itself already proved the account, and even
+     * then only a NEW session is minted here, not a bypass of login().
+     */
     private static function loginFromRemember(string $cookie): ?array
     {
         if (!str_contains($cookie, ':')) return null;
         [$selector, $verifier_b64] = explode(':', $cookie, 2);
 
-        // SEC-152 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVII): IP-scoped rate
-        // limit, checked before any DB lookup — mirrors login()'s own
-        // 'login' bucket. Before this fix, loginFromRemember() was the one
-        // session-creating code path in the whole app with no throttle of
-        // any kind, reachable on every page load that carries a dv_r
-        // cookie but no (or an expired) dv_s session cookie. A rate-limit
-        // hit here is NOT treated as an invalid token — the remember token
-        // itself is left untouched in the DB, so a legitimate visitor is
-        // simply treated as logged-out for this one request and can
-        // succeed again once the window passes, exactly like every other
-        // RateLimit::check() call in this file never invalidates the
-        // underlying credential, only throttles the attempt.
         $ip = self::ip();
         if (RateLimit::check('remember_login', $ip, 30, 600, 600)) {
             return null;
@@ -924,10 +681,6 @@ class Auth
             return null;
         }
 
-        // SEC-152: account-scoped rate limit, now that user_id is known —
-        // mirrors login_account. Bounds how often ANY ONE account can be
-        // walked through this path, independent of source IP, without
-        // touching the (already-verified-valid) token itself.
         if (RateLimit::check('remember_login_account', (string)$row['user_id'], 30, 900, 900)) {
             return null;
         }
@@ -936,8 +689,11 @@ class Auth
         $user = self::fetchUser($row['user_id']);
         if (!$user) return null;
 
-        $totp_verified = ($user['totp_enabled'] ? 0 : 1);
-        $raw_token     = self::createSession($user['id'], $totp_verified);
+        // Sesja 079: trusted device skips the 2FA prompt here too.
+        $deviceTrusted = $user['totp_enabled'] && TrustedDevice::verify((int)$user['id']);
+        $totp_verified = (!$user['totp_enabled'] || $deviceTrusted) ? 1 : 0;
+
+        $raw_token = self::createSession($user['id'], $totp_verified);
 
         self::setSessionCookie($raw_token, $totp_verified);
         self::createRememberToken($user['id']);
@@ -946,21 +702,12 @@ class Auth
 
         DB::run("UPDATE users SET last_login = NOW() WHERE id = ?", [$user['id']]);
 
-        // SEC-152: leave a trace in the same audit table login() already
-        // writes to on every attempt, so Admin -> Login History is no
-        // longer completely blind to remember-me-based access (including a
-        // stolen/replayed dv_r cookie, right up until this same fix's rate
-        // limits above throttle it). Deliberately reuses the existing
-        // 'success' enum value rather than adding a new one, so this is
-        // immediately deployable on any existing installation with zero
-        // schema change — see SEC_AND_BUG_ANIH_PLAN.md, SEC-152 for the
-        // optional follow-up of adding a distinct 'success_remember' status.
         DB::run("INSERT INTO login_history (user_id, login_attempt, ip, user_agent, status)
                  VALUES (?, ?, ?, ?, 'success')",
             [$user['id'], $user['login'], $ip, self::ua()]
         );
 
-        if ($user['totp_enabled']) {
+        if ($user['totp_enabled'] && !$deviceTrusted) {
             return null;
         }
 

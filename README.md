@@ -73,24 +73,24 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
 ### Speed Dial Dashboard
 - Speed dial grid with custom thumbnails (auto-generated via OG image / GD gradient fallback)
 - Custom thumbnail upload (JPG/PNG/WebP → Imagick → WebP 163×100 px, EXIF stripped)
-- Favicon overlay on gradient thumbnails (fetched directly by browser — no server-side SSRF)
+- Favicon overlay on gradient thumbnails (fetched directly by browser - no server-side SSRF)
 - Bulk refresh thumbnails
 - Dial notes (up to 500 chars, hover tooltip, preserved on duplicate/export)
 - Pin dials to top of group (persists across all sort modes)
-- Duplicate dial — to same or different group (single + bulk)
+- Duplicate dial - to same or different group (single + bulk)
 - Middle-click opens in background tab (native `<a>` element, no JS window.open)
 - Left-click records click count and opens in new tab
-- Open all dials in new tabs (synchronous — bypasses popup blockers)
+- Open all dials in new tabs (synchronous - bypasses popup blockers)
 - Drag & drop reorder within group (disabled for pinned dials and non-manual sort)
 - Full-text search across title, URL and notes (debounced 150 ms, `/` shortcut, `×` clear)
 - Sort options per group: Manual / A→Z / Z→A / 🔥 Popular / Newest / Oldest (persisted in localStorage)
 - Keyboard navigation: Arrow keys, Enter (open), E (edit), Delete (confirm delete), Escape
-- "All groups" virtual tab — shows all dials across every group simultaneously
-- Recently used virtual tab — last 20 clicked dials, sorted by last_click DESC
-- OG meta auto-fetch — title and description auto-filled when adding a dial (debounced + blur)
+- "All groups" virtual tab - shows all dials across every group simultaneously
+- Recently used virtual tab - last 20 clicked dials, sorted by last_click DESC
+- OG meta auto-fetch - title and description auto-filled when adding a dial (debounced + blur)
 
 ### LetaLink Bookmarklet
-- Drag-to-toolbar bookmarklet — add any webpage to LetaDial in one click
+- Drag-to-toolbar bookmarklet - add any webpage to LetaDial in one click
 - Popup window (430×540 px) pre-fills URL, title and OG description from the page
 - Group selector with localStorage memory of last used group
 - Notes field (500 chars) with live counter
@@ -113,7 +113,7 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
 ### Themes & Customization
 - Three themes: Light / Dark / Midnight (cool navy/graphite)
 - Theme cycle button (Light → Dark → Midnight → Light)
-- Theme saved per-user in database (no flash on page load — PHP inline `<style>` scoped per `[data-theme]`)
+- Theme saved per-user in database (no flash on page load - PHP inline `<style>` scoped per `[data-theme]`)
 - Custom primary color per-user per-theme (color picker + HEX input + 6 curated suggestions)
 - Automatic contrast FG (#000/#fff) based on luminance
 - Recently used tab can be hidden per-user (Settings → UI Preferences → Hide Recent)
@@ -121,27 +121,28 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
 ### User Avatars
 - Upload profile photo per user (JPEG / PNG / GIF / WebP → GD → 128×128 WebP, EXIF stripped)
 - Shown in: dashboard topbar (desktop + mobile), Settings preview, Admin → Users table
-- Served through authenticated PHP endpoint — direct web access blocked
+- Served through authenticated PHP endpoint - direct web access blocked
 - ETag / 304 caching; removed automatically when account is deleted
 
 ### Authentication & Security
-- Login with rate limiting (IP-based, `REMOTE_ADDR` only — X-Forwarded-For spoofing blocked)
+- Login with rate limiting (IP-based, `REMOTE_ADDR` only - X-Forwarded-For spoofing blocked)
 - TOTP two-factor authentication (Google Authenticator, Bitwarden, Authy)
-- Custom pure-PHP QR code generator (no external libraries) — PNG via GD, inline CSS stripped
-- Admin 2FA enforced — redirect to `/setup-2fa` until configured
+- Custom pure-PHP QR code generator (no external libraries) - PNG via GD, inline CSS stripped
+- Admin 2FA enforced - redirect to `/setup-2fa` until configured
 - TOTP time drift tolerance ±60 seconds (wider window for clock-skewed mobile devices)
 - Backup codes (10 × bcrypt, single-use, downloadable as `.txt`)
 - Backup codes regeneration (requires TOTP verification)
 - Remember me (90-day cookie, `HttpOnly`, `Secure`, `SameSite=Strict`)
-- CSRF protection — dual-mode: HMAC-SHA256 (authenticated) + double-submit cookie (pre-auth)
+- Trusted devices - skip the 2FA prompt for up to 180 days per confirmed device; the password is always still required regardless; revoke any device anytime from Settings
+- CSRF protection - dual-mode: HMAC-SHA256 (authenticated) + double-submit cookie (pre-auth)
 - AES-256-GCM encrypted TOTP secrets in database
 - Bcrypt passwords (`cost=15`, auto-salted)
 - POST-only logout (GET `/logout` redirects without action)
 - Rate limiting on: login (per-IP and per-account), 2FA (per-IP and per-account), forgot password, thumbnail refresh, import, export, invite, registration, and per-resource write limits on dials/groups/settings/admin actions (`dial_mutate`, `group_mutate`, `settings_mutate`, `admin_mutate`)
 - SSRF protection on thumbnail fetch: DNS resolve + private/reserved range block
-- URL scheme whitelist (`http`/`https` only — blocks `ftp://`, `file://`, `javascript:`, etc.)
+- URL scheme whitelist (`http`/`https` only - blocks `ftp://`, `file://`, `javascript:`, etc.)
 - EXIF/metadata stripping on all uploaded images (GD re-encode)
-- `storage/` served by PHP only — direct web access blocked via `.htaccess` deny-all
+- `storage/` served by PHP only - direct web access blocked via `.htaccess` deny-all
 - Cookie consent banner on login page (EU ePrivacy Directive 2002/58/EC + GDPR 2016/679)
 - Email activation flow for new accounts (256-bit token, single-use, via `/activate`)
 
@@ -175,12 +176,12 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
 - Login history: last N entries, filter by IP or status
 - Sessions: all active sessions across all users, terminate any
 - Auto-update: check GitHub Releases API (cached 6h in `settings` table), update notification banner for admin
-- Update via git pull from admin panel, requires re-entering your password (step-up auth) — always pulls from `https://github.com/LetaLab/LetaDial`, verified live against `git remote -v` on every Install Check
+- Update via git pull from admin panel, requires re-entering your password (step-up auth) - always pulls from `https://github.com/LetaLab/LetaDial`, verified live against `git remote -v` on every Install Check
 - Install Check: PHP extensions, GD WebP, Imagick, DB schema, config constants, security (no `install.php`, HTTPS, `.git` block, git remote origin, world-writable directories), filesystem permissions, file integrity via `git status`
 - Registration toggle: enable/disable self-registration with one click
 
 ### Installer (`install.php`)
-- 5-step web wizard — no CLI required
+- 5-step web wizard - no CLI required
 - Detects missing PHP extensions (PDO, GD, WebP support, Imagick, OpenSSL, mbstring)
 - Tests database connection before proceeding
 - Auto-generates `config.php` with cryptographically random `HMAC_KEY` and `ENCRYPTION_KEY`
@@ -191,29 +192,28 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
 - Self-deletes after successful installation
 - `install.php` is also removed automatically after every `git pull` (via
   the update flow), and again by `LetaDial_Permissions.sh` if you've set
-  it up (see [Permissions](#permissions)) — defense in depth, not reliant
+  it up (see [Permissions](#permissions)) - defense in depth, not reliant
   on any single mechanism
 
 ### Architecture & Quality
-- Zero external PHP dependencies — no Composer, no CDN, no npm
-- Zero JavaScript frameworks — vanilla ES6+ modules
-- Zero CSS frameworks — custom design system with CSS custom properties
+- Zero external PHP dependencies - no Composer, no CDN, no npm
+- Zero JavaScript frameworks - vanilla ES6+ modules
+- Zero CSS frameworks - custom design system with CSS custom properties
 - System font stack only (`system-ui, -apple-system, 'Segoe UI'`)
 - All thumbnails served as WebP (163×100 px, quality 72) with ETag/304 caching
 - PWA-ready: `manifest.json`, icons (48/192/512 px PNG + SVG), Apple Touch Icon
 - Mobile-responsive layout: hamburger menu, fluid grid (`auto-fill minmax`)
 - OG meta tags on dashboard (pinguin mascot image, title, description)
 - Shared design system CSS between all LetaLab projects
-- Git-based deployment — self-hosted Forgejo or GitHub
+- Git-based deployment - self-hosted Forgejo or GitHub
 
 ---
 
 ## Planned / Upcoming
 
-- Trusted device — skip 2FA for 30 days on confirmed devices
 - GDPR: full data export (own dials, groups, settings as JSON)
 - GDPR: account self-deletion with cascade
-- i18n — English / Polish (array-based `lang/en.php` + `lang/pl.php`)
+- i18n - English / Polish (array-based `lang/en.php` + `lang/pl.php`)
 - Login notification e-mails - sent on every successful login, toggleable per-user and instance-wide by the admin (see PROJECT_086.md)
 - Browser extension (Chrome / Edge / Firefox) - native equivalent of the LetaLink bookmarklet, specification pending (see PROJECT_087.md)
 - Full backup export/import - dials plus all thumbnails as a single ZIP file, for disaster recovery (see PROJECT_088.md)
@@ -240,13 +240,13 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
 | PHP extensions | `pdo_mysql`, `gd` (with WebP), `mbstring`, `openssl`, `json` |
 | Web server | nginx or Apache with mod_rewrite |
 | HTTPS | Strongly recommended |
-| PHP execution model | Classic, non-persistent (php-fpm or mod_php) — **required**, see note below |
+| PHP execution model | Classic, non-persistent (php-fpm or mod_php) - **required**, see note below |
 
-> **Runtime requirement (SEC_AND_BUG_ANIH_PLAN.md, DOC-3):** LetaDial assumes classic, non-persistent PHP execution where every request gets a completely fresh PHP process/state. Several classes rely on static class properties as "memory that lives for exactly one request" — `Auth::$currentUser`/`$sessionId`, `CSP::$nonce`, `RateLimit`'s per-request bookkeeping — and their safety depends entirely on that assumption holding. **Never deploy LetaDial under a persistent-worker PHP runtime (Swoole, RoadRunner, FrankenPHP worker mode, etc.) without a full static-state reset between requests.** Doing so without that reset can leak one visitor's session, CSRF nonce, or authentication state into a completely different visitor's request. Classic php-fpm and mod_php (what every instruction in this README assumes) are unaffected — they already tear down and rebuild all PHP state on every single request.
+> **Runtime requirement (SEC_AND_BUG_ANIH_PLAN.md, DOC-3):** LetaDial assumes classic, non-persistent PHP execution where every request gets a completely fresh PHP process/state. Several classes rely on static class properties as "memory that lives for exactly one request" - `Auth::$currentUser`/`$sessionId`, `CSP::$nonce`, `RateLimit`'s per-request bookkeeping - and their safety depends entirely on that assumption holding. **Never deploy LetaDial under a persistent-worker PHP runtime (Swoole, RoadRunner, FrankenPHP worker mode, etc.) without a full static-state reset between requests.** Doing so without that reset can leak one visitor's session, CSRF nonce, or authentication state into a completely different visitor's request. Classic php-fpm and mod_php (what every instruction in this README assumes) are unaffected - they already tear down and rebuild all PHP state on every single request.
 
 Optional:
-- `imagick` PHP extension — enables OG image capture and better image processing
-- `exif` PHP extension — auto-corrects avatar orientation from phone cameras (cosmetic, not required)
+- `imagick` PHP extension - enables OG image capture and better image processing
+- `exif` PHP extension - auto-corrects avatar orientation from phone cameras (cosmetic, not required)
 
 Check requirements before installing:
 
@@ -307,7 +307,7 @@ find /var/www/html/LetaDial/ -type f -exec chmod 644 {} \;
 
 `install.php` creates `storage/`, `logs/`, and their `.htaccess` files
 itself during setup. For ongoing permission maintenance after install
-(recommended), set up `LetaDial_Permissions.sh` — see
+(recommended), set up `LetaDial_Permissions.sh` - see
 [Permissions](#permissions) below.
 
 ### 4. Configure nginx
@@ -706,7 +706,7 @@ Add this line:
 ```
 
 Runs hourly. `*/30 * * * *` (every 30 minutes) is also reasonable on a
-low-traffic personal instance — adjust to your preference.
+low-traffic personal instance - adjust to your preference.
 
 Admin → Install Check flags world-writable directories and ownership
 mismatches, and always points back to `sudo /usr/sbin/LetaDial_Permissions.sh`
@@ -811,19 +811,19 @@ config.php     Generated by installer - NEVER commit this file
 - A global exception handler in `index.php` catches any Throwable that
   escapes every local `try`/`catch` and returns a short, information-free
   message instead of whatever the server's own `display_errors` setting
-  would otherwise print — `display_errors` should still be `Off` in
+  would otherwise print - `display_errors` should still be `Off` in
   production regardless (Admin → Install Check warns if it is not)
 - See [Requirements](#requirements) for the non-persistent PHP execution
   model this app assumes (never Swoole/RoadRunner/FrankenPHP worker mode
   without a full static-state reset between requests)
 - Rate limiting on login (10/5min), 2FA (5/5min), imports, thumbnail generation
-- Updates only ever pull from `https://github.com/LetaLab/LetaDial` — the
+- Updates only ever pull from `https://github.com/LetaLab/LetaDial` - the
   Admin panel verifies `git remote get-url origin` on every Install Check
   and warns if it's ever anything else
 - "Update now" requires re-entering your current password (step-up auth)
-  before it runs `git pull` — a stolen session cookie alone is not enough
+  before it runs `git pull` - a stolen session cookie alone is not enough
 - `install.php` is removed automatically after every `git pull`, and again
-  by `LetaDial_Permissions.sh` if you've set it up — see [Permissions](#permissions)
+  by `LetaDial_Permissions.sh` if you've set it up - see [Permissions](#permissions)
 - Permission maintenance runs as an independent script **outside** the git
   repository (`/usr/sbin/LetaDial_Permissions.sh`), so a compromised
   GitHub repo can never modify the script a root cron executes
@@ -848,7 +848,7 @@ sudo -u www-data git pull origin main
 
 If you've set up `/usr/sbin/LetaDial_Permissions.sh` (see
 [Permissions](#permissions)), it will pick up any permission drift on its
-next scheduled run — or run it immediately:
+next scheduled run - or run it immediately:
 
 ```bash
 sudo /usr/sbin/LetaDial_Permissions.sh

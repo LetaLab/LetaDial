@@ -1,6 +1,6 @@
 <?php
 /**
- * LetaDial — Login Page (sesja 068: self-registration added)
+ * LetaDial — Login Page (sesja 068: self-registration added; sesja 079: trust device)
  *
  * Handles three steps: login, 2FA verification, registration.
  * Registration is shown only if settings.registration_enabled = '1'.
@@ -8,51 +8,27 @@
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die();
 
-// SEC-157 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVIII): no-store - completes the
-// VI.3/SEC-134 rollout. This page embeds a live CSRF token
-// (CSRF::field()/CSRF::token(), Mode B pre-auth double-submit cookie) in
-// rendered HTML, same as every other page that already carries this header.
-// Real-world impact here is lower than on the dashboard/admin/settings pages
-// this header was first added for (this page shows no personal or
-// session-bound data - every anonymous visitor sees the identical form), but
-// closing the one remaining gap costs nothing and matches the standard the
-// rest of the app already holds itself to.
 header('Cache-Control: no-store, no-cache, must-revalidate, private');
 header('Pragma: no-cache');
 
 if (Auth::isLoggedIn()) { header('Location: /'); exit; }
 
-// ── PRE-WARM CSRF TOKEN ───────────────────────────────────────────────────────
-// MUST happen before any HTML output. For pre-auth (no DB session), this
-// triggers CSRF::preAuthToken() which calls setcookie('dv_pa', ...).
 $_csrf_prewarm = CSRF::token();
-// ─────────────────────────────────────────────────────────────────────────────
 
 $error   = '';
 $success = '';
 $step    = 'login';
 
 $partial = Auth::getPartialUser();
-// BUG-023: Auth::getUser() memoizes its result in static class fields
-// (self::$userLoaded / self::$currentUser). The Auth::isLoggedIn() call at
-// the top of this file already ran once and did not exit, so it is already
-// known to be false for the rest of this request — this second call below
-// always returns that same cached false, it is not a fresh, independent
-// check. Kept (rather than simplified to `if ($partial)`) because it
-// documents the real intent — "proceed only while still not logged in" —
-// which would matter again if this file's structure ever changes so the
-// two checks are no longer adjacent.
 if ($partial && !Auth::isLoggedIn()) {
     $step = $partial['totp_enabled'] ? 'totp' : 'setup';
     if ($step === 'setup') { header('Location: /setup-2fa'); exit; }
 }
 
-// ── Check registration enabled ────────────────────────────────────────────────
 $registration_enabled = (DB::val(
     "SELECT value FROM settings WHERE key_name = 'registration_enabled'"
 ) ?? '1') === '1';
 
-// ── Handle POST ───────────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     CSRF::require();
     $action = $_POST['action'] ?? 'login';
@@ -73,8 +49,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($action === 'verify_2fa' && $step === 'totp') {
-        $code   = preg_replace('/\s/', '', $_POST['code'] ?? '');
-        $result = Auth::verify2FA($code);
+        $code         = preg_replace('/\s/', '', $_POST['code'] ?? '');
+        $trust_device = !empty($_POST['trust_device']);
+        $result       = Auth::verify2FA($code, $trust_device);
         if ($result['ok']) { header('Location: ' . (!empty($result['used_backup']) ? '/?bcu=1' : '/')); exit; }
         $error = $result['error'];
     }
@@ -96,11 +73,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $error = $reg_result['error'];
                 $step  = 'register';
             } elseif ($reg_result['auto_verified'] ?? false) {
-                // SMTP disabled — account immediately active
                 $success = 'Account created! You can sign in now.';
                 $step    = 'login';
             } else {
-                // SMTP enabled — activation email sent
                 $success = 'Account created! Check your email to activate your account.';
                 $step    = 'login';
             }
@@ -152,12 +127,6 @@ $pw_rules = Password::jsRules();
             session cookies required for authentication are considered strictly necessary
             and are permitted without consent - but we want you to know they exist.
         </p>
-        <!-- BUG-030: the button below clears local browser storage, but it
-             cannot remove the strictly-necessary session cookie by design
-             (HttpOnly cookies are unreachable from JavaScript on purpose -
-             that is what keeps them safe from theft via a malicious
-             script). This note exists so the button below does not imply
-             it removes something it structurally cannot touch. -->
         <p style="font-size:.75rem;color:var(--text-faint)">
             Note: the button below clears local browser storage and any
             other, non-essential cookies. The one strictly necessary
@@ -338,7 +307,7 @@ $pw_rules = Password::jsRules();
     </form>
 
     <?php elseif ($step === 'totp'): ?>
-    <!-- ── 2FA FORM ── -->
+    <!-- ── 2FA FORM (sesja 079: "Trust this device" checkbox added) ── -->
     <p class="totp-info">
         Open your authenticator app and enter<br>
         the 6-digit code for <strong><?= $app_name ?></strong>.
@@ -352,6 +321,10 @@ $pw_rules = Password::jsRules();
                    inputmode="numeric" maxlength="6" pattern="\d{6}"
                    placeholder="000000" autofocus autocomplete="one-time-code" required>
         </div>
+        <label class="check-label" style="margin-bottom:1rem">
+            <input type="checkbox" name="trust_device" value="1">
+            Trust this device for 180 days (skip 2FA here)
+        </label>
         <button type="submit" class="btn btn-primary btn-block btn-lg">Verify &rarr;</button>
     </form>
     <div class="divider" style="margin:1.25rem 0">or backup code</div>
@@ -363,6 +336,10 @@ $pw_rules = Password::jsRules();
             <input type="text" name="code" class="form-input"
                    style="text-align:center;letter-spacing:.12em" placeholder="XXXX-XXXX">
         </div>
+        <label class="check-label" style="margin-bottom:1rem">
+            <input type="checkbox" name="trust_device" value="1">
+            Trust this device for 180 days (skip 2FA here)
+        </label>
         <button type="submit" class="btn btn-ghost btn-block">Use backup code</button>
     </form>
     <div style="text-align:center;margin-top:.75rem">
@@ -483,7 +460,6 @@ function switchToRegister(e) {
     if (sub) sub.textContent = 'Create your account';
     var rl = document.getElementById('reg_login');
     if (rl) rl.focus();
-    // Hide switch link under login form if present
     var sw = document.querySelector('.register-switch');
     if (sw && sw.closest('#form-login') === null) sw.style.display = 'none';
 }
@@ -516,7 +492,6 @@ document.getElementById('link-switch-register')?.addEventListener('click', switc
 document.getElementById('link-switch-login')?.addEventListener('click', switchToLogin);
 
 <?php if ($step === 'register' && $registration_enabled): ?>
-// Server sent us back to register step (validation failed) — show strength meter
 document.addEventListener('DOMContentLoaded', function() {
     var pw = document.getElementById('reg_password');
     if (pw) pw.focus();

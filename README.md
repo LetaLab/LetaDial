@@ -73,7 +73,7 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
 ### Speed Dial Dashboard
 - Speed dial grid with custom thumbnails (auto-generated via OG image / GD gradient fallback)
 - Custom thumbnail upload (JPG/PNG/WebP → Imagick → WebP 163×100 px, EXIF stripped)
-- Favicon overlay on gradient thumbnails (fetched directly by browser - no server-side SSRF)
+- Favicon overlay on gradient thumbnails (fetched server-side through the SSRF guard); the small favicon in the card header is loaded directly by your browser
 - Bulk refresh thumbnails
 - Dial notes (up to 500 chars, hover tooltip, preserved on duplicate/export)
 - Pin dials to top of group (persists across all sort modes)
@@ -115,8 +115,10 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
 - Theme cycle button (Light → Dark → Midnight → Light)
 - Theme saved per-user in database (no flash on page load - PHP inline `<style>` scoped per `[data-theme]`)
 - Custom primary color per-user per-theme (color picker + HEX input + 6 curated suggestions)
+- Custom background and text colors per-user per-theme (live preview, saved per theme)
 - Automatic contrast FG (#000/#fff) based on luminance
 - Recently used tab can be hidden per-user (Settings → UI Preferences → Hide Recent)
+- Dial card size slider (120-280 px) with presets, saved per-user (Settings → Dial Card Size)
 
 ### User Avatars
 - Upload profile photo per user (JPEG / PNG / GIF / WebP → GD → 128×128 WebP, EXIF stripped)
@@ -132,13 +134,13 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
 - TOTP time drift tolerance ±60 seconds (wider window for clock-skewed mobile devices)
 - Backup codes (10 × bcrypt, single-use, downloadable as `.txt`)
 - Backup codes regeneration (requires TOTP verification)
-- Remember me (90-day cookie, `HttpOnly`, `Secure`, `SameSite=Strict`)
+- Remember me (cookie lifetime comes from the `remember_me_days` setting, 30 days by default; `HttpOnly`, `Secure` on HTTPS, `SameSite=Lax`)
 - Trusted devices - skip the 2FA prompt for up to 180 days per confirmed device; the password is always still required regardless; revoke any device anytime from Settings
 - CSRF protection - dual-mode: HMAC-SHA256 (authenticated) + double-submit cookie (pre-auth)
 - AES-256-GCM encrypted TOTP secrets in database
 - Bcrypt passwords (`cost=15`, auto-salted)
 - POST-only logout (GET `/logout` redirects without action)
-- Rate limiting on: login (per-IP and per-account), 2FA (per-IP and per-account), forgot password, thumbnail refresh, import, export, invite, registration, and per-resource write limits on dials/groups/settings/admin actions (`dial_mutate`, `group_mutate`, `settings_mutate`, `admin_mutate`)
+- Rate limiting on: login (per-IP and per-account), 2FA (per-IP and per-account), forgot password, thumbnail refresh, import, export, personal data export, invite, registration, and per-resource write limits on dials/groups/settings/admin actions (`dial_mutate`, `group_mutate`, `settings_mutate`, `admin_mutate`)
 - SSRF protection on thumbnail fetch: DNS resolve + private/reserved range block
 - URL scheme whitelist (`http`/`https` only - blocks `ftp://`, `file://`, `javascript:`, etc.)
 - EXIF/metadata stripping on all uploaded images (GD re-encode)
@@ -170,6 +172,13 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
 - Duplicate URL per group skipped on import
 - Respects `max_dials_per_user` and `max_groups_per_user` limits
 
+### Privacy & Data Export (GDPR)
+- Personal data export from Settings → Your Data: one JSON file with your account profile, preferences, groups, dials, avatar, custom group icons, 2FA status, sessions, trusted devices and login history (GDPR Art. 15 and Art. 20)
+- Confirmed with your current password, so a stolen session alone is not enough; limited to 5 downloads per hour per user; generated on request and never stored on the server
+- Never included: password hash, 2FA secret, backup code hashes and every session, remember-me or trusted-device token
+- Long lists (sessions, login history) are capped at 10,000 entries and marked as truncated when the cap is hit
+- Groups and dials in the file can be brought back with the normal Import
+
 ### Admin Panel
 - Blocked IPs: list, unblock single / all for IP / unblock all; export CSV/JSON
 - Users: list with stats, delete account (cascades thumbnails + group_icons + avatar), force logout
@@ -187,7 +196,7 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
 - Auto-generates `config.php` with cryptographically random `HMAC_KEY` and `ENCRYPTION_KEY`
 - Auto-sets file permissions (`chmod 600` config, `755` dirs, `644` files)
 - Creates `storage/` directory structure with correct ownership
-- Creates all database tables and default settings in one transaction
+- Creates all database tables and default settings automatically
 - Validates SMTP by sending a test activation email during setup
 - Self-deletes after successful installation
 - `install.php` is also removed automatically after every `git pull` (via
@@ -211,14 +220,14 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
 
 ## Planned / Upcoming
 
-- GDPR: full data export (own dials, groups, settings as JSON)
 - GDPR: account self-deletion with cascade
 - i18n - English / Polish (array-based `lang/en.php` + `lang/pl.php`)
-- Login notification e-mails - sent on every successful login, toggleable per-user and instance-wide by the admin (see PROJECT_086.md)
-- Browser extension (Chrome / Edge / Firefox) - native equivalent of the LetaLink bookmarklet, specification pending (see PROJECT_087.md)
-- Full backup export/import - dials plus all thumbnails as a single ZIP file, for disaster recovery (see PROJECT_088.md)
-- CSP violation log viewer - view and download `logs/csp-violations.log` from Admin → Install Check (see PROJECT_089.md)
-- Weekly automatic export - rolling backup of your dials, last 10 downloadable from Settings (see PROJECT_090.md)
+- Login notification e-mails - sent on every successful login, toggleable per-user and instance-wide by the admin
+- Browser extension (Chrome / Edge / Firefox) - native equivalent of the LetaLink bookmarklet, specification pending
+- Full backup export/import - dials plus all thumbnails as a single ZIP file, for disaster recovery
+- CSP violation log viewer - view and download `logs/csp-violations.log` from Admin → Install Check
+- Weekly automatic export - rolling backup of your dials, last 10 downloadable from Settings
+- Admin: Trusted Devices tab - see and revoke the trusted devices of every user
 
 ---
 
@@ -228,6 +237,7 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
   If that happens, right-click the dial and choose **Refresh thumbnail**.
   Wait about one second, then edit the dial again and upload the custom thumbnail one more time.
   After that, it should work correctly.
+- Preview thumbnails from the page's Open Graph image are not generated for every site. Addresses that resolve to a private or reserved range (for example a self-hosted service on your LAN) are blocked on purpose by the SSRF guard, and some large sites may answer the server-side request with a bot-protection page instead of the real page. In both cases the tile falls back to a gradient with the site favicon or its first letter. You can always upload your own thumbnail from **Edit dial**.
 
 ---
 
@@ -565,7 +575,10 @@ cat <<'EOF' > /usr/sbin/LetaDial_Permissions.sh
 # This script intentionally lives OUTSIDE the git repository so a
 # compromised LetaDial origin can never modify it. It is not executed by
 # the web-based "Update now" flow or by any code inside the repo — run it
-# only via cron (see README) or manually.
+# only via cron (see README → Permissions) or manually.
+#
+# Install path: /usr/sbin/LetaDial_Permissions.sh
+# (see README.md → Permissions for the cat <<'EOF' one-liner + crontab entry)
 #
 # What this does:
 #   1. Sets correct ownership (www-data) and permissions (dirs 755, files 644)
@@ -631,14 +644,42 @@ for dir in \
 done
 
 # ── 5. Create missing .htaccess files ────────────────────────────────────
-DENY_ALL="Options -Indexes\nOrder deny,allow\nDeny from all"
-NO_PHP="Options -Indexes\nphp_flag engine off"
+# SEC-121: DENY_ALL now carries BOTH the modern (Apache 2.4+, mod_authz_core)
+# and legacy (Apache 2.2, or 2.4+ without mod_access_compat) authorization
+# syntax. `Order`/`Deny` alone silently does NOTHING on an Apache 2.4+
+# install that never loaded mod_access_compat (not guaranteed - several
+# minimal/hardened images omit it) - the directive is simply unrecognized
+# in that context and skipped, with no startup error, leaving storage/
+# fully browsable over HTTP. This has zero effect on nginx deployments
+# (nginx never reads .htaccess at all - see the location blocks in
+# nginx_letadial_example.conf), it only matters for Apache.
+DENY_ALL=$'Options -Indexes\n<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\n    Order deny,allow\n    Deny from all\n</IfModule>'
+# SEC-123: thumbnails/ used to get its own, weaker NO_PHP-only variant
+# (disabled PHP execution but still allowed a direct file GET) instead of
+# DENY_ALL like every other storage/ subdirectory below. Nothing in the
+# app ever reads a thumbnail by direct storage URL (Thumbnail::serve(),
+# i.e. GET /api/thumbs/{dialId}, is the only intended access path), so the
+# weaker variant protected nothing on purpose - it only mattered on Apache
+# deployments (nginx already blocks the whole storage/ tree regardless of
+# .htaccess), where it allowed unauthenticated direct access to any dial's
+# thumbnail via its small, sequential /storage/thumbnails/u{userId}/{dialId}.webp
+# path. NO_PHP is now unused and has been removed; thumbnails/ gets
+# DENY_ALL like the rest.
 
 write_htaccess() {
     local path="$1"
     local content="$2"
     if [ ! -f "$path" ]; then
-        printf "$content\n" > "$path"
+        # Bonus fix while touching this function: printf's FIRST argument is
+        # a format string, not literal text - "%"-prefixed sequences inside
+        # $content would previously have been (mis)interpreted by printf
+        # instead of printed verbatim. $DENY_ALL (the only value passed to
+        # $content since SEC-123 removed the old, separate NO_PHP variant)
+        # happens not to contain a "%" today, so this was never an active
+        # bug, but `printf '%s\n' "$content"` is the correct, robust form
+        # regardless of what that variable's content ever becomes in the
+        # future.
+        printf '%s\n' "$content" > "$path"
         chown ${WEB_USER}:${WEB_USER} "$path"
         echo "Created: ${path#$APP_DIR/}"
     fi
@@ -648,15 +689,18 @@ write_htaccess "$APP_DIR/storage/.htaccess"             "$DENY_ALL"
 write_htaccess "$APP_DIR/storage/sessions/.htaccess"    "$DENY_ALL"
 write_htaccess "$APP_DIR/storage/avatars/.htaccess"     "$DENY_ALL"
 write_htaccess "$APP_DIR/storage/group_icons/.htaccess" "$DENY_ALL"
-write_htaccess "$APP_DIR/storage/thumbnails/.htaccess"  "$NO_PHP"
+write_htaccess "$APP_DIR/storage/thumbnails/.htaccess"  "$DENY_ALL"
 write_htaccess "$APP_DIR/logs/.htaccess"                "$DENY_ALL"
 
 # ── 6. Remove misplaced src/ files from api/ ─────────────────────────────
+# Keep this list in sync with the src/ directory: every src/*_src.php file must
+# be listed here. trusted_device_src.php (sesja 079) and ssrf_guard_src.php
+# (SEC-153) were missing until sesja 080.
 API_SRC_FILES=(
     auth_src.php csrf_src.php csp_src.php db_src.php mailer_src.php password_src.php
-    qr_code_src.php rate_limit_src.php totp_src.php
+    qr_code_src.php rate_limit_src.php totp_src.php trusted_device_src.php
     group_src.php dial_src.php thumbnail_src.php group_icon_src.php avatar_src.php
-    meta_src.php updater_src.php import_src.php export_src.php admin_src.php
+    meta_src.php ssrf_guard_src.php updater_src.php import_src.php export_src.php admin_src.php
 )
 REMOVED_FROM_API=0
 for f in "${API_SRC_FILES[@]}"; do
@@ -669,7 +713,17 @@ done
 [ "$REMOVED_FROM_API" -eq 0 ] && echo "api/ folder: clean"
 
 # ── 7. Remove installer, migration, and legacy files ─────────────────────
-for f in install.php fix_permissions.sh \
+# SEC-119: LetaDial_Permissions.sh added alongside its own pre-rename name
+# (fix_permissions.sh, from before the _src/_page/_api naming convention
+# pass). This script's entire security model depends on it living OUTSIDE
+# the git-tracked, auto-updatable app directory (see the header comment at
+# the top of this file and README.md -> Permissions) - if a copy under
+# EITHER name is ever found inside APP_DIR (e.g. restored by a `git pull`
+# on an install where it was mistakenly committed), it is removed here on
+# every run, the same way install.php already is. This does NOT touch the
+# real, correctly-installed copy at /usr/sbin/LetaDial_Permissions.sh,
+# since the loop below only ever looks inside "$APP_DIR".
+for f in install.php fix_permissions.sh LetaDial_Permissions.sh \
          migrate_001.sql migrate_002.sql migrate_051.sql \
          migrate_052.sql migrate_057.sql migrate_064.sql migrate_065.sql; do
     if [ -f "$APP_DIR/$f" ]; then
@@ -816,7 +870,7 @@ config.php     Generated by installer - NEVER commit this file
 - See [Requirements](#requirements) for the non-persistent PHP execution
   model this app assumes (never Swoole/RoadRunner/FrankenPHP worker mode
   without a full static-state reset between requests)
-- Rate limiting on login (10/5min), 2FA (5/5min), imports, thumbnail generation
+- Rate limiting on login (10 attempts per 10 minutes per IP, plus a per-account limit), 2FA (5 attempts per 10 minutes per IP, plus a per-account limit), personal data export, imports, thumbnail generation
 - Updates only ever pull from `https://github.com/LetaLab/LetaDial` - the
   Admin panel verifies `git remote get-url origin` on every Install Check
   and warns if it's ever anything else

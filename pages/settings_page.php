@@ -1,6 +1,6 @@
 <?php
 /**
- * LetaDial — Settings Page (sesja 058 + 066 + 067 + 071b + 072 + 074 + 077 + 078 + 079)
+ * LetaDial - Settings Page (sesja 058 + 066 + 067 + 071b + 072 + 074 + 077 + 078 + 079 + 080)
  *
  * Sections:
  *   0. Profile Avatar      (sesja 078)
@@ -13,6 +13,7 @@
  *   6. Custom Colors       (sesja 071b + 072)
  *   6b. Dial Card Size     (sesja 074)
  *   6c. LetaLink           (sesja 077)
+ *   6d. Your Data (GDPR)   (sesja 080)
  *   7. About
  */
 declare(strict_types=1);
@@ -595,6 +596,34 @@ function eyeSvg(bool $show): string {
         </div>
     </div>
 
+    <!-- ══ 6d: Your Data (GDPR personal data export, sesja 080) ══ -->
+    <div class="settings-section" id="your-data">
+        <div class="settings-section-header">
+            <span class="settings-section-icon">🗂️</span>
+            <h2>Your Data (GDPR)</h2>
+        </div>
+        <div class="settings-section-body">
+            <p style="font-size:.875rem;color:var(--text-muted);margin-bottom:1rem;line-height:1.6">
+                Download a copy of the personal data <?= $app_name ?> stores about your account as one JSON file
+                (GDPR Art. 15 and Art. 20).
+            </p>
+            <div style="padding:.75rem 1rem;background:var(--surface-alt);border:1px solid var(--border);border-radius:var(--radius-md);font-size:.8rem;color:var(--text-muted);line-height:1.7;margin-bottom:1.25rem">
+                <div><strong style="color:var(--text)">Included:</strong> profile and preferences, groups and dials with notes and click counts, avatar and custom group icons, 2FA status, sessions, trusted devices and login history.</div>
+                <div style="margin-top:.4rem"><strong style="color:var(--text)">Never included:</strong> your password hash, 2FA secret, backup code hashes and every session, remember-me or trusted-device token. Dial thumbnails are not embedded.</div>
+            </div>
+            <div class="inline-alert" id="data-alert"><span id="data-alert-msg"></span></div>
+            <div class="field-row">
+                <label class="form-label" for="data-export-pw">Current password</label>
+                <div class="input-wrap">
+                    <input type="password" id="data-export-pw" class="form-input" autocomplete="current-password" placeholder="Confirm with your current password">
+                    <button type="button" class="eye-btn" id="eye-btn-data-export-pw" aria-label="Show/hide"><?= eyeSvg(true) ?></button>
+                </div>
+                <div class="field-hint">Needed to confirm it is really you, because the file contains personal data. You can download up to 5 times per hour.</div>
+            </div>
+            <button type="button" class="btn btn-primary" id="btn-data-export">Download my data</button>
+        </div>
+    </div>
+
     <!-- ══ 7: About ══ -->
     <div class="settings-section">
         <div class="settings-section-header">
@@ -874,6 +903,62 @@ document.getElementById('btn-revoke-all-trusted')?.addEventListener('click',asyn
     loadTrusted();
 });
 loadTrusted();
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// YOUR DATA - GDPR personal data export (sesja 080)
+// ═══════════════════════════════════════════════════════════════════════════════
+(function() {
+    const btn     = document.getElementById('btn-data-export');
+    const pwField = document.getElementById('data-export-pw');
+    if (!btn) return;
+    const LABEL = btn.textContent;
+
+    function done() { btn.disabled = false; btn.textContent = LABEL; }
+
+    document.getElementById('eye-btn-data-export-pw')?.addEventListener('click', function() { togglePw('data-export-pw', this); });
+    pwField?.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); btn.click(); } });
+
+    btn.addEventListener('click', async () => {
+        hideAlert('data-alert');
+        const pw = pwField?.value || '';
+        if (!pw) { showAlert('data-alert', 'data-alert-msg', 'error', 'Enter your current password to confirm this download.'); return; }
+
+        btn.disabled = true; btn.textContent = 'Preparing…';
+        let res;
+        try {
+            res = await fetch('/api/settings/data-export', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': CSRF_TOKEN },
+                credentials: 'same-origin',
+                body: JSON.stringify({ current_password: pw }),
+            });
+        } catch {
+            done();
+            showAlert('data-alert', 'data-alert-msg', 'error', 'Network error. Check your connection and try again.');
+            return;
+        }
+        if (pwField) pwField.value = '';
+
+        if (!res.ok) {
+            let msg = 'Could not build the export. Try again in a moment.';
+            try { const data = await res.json(); msg = data.error || msg; } catch {}
+            done();
+            showAlert('data-alert', 'data-alert-msg', 'error', msg);
+            return;
+        }
+
+        const blob = await res.blob();
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement('a');
+        a.href     = url;
+        a.download = 'letadial_personal_data_' + new Date().toISOString().slice(0, 10) + '.json';
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 15000);
+
+        done();
+        showAlert('data-alert', 'data-alert-msg', 'success', 'Your data was downloaded. The file contains personal data, so store it somewhere safe.');
+    });
+})();
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // COLOR PICKER (sesja 071b + 072)

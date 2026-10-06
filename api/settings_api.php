@@ -1,6 +1,6 @@
 <?php
 /**
- * LetaDial — Settings API (sesja 058 + 066 + 071a + 071b + 072 + 079 + SEC-101)
+ * LetaDial - Settings API (sesja 058 + 066 + 071a + 071b + 072 + 079 + 080 + SEC-101)
  *
  * POST /api/settings/password      — change password (also revokes trusted devices, sesja 079)
  * POST /api/settings/backup-codes  — regenerate 2FA backup codes
@@ -22,12 +22,27 @@
  * POST /api/settings/trusted-devices/delete — revoke one device {id}
  * POST /api/settings/trusted-devices/delete-all — revoke every trusted device
  *
+ * sesja 080 (GDPR personal data export):
+ * POST /api/settings/data-export - download a JSON copy of the user's personal data
+ *                                   {current_password}; see Export::buildPersonalData()
+ *
  * SEC-101: password/backup-codes/email already had their own strict,
  * dedicated rate limits. Every OTHER mutating action below shares one
  * generous 'settings_mutate' bucket (500/h/user) — see original docblock
  * for full rationale, unchanged by sesja 079. Trusted-devices delete/
  * delete-all join that same shared bucket, same reasoning as sessions
  * delete/delete-all right next to them.
+ *
+ * sesja 080: 'data-export' hands out a full copy of the account's personal
+ * data (e-mail, IP addresses, login history, avatar, every dial URL), so a
+ * stolen session cookie alone must not be enough to trigger it. It uses the
+ * same step-up pattern as the e-mail change: the current password is
+ * verified first (Password::verifyAndRehash()). It has its own dedicated
+ * rate limit bucket, 'settings_data_export' (5 requests/hour/user), checked
+ * BEFORE the password so wrong-password guesses count against the same
+ * budget as real exports, and it is deliberately NOT cleared after a
+ * successful export: building the file is the expensive part, so the limit
+ * must hold for successful requests as well.
  *
  * SEC-139 (11.09.2026): backup-codes' TOTP::decrypt() call is wrapped in
  * try/catch(RuntimeException).
@@ -264,6 +279,37 @@ if ($action === 'trusted-devices' && $sub_action === 'delete-all') {
     }
     $count = TrustedDevice::deleteAllForUser((int)$user['id']);
     echo json_encode(['ok' => true, 'deleted' => $count]);
+    exit;
+}
+
+// ── sesja 080: Personal data export (GDPR) ────────────────────────────────────
+if ($action === 'data-export' && $sub_action === null) {
+    if (RateLimit::check('settings_data_export', (string)$user['id'], 5, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many export requests. Try again in an hour.']); exit;
+    }
+
+    $currentPassword = $body['current_password'] ?? '';
+    if (!is_string($currentPassword) || $currentPassword === '') {
+        http_response_code(422);
+        echo json_encode(['ok' => false, 'error' => 'Please enter your current password to confirm this export.']); exit;
+    }
+    $authRow = DB::row("SELECT password_hash FROM users WHERE id = ?", [$user['id']]);
+    if (!$authRow || !Password::verifyAndRehash($currentPassword, $authRow['password_hash'], (int)$user['id'])) {
+        http_response_code(422);
+        echo json_encode(['ok' => false, 'error' => 'Current password is incorrect.']); exit;
+    }
+
+    // Export::downloadPersonalData() does all queries, file reads and JSON
+    // encoding before it sends its first header, so on failure the response
+    // is still untouched and a clean JSON error can be returned here.
+    try {
+        Export::downloadPersonalData((int)$user['id'], Auth::getSessionId());
+    } catch (Throwable $e) {
+        error_log('[Settings] data-export failed for user ' . $user['id'] . ': ' . $e->getMessage());
+        http_response_code(500);
+        echo json_encode(['ok' => false, 'error' => 'Could not build the export. Try again, or contact your administrator if it keeps failing.']);
+    }
     exit;
 }
 

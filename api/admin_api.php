@@ -27,6 +27,13 @@
  * sesja 069:
  * POST /api/admin/create-user           — create user directly {login, email, password, role, admin_password}
  *
+ * sesja 086 (sign-in notification e-mails):
+ * GET  /api/admin/login-notify          - get the instance-wide switch (+ whether SMTP is configured)
+ * POST /api/admin/login-notify          - set the switch {enabled: bool}; CSRF + admin_mutate rate limit,
+ *                                         same shape as the registration toggle, but `enabled` must be a
+ *                                         real JSON boolean (a string such as "false" is rejected with 422
+ *                                         instead of being cast to true)
+ *
  * All endpoints: admin role required.
  * All POST endpoints: CSRF required.
  *
@@ -421,6 +428,34 @@ if ($method === 'POST' && $action === 'registration') {
     }
     $enabled = (bool)$body['enabled'];
     $result  = Admin::setRegistrationEnabled($enabled);
+    echo json_encode(['ok' => true, 'enabled' => $result]);
+    exit;
+}
+
+// ── sesja 086: Sign-in notification e-mails switch ───────────────────────────
+
+if ($method === 'GET' && $action === 'login-notify') {
+    echo json_encode([
+        'ok'           => true,
+        'enabled'      => Admin::getLoginNotifyEnabled(),
+        'smtp_enabled' => defined('SMTP_ENABLED') && SMTP_ENABLED,
+    ]);
+    exit;
+}
+
+if ($method === 'POST' && $action === 'login-notify') {
+    CSRF::require();
+    // SEC-113: shared admin_mutate bucket, same as the registration toggle.
+    if (RateLimit::check('admin_mutate', (string)$user['id'], 200, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
+    $body = json_decode(file_get_contents('php://input'), true);
+    if (!is_array($body) || !array_key_exists('enabled', $body) || !is_bool($body['enabled'])) {
+        http_response_code(422);
+        echo json_encode(['ok' => false, 'error' => 'enabled (bool) required.']); exit;
+    }
+    $result = Admin::setLoginNotifyEnabled($body['enabled']);
     echo json_encode(['ok' => true, 'enabled' => $result]);
     exit;
 }

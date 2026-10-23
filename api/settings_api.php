@@ -1,11 +1,12 @@
 <?php
 /**
- * LetaDial - Settings API (sesja 058 + 066 + 071a + 071b + 072 + 079 + 080 + SEC-101)
+ * LetaDial - Settings API (sesja 058 + 066 + 071a + 071b + 072 + 079 + 080 + 086 + SEC-101)
  *
  * POST /api/settings/password      — change password (also revokes trusted devices, sesja 079)
  * POST /api/settings/backup-codes  — regenerate 2FA backup codes
  * GET  /api/settings/backup-count  — unused backup codes count
  * POST /api/settings/recent        — toggle Recent tab {disabled}
+ * POST /api/settings/login-notify  - per-user opt-out of sign-in notification e-mails {disabled: bool} (sesja 086)
  * POST /api/settings/theme         — save theme to DB (sesja 071a)
  * POST /api/settings/primary-color — save custom primary color per theme (sesja 071b)
  * POST /api/settings/theme-extras  — save bg + text colors per theme (sesja 072)
@@ -50,6 +51,13 @@
  * SEC-150 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVII): the 'email' action's
  * "already in use" branch shares one generic message and one floor-padded
  * response time with the "email change actually sent" branch.
+ *
+ * sesja 086: 'login-notify' stores the per-user opt-out for sign-in
+ * notification e-mails (users.login_notify_disabled). It shares the generous
+ * 'settings_mutate' bucket with the other preference toggles. Unlike
+ * 'recent', which casts whatever it receives to a bool, 'disabled' must be a
+ * real JSON boolean: (bool)"false" is true in PHP, and a security
+ * notification setting must not flip because of a stringly-typed client.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -224,6 +232,25 @@ if ($action === 'recent') {
     }
     $disabled = (bool)($body['disabled'] ?? false);
     DB::run("UPDATE users SET recent_disabled = ? WHERE id = ?", [(int)$disabled, $user['id']]);
+    echo json_encode(['ok' => true, 'disabled' => $disabled]);
+    exit;
+}
+
+// ── POST /api/settings/login-notify (sesja 086) ───────────────────────────────
+// Per-user opt-out of sign-in notification e-mails. The instance-wide switch
+// is a separate admin setting (Admin::getLoginNotifyEnabled()); this flag only
+// matters while that switch is on and SMTP is configured.
+if ($action === 'login-notify' && $sub_action === null) {
+    if (RateLimit::check('settings_mutate', (string)$user['id'], 500, 3600, 3600)) {
+        http_response_code(429);
+        echo json_encode(['ok' => false, 'error' => 'Too many requests. Try again later.']); exit;
+    }
+    if (!array_key_exists('disabled', $body) || !is_bool($body['disabled'])) {
+        http_response_code(422);
+        echo json_encode(['ok' => false, 'error' => 'disabled (bool) required.']); exit;
+    }
+    $disabled = $body['disabled'];
+    DB::run("UPDATE users SET login_notify_disabled = ? WHERE id = ?", [(int)$disabled, $user['id']]);
     echo json_encode(['ok' => true, 'disabled' => $disabled]);
     exit;
 }

@@ -1,6 +1,6 @@
 <?php
 /**
- * LetaDial - Settings Page (sesja 058 + 066 + 067 + 071b + 072 + 074 + 077 + 078 + 079 + 080)
+ * LetaDial - Settings Page (sesja 058 + 066 + 067 + 071b + 072 + 074 + 077 + 078 + 079 + 080 + 086)
  *
  * Sections:
  *   0. Profile Avatar      (sesja 078)
@@ -9,7 +9,7 @@
  *   3. Two-Factor Auth
  *   4. Active Sessions     (sesja 066)
  *   4b. Trusted Devices    (sesja 079) ← NEW
- *   5. UI Preferences
+ *   5. UI Preferences      (sesja 086: sign-in e-mails opt-out)
  *   6. Custom Colors       (sesja 071b + 072)
  *   6b. Dial Card Size     (sesja 074)
  *   6c. LetaLink           (sesja 077)
@@ -37,6 +37,9 @@ $pw_rules        = Password::jsRules();
 $totp_enabled    = (bool)$user['totp_enabled'];
 $is_admin        = ($user['role'] === 'admin');
 $recent_disabled = (bool)($user['recent_disabled'] ?? false);
+// sesja 086: sign-in notification e-mails - this user's opt-out and the admin's instance-wide switch
+$login_notify_disabled = (bool)($user['login_notify_disabled'] ?? false);
+$login_notify_global   = Admin::getLoginNotifyEnabled();
 $email_pending   = $user['email_pending'] ?? null;
 $has_pending     = !empty($email_pending);
 $smtp_enabled    = defined('SMTP_ENABLED') && SMTP_ENABLED;
@@ -384,6 +387,7 @@ function eyeSvg(bool $show): string {
             <h2>UI Preferences</h2>
         </div>
         <div class="settings-section-body">
+            <div class="inline-alert" id="pref-alert"><span id="pref-alert-msg"></span></div>
             <div class="pref-row">
                 <div>
                     <div class="pref-label">Theme</div>
@@ -399,6 +403,21 @@ function eyeSvg(bool $show): string {
                 <label style="display:inline-flex;align-items:center;gap:.5rem;cursor:pointer;font-size:.875rem;color:var(--text-muted);user-select:none">
                     <input type="checkbox" id="pref-recent-disabled" <?= $recent_disabled ? 'checked' : '' ?> style="accent-color:var(--primary);width:16px;height:16px;cursor:pointer">
                     Hide Recent
+                </label>
+            </div>
+            <div class="pref-row">
+                <div>
+                    <div class="pref-label">✉ Sign-in e-mails</div>
+                    <div class="pref-hint">Get an e-mail after every new sign-in to your account (time, IP address, browser and how you signed in)</div>
+                    <?php if (!$smtp_enabled): ?>
+                    <div class="pref-hint" style="color:var(--warning)">⚠ SMTP is not configured on this server, so no e-mails are sent at all.</div>
+                    <?php elseif (!$login_notify_global): ?>
+                    <div class="pref-hint" style="color:var(--warning)">⚠ The administrator turned sign-in e-mails off for this whole instance. Your choice is saved, but it has no effect until they turn them back on.</div>
+                    <?php endif; ?>
+                </div>
+                <label style="display:inline-flex;align-items:center;gap:.5rem;cursor:pointer;font-size:.875rem;color:var(--text-muted);user-select:none">
+                    <input type="checkbox" id="pref-login-notify-disabled" <?= $login_notify_disabled ? 'checked' : '' ?> style="accent-color:var(--primary);width:16px;height:16px;cursor:pointer">
+                    Disable sign-in e-mails
                 </label>
             </div>
             <div class="pref-row">
@@ -840,6 +859,20 @@ document.getElementById('btn-cancel-email-change')?.addEventListener('click',asy
 
 // ── Recent tab toggle ──────────────────────────────────────────────────────────
 document.getElementById('pref-recent-disabled')?.addEventListener('change',async function(){const disabled=this.checked;const r=await apiPost('/api/settings/recent',{disabled});if(!r.ok){showAlert('pw-alert','pw-alert-msg','error',r.error||'Could not update.');this.checked=!disabled;return;}showAlert('pw-alert','pw-alert-msg','success',disabled?'Recent tab hidden. Reload the dashboard to apply.':'Recent tab restored. Reload the dashboard to apply.');});
+
+// ── Sign-in e-mails opt-out (sesja 086) ────────────────────────────────────────
+document.getElementById('pref-login-notify-disabled')?.addEventListener('change', async function () {
+    const disabled = this.checked;
+    hideAlert('pref-alert');
+    const r = await apiPost('/api/settings/login-notify', { disabled });
+    if (!r.ok) {
+        showAlert('pref-alert', 'pref-alert-msg', 'error', r.error || 'Could not update.');
+        this.checked = !disabled;
+        return;
+    }
+    showAlert('pref-alert', 'pref-alert-msg', 'success',
+        disabled ? 'Sign-in e-mails turned off for your account.' : 'Sign-in e-mails turned on for your account.');
+});
 
 // ── 2FA Backup codes ───────────────────────────────────────────────────────────
 const regenBtn=document.getElementById('btn-regen-bc');const verifyForm=document.getElementById('verify-form');const cancelBtnBC=document.getElementById('btn-cancel-regen');const confirmBtn=document.getElementById('btn-confirm-regen');const bcCodeInput=document.getElementById('bc-code');const newCodesArea=document.getElementById('new-codes-area');

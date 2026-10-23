@@ -148,6 +148,89 @@ class Mailer
         return self::send($to, 'Confirm your new email address — ' . $app, $text, $html);
     }
 
+    /**
+     * Sign-in notification (sesja 086).
+     *
+     * Sent by Auth::notifyLogin() after a new, fully verified sign-in. It
+     * carries only what the account owner needs to recognise (or not
+     * recognise) the sign-in: when, from which IP address, from which
+     * browser and OS, and how the sign-in was completed. It never contains a
+     * password or a token, and its single link is the plain Settings page of
+     * this installation (APP_URL is a fixed config constant, never request
+     * data).
+     *
+     * Every dynamic value is untrusted text (the device label is derived
+     * from the User-Agent header), so each one is flattened to a single line
+     * here and HTML-escaped before it reaches the HTML part.
+     *
+     * @param string $method password | two_factor | backup_code |
+     *                       trusted_device | remembered | remembered_trusted
+     */
+    public static function sendLoginNotification(
+        string $to,
+        string $login,
+        string $ip,
+        string $device,
+        string $whenUtc,
+        string $method
+    ): bool {
+        $app      = self::oneLine(APP_NAME, 80);
+        $login    = self::oneLine($login, 80);
+        $ip       = self::oneLine($ip, 64);
+        $device   = self::oneLine($device, 120);
+        $whenUtc  = self::oneLine($whenUtc, 40);
+        $settings = rtrim(APP_URL, '/') . '/settings';
+
+        $how = match ($method) {
+            'password'           => 'Password',
+            'two_factor'         => 'Password and authenticator code',
+            'backup_code'        => 'Password and a backup code',
+            'trusted_device'     => 'Password only (trusted device, authenticator code skipped)',
+            'remembered'         => 'Remembered session (remember-me cookie, no password typed)',
+            'remembered_trusted' => 'Remembered session on a trusted device (no password typed, authenticator code skipped)',
+            default              => 'Sign-in',
+        };
+
+        $text = "Hello {$login},\n\n"
+              . "A new sign-in to your {$app} account was just completed.\n\n"
+              . "When:    {$whenUtc}\n"
+              . "IP:      {$ip}\n"
+              . "Device:  {$device}\n"
+              . "Method:  {$how}\n\n"
+              . "If this was you, no action is needed.\n\n"
+              . "If this was NOT you, change your password right away, then sign out unknown sessions and revoke trusted devices in Settings:\n"
+              . $settings . "\n\n"
+              . "You get this e-mail because sign-in notifications are on for your account.\n"
+              . "You can turn them off in Settings, under UI Preferences.\n\n"
+              . "Sent by {$app}";
+
+        $e = static fn(string $s): string => htmlspecialchars($s, ENT_QUOTES, 'UTF-8');
+
+        $rows = '';
+        foreach ([['When', $whenUtc], ['IP address', $ip], ['Device', $device], ['Method', $how]] as [$k, $v]) {
+            $rows .= '<tr><td style="padding:.2rem 1rem .2rem 0;color:#6b7280;white-space:nowrap">' . $e($k) . '</td>'
+                   . '<td style="padding:.2rem 0;color:#111827;font-weight:600">' . $e($v) . '</td></tr>';
+        }
+
+        $html = self::wrapHtml('New sign-in to your account',
+            '<p>Hello <strong>' . $e($login) . '</strong>,</p>'
+            . '<p>A new sign-in to your <strong>' . $e($app) . '</strong> account was just completed.</p>'
+            . '<table style="border-collapse:collapse;margin:.5rem 0 1rem">' . $rows . '</table>'
+            . '<p>If this was you, no action is needed.</p>'
+            . '<p><strong>If this was not you,</strong> change your password right away, then sign out unknown sessions and revoke trusted devices in Settings.</p>'
+            . '<p><a href="' . $e($settings) . '" class="btn">Review account security</a></p>'
+            . '<p class="muted">You get this e-mail because sign-in notifications are on for your account. You can turn them off in Settings, under UI Preferences.</p>');
+
+        return self::send($to, 'New sign-in to ' . $app, $text, $html);
+    }
+
+    /** Flatten untrusted text to one printable line of at most $max characters. */
+    private static function oneLine(string $s, int $max): string
+    {
+        $s = preg_replace('/[\x00-\x1F\x7F]+/', ' ', $s) ?? '';
+        return mb_substr(trim($s), 0, $max);
+    }
+
     // ── SMTP core ─────────────────────────────────────────────────────────────
 
     private static function smtp(
@@ -258,8 +341,21 @@ class Mailer
 
         self::cmd($sock, "MAIL FROM:<" . SMTP_FROM . ">");
         self::cmd($sock, "RCPT TO:<{$to}>");
-        self::cmd($sock, "DATA");
-        self::expect($sock, 354);
+        // Sesja 086 (bug found while testing sign-in e-mails): this used to be
+        // `self::cmd($sock, "DATA"); self::expect($sock, 354);`. cmd() already
+        // writes the command AND reads the server's reply, so the 354 was
+        // consumed there and expect() then waited for a SECOND reply that no
+        // SMTP server ever sends - until the 15s stream timeout ran out. Every
+        // e-mail the app has ever sent (activation, reset, invite, e-mail
+        // change) therefore took 15 seconds, and that also broke the timing
+        // equalisation of forgot_password_page.php (SEC-098): the "account
+        // exists" branch always took 15s, the "no such account" branch 1.2s.
+        // The reply is now read once and actually checked.
+        $dataReply = self::cmd($sock, "DATA");
+        if ((int)substr(trim($dataReply), 0, 3) !== 354) {
+            fclose($sock);
+            throw new RuntimeException('SMTP: DATA not accepted');
+        }
 
         $msg = self::buildMessage($to, $subject, $text, $html, $domain);
         fwrite($sock, $msg . "\r\n.\r\n");

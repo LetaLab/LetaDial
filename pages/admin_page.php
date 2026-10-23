@@ -40,6 +40,12 @@
  * and updater_api.php got the matching JSON-response fix in the same
  * session, since this page's own redirect does nothing for a caller that
  * hits the API directly.
+ * sesja 086: Users tab got a second switch card, "Sign-in notification
+ * e-mails" (instance-wide on/off, GET/POST /api/admin/login-notify), built
+ * exactly like the Self-Registration card above it. Its description texts
+ * live in ONE PHP array ($ln_texts) that is rendered server-side and also
+ * handed to the script as JSON, so the initial HTML and the live-updated
+ * text can never drift apart.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die();
@@ -117,6 +123,18 @@ $login_rl_win = 300;
 // sesja 068: registration toggle
 $registration_enabled = Admin::getRegistrationEnabled();
 $registration_json    = $registration_enabled ? 'true' : 'false';
+
+// sesja 086: sign-in notification e-mails switch. Texts are defined once here
+// and reused by the server-rendered card AND the script (see $ln_texts_json).
+$login_notify_enabled = Admin::getLoginNotifyEnabled();
+$login_notify_json    = $login_notify_enabled ? 'true' : 'false';
+$ln_texts = [
+    'on'      => 'On - users get an e-mail after every new sign-in (at most one per user every 2 minutes), unless they opted out in Settings.',
+    'off'     => 'Off - no sign-in e-mails are sent to anyone, whatever users chose in Settings.',
+    'no_smtp' => ' SMTP is not configured on this server, so no e-mails are sent at all until it is.',
+];
+$ln_desc       = $ln_texts[$login_notify_enabled ? 'on' : 'off'] . ($smtp_enabled ? '' : $ln_texts['no_smtp']);
+$ln_texts_json = json_encode($ln_texts, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
 
 // ── sesja 074: Custom Colors per-theme (mirror of dashboard_page.php) ────────
 $_valid_hex = '/^#[0-9A-Fa-f]{6}$/i';
@@ -348,6 +366,27 @@ function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8')
                     <button type="button" class="btn btn-ghost btn-sm" id="btn-toggle-registration"
                             style="<?= $registration_enabled ? 'border-color:var(--error-bdr);color:var(--error)' : 'border-color:var(--success-bdr);color:var(--success)' ?>">
                         <?= $registration_enabled ? '🔒 Disable registration' : '🔓 Enable registration' ?>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sign-in notification e-mails switch card (sesja 086) -->
+        <div class="admin-card" style="margin-bottom:1rem">
+            <div class="admin-card-body" style="padding:.85rem 1.25rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap">
+                <div style="flex:1;min-width:200px">
+                    <div style="font-size:.9rem;font-weight:600;color:var(--text);margin-bottom:.2rem">
+                        ✉ Sign-in notification e-mails
+                    </div>
+                    <div style="font-size:.78rem;color:var(--text-muted)" id="ln-status-desc"><?= h($ln_desc) ?></div>
+                </div>
+                <div style="display:flex;align-items:center;gap:.75rem;flex-shrink:0">
+                    <span id="ln-status-badge" class="status-badge <?= $login_notify_enabled ? 'on' : 'off' ?>">
+                        <?= $login_notify_enabled ? '✓ On' : '✗ Off' ?>
+                    </span>
+                    <button type="button" class="btn btn-ghost btn-sm" id="btn-toggle-login-notify"
+                            style="<?= $login_notify_enabled ? 'border-color:var(--error-bdr);color:var(--error)' : 'border-color:var(--success-bdr);color:var(--success)' ?>">
+                        <?= $login_notify_enabled ? '🔕 Turn off' : '🔔 Turn on' ?>
                     </button>
                 </div>
             </div>
@@ -643,6 +682,8 @@ const MY_SESSION = <?= json_encode($my_session_id) ?>;
 const PW_RULES   = <?= $pw_rules ?>;
 const SMTP_OK    = <?= $smtp_enabled ? 'true' : 'false' ?>;
 let REGISTRATION_ENABLED = <?= $registration_json ?>;
+const LN_TEXTS = <?= $ln_texts_json ?>;           // sesja 086: texts defined once in PHP
+let LOGIN_NOTIFY_ENABLED = <?= $login_notify_json ?>;
 
 let blocked  = <?= $blocked_json ?>;
 let users    = <?= $users_json ?>;
@@ -1404,6 +1445,51 @@ document.getElementById('btn-toggle-registration')?.addEventListener('click', as
     toast(r.enabled ? 'Registration enabled.' : 'Registration disabled.', 'success');
 });
 
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Sign-in notification e-mails switch (sesja 086)
+// ═══════════════════════════════════════════════════════════════════════════════
+function updateLoginNotifyUI(enabled) {
+    LOGIN_NOTIFY_ENABLED = enabled;
+    const badge = document.getElementById('ln-status-badge');
+    const desc  = document.getElementById('ln-status-desc');
+    const btn   = document.getElementById('btn-toggle-login-notify');
+    if (!badge || !desc || !btn) return;
+
+    desc.textContent = (enabled ? LN_TEXTS.on : LN_TEXTS.off) + (SMTP_OK ? '' : LN_TEXTS.no_smtp);
+    if (enabled) {
+        badge.className   = 'status-badge on';
+        badge.textContent = '✓ On';
+        btn.textContent   = '🔕 Turn off';
+        btn.style.borderColor = 'var(--error-bdr)';
+        btn.style.color       = 'var(--error)';
+    } else {
+        badge.className   = 'status-badge off';
+        badge.textContent = '✗ Off';
+        btn.textContent   = '🔔 Turn on';
+        btn.style.borderColor = 'var(--success-bdr)';
+        btn.style.color       = 'var(--success)';
+    }
+}
+
+document.getElementById('btn-toggle-login-notify')?.addEventListener('click', async () => {
+    const newState = !LOGIN_NOTIFY_ENABLED;
+    if (!await cfm(
+        (newState ? 'Turn on' : 'Turn off') + ' sign-in e-mails',
+        newState
+            ? 'Send every user an e-mail after each new sign-in to their account?'
+            : 'Stop sending sign-in e-mails to everyone? Nobody will be told about new sign-ins until you turn this back on.'
+    )) return;
+
+    const btn = document.getElementById('btn-toggle-login-notify');
+    btn.disabled = true;
+    const r = await api('POST', '/api/admin/login-notify', { enabled: newState });
+    btn.disabled = false;
+
+    if (!r.ok) { toast(r.error || 'Could not update setting.', 'error'); return; }
+    updateLoginNotifyUI(r.enabled);
+    toast(r.enabled ? 'Sign-in e-mails turned on.' : 'Sign-in e-mails turned off.', 'success');
+});
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Create User Modal (sesja 069)

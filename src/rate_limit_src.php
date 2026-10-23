@@ -10,6 +10,11 @@
  * clear(action, key)
  *   Removes the rate-limit entry (use after successful auth).
  *
+ * claim(action, key, windowSec)   (sesja 086)
+ *   Atomic "first one in the window wins" gate. Returns TRUE for exactly one
+ *   caller per window, FALSE for everybody else. Used as the cooldown of
+ *   sign-in notification e-mails; see the method for why check() cannot do it.
+ *
  * Storage:
  *   rate_limits.key_hash  = sha256(key) — lookup index
  *   rate_limits.action    = action name — part of unique key
@@ -163,5 +168,65 @@ class RateLimit
             "DELETE FROM rate_limits WHERE key_hash = ? AND action = ?",
             [$hash, $action]
         );
+    }
+
+    /**
+     * Atomic "first one in the window wins" gate (sesja 086).
+     *
+     * check() writes its counter and then reads it back in a SEPARATE
+     * statement. When several requests for the same key race within a few
+     * milliseconds, each of them can read back a count that already includes
+     * the others - so ALL of them come out "over the limit" and none gets
+     * through. That is harmless for throttling abuse (it fails closed), but
+     * wrong for a gate that must let exactly ONE request through. Sign-in
+     * notification e-mails use this method as their cooldown: a burst of
+     * parallel sign-ins (two browser tabs, or someone hiding their own
+     * sign-in inside a burst) must still produce one e-mail, never zero.
+     *
+     * claim() decides inside ONE statement. The row is inserted, or - if it
+     * already exists - left completely untouched while its window is still
+     * open, or reset when the window has run out. MySQL/MariaDB report the
+     * outcome as the affected-rows count (PDO does not set
+     * MYSQL_ATTR_FOUND_ROWS, see db_src.php): 1 = row inserted, 2 = expired
+     * window reset, 0 = row unchanged because someone else holds the window.
+     * Row locking serialises concurrent calls, so exactly one of them sees
+     * a non-zero count per window.
+     *
+     * Unlike check(), suppressed calls are NOT counted, so rows written by
+     * claim() never reach the attempts threshold of the admin "Blocked IPs"
+     * list. Expired rows of the same action are purged on every call, same
+     * pattern as check() (SEC-082), so the table cannot grow beyond one row
+     * per key.
+     *
+     * @return bool true  = this call opened a new window and may proceed;
+     *              false = another call holds the current window, or the
+     *                      write failed (fails closed, logged)
+     */
+    public static function claim(string $action, string $key, int $windowSec): bool
+    {
+        $hash  = hash('sha256', $key);
+        $plain = mb_substr($key, 0, 255);
+
+        try {
+            DB::run(
+                "DELETE FROM rate_limits
+                 WHERE action = ? AND window_start < DATE_SUB(NOW(), INTERVAL ? SECOND)",
+                [$action, $windowSec]
+            );
+
+            $affected = DB::run(
+                "INSERT INTO rate_limits (key_hash, action, attempts, window_start, key_plain)
+                 VALUES (?, ?, 1, NOW(), ?)
+                 ON DUPLICATE KEY UPDATE
+                    attempts     = IF(window_start < DATE_SUB(NOW(), INTERVAL ? SECOND), 1, attempts),
+                    window_start = IF(window_start < DATE_SUB(NOW(), INTERVAL ? SECOND), NOW(), window_start)",
+                [$hash, $action, $plain, $windowSec, $windowSec]
+            );
+        } catch (PDOException $e) {
+            error_log('[RateLimit] claim() failed for action=' . $action . ': ' . $e->getMessage());
+            return false;
+        }
+
+        return $affected > 0;
     }
 }

@@ -101,6 +101,15 @@
  * SEC-152 (SEC_AND_BUG_ANIH_PLAN.md, Czesc XVII): loginFromRemember() rate
  *   limits per-IP then per-account, and writes a login_history entry on
  *   success.
+ *
+ * Sesja 086 (sign-in notification e-mails): every path that ends in a fully
+ *   verified session calls notifyLogin() exactly once - login() (account
+ *   without 2FA, or a trusted device), verify2FA() (TOTP or backup code) and
+ *   loginFromRemember() (account without 2FA, or a trusted device). A
+ *   sign-in that still waits for the 2FA code sends nothing yet; the e-mail
+ *   goes out once the code is accepted. See notifyLogin() for the rules
+ *   (SMTP, admin switch, per-user opt-out, cooldown) and for why the e-mail
+ *   is sent after the response instead of inside the request.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -194,6 +203,13 @@ class Auth
         if ($user['totp_enabled'] && !$deviceTrusted) {
             return ['ok' => true, 'needs_2fa' => true, 'needs_setup' => false];
         }
+
+        // Sesja 086: from here on the session is fully verified - either the
+        // account has no 2FA at all, or this device is trusted. (A sign-in
+        // that still needs the 2FA code returned above and is announced by
+        // verify2FA() once the code is accepted.)
+        self::notifyLogin($user, $deviceTrusted ? 'trusted_device' : 'password');
+
         if ($user['totp_required'] && !$user['totp_enabled']) {
             return ['ok' => true, 'needs_2fa' => false, 'needs_setup' => true];
         }
@@ -333,6 +349,7 @@ class Auth
             if ($trustDevice) {
                 TrustedDevice::create((int)$user['id'], TrustedDevice::labelFromUserAgent(self::ua()), $ip);
             }
+            self::notifyLogin($user, 'two_factor'); // sesja 086
             return ['ok' => true];
         }
 
@@ -343,6 +360,7 @@ class Auth
             if ($trustDevice) {
                 TrustedDevice::create((int)$user['id'], TrustedDevice::labelFromUserAgent(self::ua()), $ip);
             }
+            self::notifyLogin($user, 'backup_code'); // sesja 086
             return ['ok' => true, 'used_backup' => true];
         }
 
@@ -618,6 +636,93 @@ class Auth
         return substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 500);
     }
 
+    // ── Sign-in notification e-mails (sesja 086) ──────────────────────────────
+
+    /**
+     * Tell the account owner by e-mail that a new, fully verified sign-in
+     * just happened. Called from exactly three places, only AFTER the final
+     * 2FA decision is known: login() (no 2FA, or a trusted device),
+     * verify2FA() (TOTP or backup code accepted) and loginFromRemember()
+     * (no 2FA, or a trusted device).
+     *
+     * $method says how the sign-in was completed and is shown to the owner
+     * (see Mailer::sendLoginNotification()): password, two_factor,
+     * backup_code, trusted_device, remembered, remembered_trusted.
+     *
+     * Rules, checked in this order (all cheap, none of them can block or fail
+     * a sign-in - this method never throws):
+     *   1. SMTP must be configured, otherwise there is nothing to do.
+     *   2. The admin switch (settings.login_notify_enabled, default ON when
+     *      the row is missing) must be on for the whole instance.
+     *   3. The user must not have opted out (users.login_notify_disabled).
+     *   4. Cooldown: at most ONE e-mail per user every 2 minutes, enforced by
+     *      RateLimit::claim() with the action 'login_notify'. Someone who
+     *      knows the password could otherwise sign in over and over just to
+     *      flood the owner's inbox. The sign-in itself is never throttled by
+     *      this, only the e-mail. claim() is atomic: a burst of parallel
+     *      sign-ins yields exactly one e-mail, never zero (RateLimit::check()
+     *      can lose such a race for everybody, see its docblock).
+     *
+     * The e-mail is built from values captured right here and handed to
+     * afterResponse(), so a slow or hanging SMTP server cannot delay the
+     * sign-in. Every failure is logged and swallowed.
+     */
+    private static function notifyLogin(array $user, string $method): void
+    {
+        try {
+            if (!defined('SMTP_ENABLED') || !SMTP_ENABLED) return;
+            if (!Admin::getLoginNotifyEnabled())            return;
+            if (!empty($user['login_notify_disabled']))      return;
+
+            $to = trim((string)($user['email'] ?? ''));
+            if ($to === '' || !filter_var($to, FILTER_VALIDATE_EMAIL)) return;
+
+            // Checked last so a switched-off account never creates rate_limits rows.
+            // claim() (not check()) on purpose: it is atomic, so of several
+            // simultaneous sign-ins exactly ONE wins the window and sends.
+            if (!RateLimit::claim('login_notify', (string)$user['id'], 120)) return;
+
+            $login  = (string)($user['login'] ?? '');
+            $ip     = self::ip();
+            $device = TrustedDevice::labelFromUserAgent(self::ua());
+            $when   = gmdate('Y-m-d H:i:s') . ' UTC';
+
+            self::afterResponse(static function () use ($to, $login, $ip, $device, $when, $method): void {
+                Mailer::sendLoginNotification($to, $login, $ip, $device, $when, $method);
+            });
+        } catch (Throwable $e) {
+            error_log('[Auth] notifyLogin() failed: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Run $task once the HTTP response has been delivered to the browser.
+     *
+     * Under php-fpm (what the nginx setups in this project use),
+     * fastcgi_finish_request() flushes the response and closes the client
+     * connection first, so the slow part (a raw SMTP conversation: connect,
+     * EHLO, STARTTLS, AUTH - up to 10s connect plus 15s per read in the
+     * worst case) never adds to what the person waits for after typing their
+     * password. Under SAPIs without it (mod_php, CLI server) the task simply
+     * runs at the end of the request, still inside the shutdown phase.
+     *
+     * Never throws: a failed task must not turn a finished request into an
+     * error.
+     */
+    private static function afterResponse(callable $task): void
+    {
+        register_shutdown_function(static function () use ($task): void {
+            try {
+                if (function_exists('fastcgi_finish_request')) {
+                    fastcgi_finish_request();
+                }
+                $task();
+            } catch (Throwable $e) {
+                error_log('[Auth] deferred task failed: ' . $e->getMessage());
+            }
+        });
+    }
+
     // ── Remember-me ───────────────────────────────────────────────────────────
 
     private static function createRememberToken(int $userId): void
@@ -710,6 +815,13 @@ class Auth
         if ($user['totp_enabled'] && !$deviceTrusted) {
             return null;
         }
+
+        // Sesja 086: a remember-me cookie just minted a brand-new, fully
+        // verified session (no 2FA on the account, or a trusted device).
+        // This is a new sign-in from the owner's point of view, and the
+        // 'remembered' wording in the e-mail tells them that a stored cookie
+        // was used and not a typed password.
+        self::notifyLogin($user, $deviceTrusted ? 'remembered_trusted' : 'remembered');
 
         return $user;
     }

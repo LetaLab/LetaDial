@@ -3,6 +3,8 @@
  * LetaDial — Export
  * Sesja 054: notes field included in export
  * Sesja 080: personal data export for GDPR (buildPersonalData() / downloadPersonalData() below)
+ * Sesja 086: preferences.login_emails_disabled added to the personal data export (the per-user
+ *            opt-out of sign-in notification e-mails, users.login_notify_disabled)
  *
  * Format:
  * {
@@ -119,7 +121,7 @@ class Export
     {
         $u = DB::row(
             "SELECT id, login, email, email_pending, role, email_verified,
-                    totp_enabled, totp_required, recent_disabled, theme, dial_width,
+                    totp_enabled, totp_required, recent_disabled, login_notify_disabled, theme, dial_width,
                     theme_light_primary, theme_dark_primary, theme_midnight_primary,
                     theme_light_extra, theme_dark_extra, theme_midnight_extra,
                     created_at, last_login
@@ -262,6 +264,7 @@ class Export
             'preferences'     => [
                 'theme'              => $u['theme'],
                 'recent_tab_hidden'  => (bool)$u['recent_disabled'],
+                'login_emails_disabled' => (bool)$u['login_notify_disabled'],
                 'dial_card_width_px' => (int)$u['dial_width'],
                 'custom_colors'      => [
                     'light'    => self::themeColors($u['theme_light_primary'],    $u['theme_light_extra']),

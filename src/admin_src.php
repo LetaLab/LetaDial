@@ -39,6 +39,11 @@
  *      rate_limits, wlacznie ze zwyklymi, jednorazowymi wpisami z
  *      bucketow uzytkowych (dial_mutate, settings_mutate, ...), mimo ze
  *      SEC-144 dodalo juz rate limit na samo wywolanie endpointu.
+ * 086: Sign-in notification e-mails. getLoginNotifyEnabled() /
+ *      setLoginNotifyEnabled() = instance-wide switch (settings row
+ *      login_notify_enabled, treated as ON when the row is missing), same
+ *      pattern as the registration toggle. installCheck() - new column check
+ *      for users.login_notify_disabled and an info row for the switch.
  */
 declare(strict_types=1);
 defined('DIALVAULT_APP') or die('Direct access forbidden.');
@@ -321,6 +326,31 @@ class Admin
     {
         DB::run(
             "INSERT INTO settings (key_name, value) VALUES ('registration_enabled', ?)
+             ON DUPLICATE KEY UPDATE value = VALUES(value)",
+            [$enabled ? '1' : '0']
+        );
+        return $enabled;
+    }
+
+    // ── Sign-in notification e-mails switch (sesja 086) ───────────────────────
+
+    /**
+     * Instance-wide switch for sign-in notification e-mails (Auth::notifyLogin()).
+     * A missing settings row counts as ON: this is a security feature, so the
+     * safe default is to tell people about new sign-ins. install.php seeds the
+     * row with '1' and the 086 migration inserts it without overwriting an
+     * existing value. Per-user opt-out lives in users.login_notify_disabled.
+     */
+    public static function getLoginNotifyEnabled(): bool
+    {
+        $val = DB::val("SELECT value FROM settings WHERE key_name = 'login_notify_enabled'");
+        return ($val ?? '1') === '1';
+    }
+
+    public static function setLoginNotifyEnabled(bool $enabled): bool
+    {
+        DB::run(
+            "INSERT INTO settings (key_name, value) VALUES ('login_notify_enabled', ?)
              ON DUPLICATE KEY UPDATE value = VALUES(value)",
             [$enabled ? '1' : '0']
         );
@@ -615,6 +645,7 @@ class Admin
             ['users',       'reset_expires',            'DATETIME — password reset expiry'],
             ['users',       'activation_expires',       'DATETIME - SEC-135 activation token expiry'],
             ['users',       'recent_disabled',          'TINYINT — sesja 064'],
+            ['users',       'login_notify_disabled',    'TINYINT - sesja 086 sign-in e-mail opt-out'],
             ['users',       'theme',                    'VARCHAR — sesja 071a midnight theme'],
             ['users',       'theme_light_primary',      'VARCHAR(7) — sesja 071b custom color'],
             ['users',       'theme_dark_primary',       'VARCHAR(7) — sesja 071b custom color'],
@@ -674,6 +705,15 @@ class Admin
         $checks[] = self::chk('SMTP configured', $smtpConfigured, false,
             $smtpConfigured ? 'yes' : 'disabled — email features unavailable', 'Configuration',
             'Required for password reset, activation emails, and user invites.');
+
+        // Sesja 086: informational row, never a failure (SMTP has its own row above).
+        $loginNotifyOn = self::getLoginNotifyEnabled();
+        $checks[] = self::chk('Sign-in notification e-mails', true, false,
+            $loginNotifyOn
+                ? ($smtpConfigured ? 'on (e-mail after every new sign-in)' : 'on, but SMTP is not configured so nothing is sent')
+                : 'off for the whole instance',
+            'Configuration',
+            'Switch it in Admin, Users tab. Each user can also opt out in Settings, UI Preferences.');
 
         // ── Security ──────────────────────────────────────────────────────────
         $cfgPath   = $appDir . '/config.php';

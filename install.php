@@ -32,6 +32,14 @@
  *    the APP_VERSION line in its own config.php if it wants the About
  *    section and the update-available banner to compare against the
  *    correct baseline after upgrading via git pull.
+ *
+ * Sesja 086 (sign-in notification e-mails):
+ *  - users gets one new column, login_notify_disabled (per-user opt-out), and
+ *    the settings seed gets login_notify_enabled = '1' (instance-wide switch,
+ *    ON by default). Like the sesja 079 table, this only affects FRESH
+ *    installs - an existing install has to apply the matching ALTER TABLE
+ *    and INSERT by hand (see PROJECT_082.md and the README, Troubleshooting).
+ *    Admin -> Install Check flags the column as MISSING until that is done.
  */
 
 define('DIALVAULT_APP', true);
@@ -344,6 +352,7 @@ function process_install(string &$step): void {
             ['installed_version',      '2.1.0'],
             ['require_2fa',            '1'],          // admin always required; users optional
             ['registration_enabled',   '1'],
+            ['login_notify_enabled',   '1'],          // sesja 086: sign-in e-mails, instance-wide switch (ON by default)
             ['session_lifetime',       '2592000'],    // 30 days
             ['remember_me_days',       '30'],
             ['max_groups_per_user',    '50'],
@@ -441,6 +450,7 @@ function db_create_tables(PDO $pdo): void {
             reset_expires    DATETIME         DEFAULT NULL,
             avatar_path      VARCHAR(255)     DEFAULT NULL,
             recent_disabled  TINYINT(1)       NOT NULL DEFAULT 0,
+            login_notify_disabled TINYINT(1)  NOT NULL DEFAULT 0 COMMENT 'Per-user opt-out of sign-in notification e-mails - sesja 086',
             theme            VARCHAR(20)      NOT NULL DEFAULT 'light',
     theme_light_primary    VARCHAR(7)       DEFAULT NULL COMMENT 'Custom primary color for light theme — sesja 071b',
     theme_dark_primary     VARCHAR(7)       DEFAULT NULL COMMENT 'Custom primary color for dark theme — sesja 071b',

@@ -136,7 +136,9 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
 - Backup codes regeneration (requires TOTP verification)
 - Remember me (cookie lifetime comes from the `remember_me_days` setting, 30 days by default; `HttpOnly`, `Secure` on HTTPS, `SameSite=Lax`)
 - Trusted devices - skip the 2FA prompt for up to 180 days per confirmed device; the password is always still required regardless; revoke any device anytime from Settings
+- Sign-in notification e-mails - after every new sign-in (password, 2FA code, backup code, trusted device or remember-me) the account owner gets an e-mail with the time (UTC), IP address, browser/OS and how the sign-in was completed; at most one e-mail per user every 2 minutes, sent after the response so a slow mail server never delays a sign-in; the admin can switch it off for the whole instance (Admin → Users), every user can opt out (Settings → UI Preferences); needs SMTP
 - CSRF protection - dual-mode: HMAC-SHA256 (authenticated) + double-submit cookie (pre-auth)
+- Content-Security-Policy with a per-request nonce - only scripts and style elements carrying the nonce run (no inline event handlers, no `eval`), plus `object-src 'none'`, `base-uri 'self'`, `form-action 'self'` and `frame-ancestors 'self'`; violation reports are written to `logs/csp-violations.log`
 - AES-256-GCM encrypted TOTP secrets in database
 - Bcrypt passwords (`cost=15`, auto-salted)
 - POST-only logout (GET `/logout` redirects without action)
@@ -186,8 +188,10 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
 - Sessions: all active sessions across all users, terminate any
 - Auto-update: check GitHub Releases API (cached 6h in `settings` table), update notification banner for admin
 - Update via git pull from admin panel, requires re-entering your password (step-up auth) - always pulls from `https://github.com/LetaLab/LetaDial`, verified live against `git remote -v` on every Install Check
-- Install Check: PHP extensions, GD WebP, Imagick, DB schema, config constants, security (no `install.php`, HTTPS, `.git` block, git remote origin, world-writable directories), filesystem permissions, file integrity via `git status`
+- Install Check: PHP version and extensions (GD WebP, Imagick, exif), DB schema (tables and key columns), config constants and SMTP, security (`config.php` permissions, `install.php` removed, key lengths, git remote origin, `display_errors`), filesystem (writable, not world-writable, owner), file integrity (all required files present)
 - Registration toggle: enable/disable self-registration with one click
+- Sign-in notification e-mails switch: turn the e-mails on or off for the whole instance with one click
+- Step-up password confirmation: delete account, force password reset, create user and Update now ask for your own password again
 
 ### Installer (`install.php`)
 - 5-step web wizard - no CLI required
@@ -222,7 +226,6 @@ A browser speed dial replacement you host yourself. Groups, thumbnails, 2FA, dar
 
 - GDPR: account self-deletion with cascade
 - i18n - English / Polish (array-based `lang/en.php` + `lang/pl.php`)
-- Login notification e-mails - sent on every successful login, toggleable per-user and instance-wide by the admin
 - Browser extension (Chrome / Edge / Firefox) - native equivalent of the LetaLink bookmarklet, specification pending
 - Full backup export/import - dials plus all thumbnails as a single ZIP file, for disaster recovery
 - CSP violation log viewer - view and download `logs/csp-violations.log` from Admin → Install Check
@@ -910,6 +913,8 @@ sudo /usr/sbin/LetaDial_Permissions.sh
 
 Always back up `config.php` and your database before upgrading.
 
+Some releases also add a database column or table. After updating, open Admin → Install Check and apply anything it reports as MISSING (see [Troubleshooting](#install-check-reports-a-missing-column-or-table)).
+
 ---
 
 ## Troubleshooting
@@ -929,6 +934,20 @@ sudo chown -R www-data:www-data /var/www/html/LetaDial/storage
 sudo find /var/www/html/LetaDial/storage -type d -exec chmod 755 {} \;
 sudo find /var/www/html/LetaDial/storage -type f -exec chmod 644 {} \;
 ```
+
+### Install Check reports a MISSING column or table
+
+Some releases add a database column or table. A fresh install gets it from `install.php`; an existing install has to apply it once by hand. Admin → Install Check lists everything that is missing. Back up the database first, then run the matching statements with your SQL client (for example `sudo mariadb your_database_name`).
+
+**Sign-in notification e-mails** (`users.login_notify_disabled` is reported as missing):
+
+```sql
+ALTER TABLE users ADD COLUMN login_notify_disabled TINYINT(1) NOT NULL DEFAULT 0
+    COMMENT 'Per-user opt-out of sign-in notification e-mails' AFTER recent_disabled;
+INSERT IGNORE INTO settings (key_name, value) VALUES ('login_notify_enabled', '1');
+```
+
+The second statement turns the e-mails on for the whole instance; use `'0'` to start with them off (the admin can switch them later in Admin → Users). Until the column exists, signing in still works and e-mails go to everybody, but the opt-out checkbox in Settings and the personal data download answer with an error.
 
 ---
 
